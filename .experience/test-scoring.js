@@ -12,6 +12,9 @@ const {
   _formatPoints: formatPoints,
   _storeExperiencePayload: storeExperiencePayload,
   _recordHitUpdatesFields: recordHitUpdatesFields,
+  _trackSuggestions: trackSuggestions,
+  _suggestionHistory: suggestionHistory,
+  _incrementIgnoreCountData: incrementIgnoreCountData,
 } = require('./experience-core.js');
 
 // Helper: create a Qdrant-shaped point
@@ -249,5 +252,63 @@ describe('recordHit field updates', () => {
     assert.ok(updated.lastHitAt, 'lastHitAt should be set');
     // Verify it's a valid ISO string
     assert.ok(!isNaN(new Date(updated.lastHitAt).getTime()), 'lastHitAt should be valid ISO');
+  });
+});
+
+// --- Task 2: Ignore tracking ---
+
+describe('trackSuggestions ignore detection', () => {
+  it('increments ignoreCount when point suggested 3+ consecutive times', () => {
+    // Clear history
+    suggestionHistory.length = 0;
+    const data = { hitCount: 0, ignoreCount: 0 };
+    // Simulate 3 consecutive suggestions of the same point
+    trackSuggestions([{ collection: 'test-coll', id: 'pt-1' }]);
+    trackSuggestions([{ collection: 'test-coll', id: 'pt-1' }]);
+    const result = trackSuggestions([{ collection: 'test-coll', id: 'pt-1' }]);
+    // After 3 suggestions, pt-1 should be flagged
+    assert.ok(result.flagged.length > 0, 'should flag point after 3 consecutive suggestions');
+    assert.strictEqual(result.flagged[0].id, 'pt-1');
+  });
+
+  it('does NOT flag point suggested fewer than 3 times', () => {
+    suggestionHistory.length = 0;
+    trackSuggestions([{ collection: 'test-coll', id: 'pt-2' }]);
+    const result = trackSuggestions([{ collection: 'test-coll', id: 'pt-2' }]);
+    assert.strictEqual(result.flagged.length, 0, 'should not flag after only 2 suggestions');
+  });
+
+  it('suggestion history is bounded to MAX_SUGGESTION_HISTORY', () => {
+    suggestionHistory.length = 0;
+    // Push 60 entries (exceeds max of 50)
+    for (let i = 0; i < 60; i++) {
+      trackSuggestions([{ collection: 'test-coll', id: `pt-${i}` }]);
+    }
+    assert.ok(suggestionHistory.length <= 50, `history should be bounded, got ${suggestionHistory.length}`);
+  });
+
+  it('resets consecutive count when different point is suggested', () => {
+    suggestionHistory.length = 0;
+    trackSuggestions([{ collection: 'test-coll', id: 'pt-a' }]);
+    trackSuggestions([{ collection: 'test-coll', id: 'pt-a' }]);
+    trackSuggestions([{ collection: 'test-coll', id: 'pt-b' }]); // different point breaks streak
+    const result = trackSuggestions([{ collection: 'test-coll', id: 'pt-a' }]);
+    // pt-a was suggested 3 times total but not 3 consecutive (pt-b in between)
+    // The last 3 entries are: pt-a, pt-b, pt-a — only 1 consecutive for pt-a
+    assert.strictEqual(result.flagged.length, 0, 'non-consecutive suggestions should not flag');
+  });
+});
+
+describe('incrementIgnoreCountData', () => {
+  it('increments ignoreCount on data object', () => {
+    const data = { ignoreCount: 1 };
+    incrementIgnoreCountData(data);
+    assert.strictEqual(data.ignoreCount, 2);
+  });
+
+  it('initializes ignoreCount if missing', () => {
+    const data = {};
+    incrementIgnoreCountData(data);
+    assert.strictEqual(data.ignoreCount, 1);
   });
 });
