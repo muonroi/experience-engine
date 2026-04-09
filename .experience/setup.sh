@@ -788,8 +788,8 @@ const cfg = {
   embedDim:       $EMBED_DIM,
   ollamaUrl:      '$OLLAMA_URL',
   tunnelSsh:      '$TUNNEL_SSH',
-  minConfidence:  0.55,
-  highConfidence: 0.70,
+  minConfidence:  0.42,
+  highConfidence: 0.60,
   version:        '3.1',
   installedAt:    new Date().toISOString()
 };
