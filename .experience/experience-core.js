@@ -80,6 +80,29 @@ async function checkQdrant() {
 const fs = require('fs');
 const pathMod = require('path');
 
+// --- Activity logging (Phase 102) ---
+const ACTIVITY_LOG = process.env.EXPERIENCE_ACTIVITY_LOG || pathMod.join(require('os').homedir(), '.experience', 'activity.jsonl');
+const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB
+
+function activityLog(event) {
+  try {
+    try {
+      const stat = fs.statSync(ACTIVITY_LOG);
+      if (stat.size >= MAX_LOG_SIZE) {
+        try { fs.renameSync(ACTIVITY_LOG, ACTIVITY_LOG + '.1'); } catch { /* race-safe */ }
+      }
+    } catch { /* file may not exist yet — fine */ }
+    const line = JSON.stringify({ ts: new Date().toISOString(), ...event });
+    fs.appendFileSync(ACTIVITY_LOG, line + '\n');
+  } catch { /* never crash the engine */ }
+}
+
+function extractProjectPath(toolInput) {
+  const raw = toolInput?.file_path || toolInput?.path || '';
+  if (!raw) return null;
+  return raw.replace(/\\/g, '/');
+}
+
 function fileStorePath(collection) {
   return pathMod.join(FILESTORE_DIR, `${collection}.json`);
 }
@@ -146,16 +169,21 @@ async function intercept(toolName, toolInput, signal) {
     ...applyBudget(formatPoints(t2), COLLECTIONS[2].budgetChars),
   ];
 
+  activityLog({ op: 'intercept', query: query.slice(0, 120), scores: [...t0, ...t1, ...t2].map(p => p.score).sort((a, b) => b - a).slice(0, 3), result: lines.length > 0 ? 'suggestion' : null, project: extractProjectPath(toolInput) });
+
   return lines.length > 0 ? lines.join('\n---\n') : null;
 }
 
 // --- Extract: detect mistakes and store lessons ---
 
-async function extractFromSession(transcript) {
+async function extractFromSession(transcript, projectPath) {
   if (!transcript || transcript.length < 100) return 0;
 
   const mistakes = detectMistakes(transcript);
-  if (mistakes.length === 0) return 0;
+  if (mistakes.length === 0) {
+    activityLog({ op: 'extract', mistakes: 0, stored: 0, project: projectPath || null });
+    return 0;
+  }
 
   let stored = 0;
   for (const mistake of mistakes.slice(0, 5)) {
@@ -167,6 +195,7 @@ async function extractFromSession(transcript) {
       stored++;
     } catch { /* skip */ }
   }
+  activityLog({ op: 'extract', mistakes: mistakes.length, stored, project: projectPath || null });
   return stored;
 }
 
@@ -611,7 +640,7 @@ async function syncToQdrant() {
 
 // --- Evolution Engine (per D-03) ---
 
-async function evolve() {
+async function evolve(trigger) {
   const results = { promoted: 0, abstracted: 0, demoted: 0, archived: 0 };
 
   // Step 1: Promote T2 -> T1 (per D-04)
@@ -695,6 +724,8 @@ async function evolve() {
       results.archived++;
     }
   }
+
+  activityLog({ op: 'evolve', ...results, trigger: trigger || 'auto' });
 
   return results;
 }
@@ -788,4 +819,4 @@ async function getEmbeddingRaw(text, signal) {
 
 // --- Exports ---
 
-module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw };
+module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, _activityLog: activityLog };
