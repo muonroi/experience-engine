@@ -1,4 +1,4 @@
-# Experience Engine v3.1
+# Experience Engine v3.2
 
 **AI agents that learn from mistakes, not just store facts.**
 
@@ -11,6 +11,13 @@ With experience:    Agent avoids mistakes it's seen before — even in new conte
 
 Works with **Claude Code, Gemini CLI, Codex CLI, OpenCode** — one brain, all agents.
 
+## What's New in v3.2
+
+- **Activity Logging** — every intercept/extract/evolve call writes a structured JSONL event to `~/.experience/activity.jsonl` with 10MB auto-rotation
+- **Anti-Noise Scoring** — search results ranked by hit frequency, recency, confidence aging, and contradiction detection. Confirmed experiences rank higher; stale/ignored ones sink
+- **Context-Aware Query** — detects language/framework from file being edited (`.ts` → TypeScript, `.cs` → C#), enriches search queries, tags stored experiences with domain
+- **Observability CLI** — `node tools/exp-stats.js` shows suggestions fired, hit rate, mistakes avoided, learning velocity, and per-project breakdown with `--since` filtering
+
 ## Quick Start
 
 ```bash
@@ -19,7 +26,7 @@ cd experience-engine
 bash .experience/setup.sh
 ```
 
-Interactive wizard guides you through 3 steps:
+Interactive wizard guides you through:
 
 ```
 Step A — Vector store:
@@ -31,10 +38,13 @@ Step B — Providers (2 separate menus):
   Embed:  [1] OpenAI  [2] Gemini  [3] SiliconFlow  [4] VoyageAI  [5] Custom  [6] Ollama
   Brain:  [1] OpenAI  [2] Gemini  [3] Claude  [4] DeepSeek  [5] SiliconFlow  [6] Custom  [7] Ollama
 
-Step C (optional) — Bootstrap brain from existing memory/rules
+Step C — Agent selection:
+  Choose which AI CLIs to wire up (Claude, Gemini, Codex, OpenCode)
+
+Step D (optional) — Bootstrap brain from existing memory/rules
 ```
 
-**Done.** Brain installs to `~/.experience/`, hooks wire to all agents automatically.
+**Done.** Brain installs to `~/.experience/`, hooks wire to selected agents.
 
 ### Shortcuts
 
@@ -51,15 +61,21 @@ YOU write code with any AI agent
   │
   ├─ BEFORE every Edit/Write/Bash
   │   └─ Hook queries brain: "Have I seen this mistake before?"
-  │   └─ If yes → injects warning: "⚠️ Last time this caused X"
+  │   └─ Detects language from file being edited (.ts → TypeScript)
+  │   └─ Enriches query with language context for better matches
+  │   └─ Ranks results by quality: hit count, recency, confidence, domain match
+  │   └─ If match → injects warning: "⚠️ Last time this caused X"
+  │   └─ Records hit for matched experiences (improves future ranking)
   │
   └─ AFTER every response (Stop hook)
       └─ Extracts lessons from session transcript
+      └─ Tags experiences with detected language/domain
       └─ Stores Q&A in vector DB
-      └─ Next session: agent is smarter
+      └─ Logs event to activity.jsonl (observability)
   │
   └─ DAILY (on Stop hook)
       └─ Evolution engine: promote confirmed patterns, demote contradictions
+      └─ Tracks ignored suggestions → auto-demotes after 3 consecutive ignores
       └─ Memory shrinks as capability grows
 ```
 
@@ -172,15 +188,38 @@ Tune `minConfidence` / `highConfidence` based on your embedding model:
 - Small models (Qwen3-0.6B, nomic-embed-text): `0.42` / `0.60`
 - Large models (text-embedding-3-small, voyage-code-3): `0.55` / `0.70`
 
+## Observability
+
+Check how your experience engine is performing:
+
+```bash
+node tools/exp-stats.js              # last 30 days (default)
+node tools/exp-stats.js --since 7d   # last 7 days
+node tools/exp-stats.js --since 30d  # last 30 days
+node tools/exp-stats.js --all        # all time
+```
+
+Output includes:
+- **Summary** — suggestions fired, hit rate, misses
+- **Mistakes Avoided** — patterns detected vs stored as lessons
+- **Learning Velocity** — extraction rate, promotion stats (T2→T1→T0), evolution frequency
+- **Per-Project Breakdown** — which projects benefit most from the engine
+
 ## File Structure
 
 ```
 .experience/
-  experience-core.js    — brain (config loader + embed + search + extract + evolve)
-  setup.sh              — guided setup wizard (~850 lines)
+  experience-core.js    — brain (config + embed + search + extract + evolve + scoring)
+  stop-extractor.js     — session extraction + evolution trigger
+  setup.sh              — guided setup wizard
   README.md
 
 tools/
+  exp-stats.js            — observability CLI (activity stats + per-project breakdown)
+  test-activity-log.js    — activity logging tests (23 assertions)
+  test-scoring.js         — anti-noise scoring tests (31 tests)
+  test-context.js         — context-aware query tests (29 tests)
+  test-exp-stats.js       — observability CLI tests (19 tests)
   experience-bulk-seed.js — bootstrap brain from existing rule files
   README.md               — bulk-seed usage examples per provider
 ```
