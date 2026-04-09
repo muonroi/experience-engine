@@ -6,10 +6,10 @@
  * Bypasses T3→T2→T1→T0 pipeline — directly seeds validated rules.
  *
  * Usage:
- *   node .claude/hooks/experience-bulk-seed.js
- *   node .claude/hooks/experience-bulk-seed.js --dry-run
- *   node .claude/hooks/experience-bulk-seed.js --memory-dir /custom/path
- *   node .claude/hooks/experience-bulk-seed.js --tier 0   (seed as principles instead)
+ *   node tools/experience-bulk-seed.js
+ *   node tools/experience-bulk-seed.js --dry-run
+ *   node tools/experience-bulk-seed.js --memory-dir /custom/path
+ *   node tools/experience-bulk-seed.js --tier 0   (seed as principles instead)
  */
 
 'use strict';
@@ -18,18 +18,29 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-// --- Config ---
-// Load config from ~/.experience/config.json if available
-let _cfg = {};
-try { _cfg = JSON.parse(require('fs').readFileSync(require('path').join(require('os').homedir(), '.experience', 'config.json'), 'utf8')); } catch {}
+// --- Config from ~/.experience/config.json ---
+const _cfg = (() => {
+  try {
+    return JSON.parse(fs.readFileSync(
+      path.join(require('os').homedir(), '.experience', 'config.json'), 'utf8'
+    ));
+  } catch { return {}; }
+})();
 
-const QDRANT_BASE = process.env.EXPERIENCE_QDRANT_URL || _cfg.qdrantUrl || 'http://localhost:6333';
-const QDRANT_API_KEY = process.env.EXPERIENCE_QDRANT_KEY || _cfg.qdrantKey || '';
-const OLLAMA_BASE = process.env.EXPERIENCE_OLLAMA_URL || _cfg.ollamaUrl || 'http://localhost:11434';
-const EMBED_MODEL = process.env.EXPERIENCE_EMBED_MODEL || _cfg.embedModel || 'nomic-embed-text';
-const EMBED_PROVIDER = process.env.EXPERIENCE_EMBED_PROVIDER || _cfg.embedProvider || 'ollama';
-const EMBED_ENDPOINT = process.env.EXPERIENCE_EMBED_ENDPOINT || _cfg.embedEndpoint || '';
-const EMBED_KEY = process.env.EXPERIENCE_EMBED_KEY || _cfg.embedKey || _cfg.openaiKey || '';
+const QDRANT_BASE = _cfg.qdrantUrl || process.env.EXPERIENCE_QDRANT_URL || 'http://localhost:6333';
+const QDRANT_API_KEY = _cfg.qdrantKey || process.env.EXPERIENCE_QDRANT_KEY || '';
+
+// Import shared embed from experience-core.js (per D-16)
+let getEmbeddingRaw;
+try {
+  ({ getEmbeddingRaw } = require(
+    path.join(require('os').homedir(), '.experience', 'experience-core.js')
+  ));
+} catch (e) {
+  console.error('  [FAIL] Cannot load experience-core.js from ~/.experience/');
+  console.error('  Fix: Run setup.sh first to install the Experience Engine.');
+  process.exit(1);
+}
 
 const COLLECTION_T1 = 'experience-behavioral';
 const COLLECTION_T0 = 'experience-principles';
@@ -89,38 +100,32 @@ function parseMemoryFile(filePath) {
   };
 }
 
-// --- Embed (provider-aware, reads from config.json) ---
-async function embed(text) {
-  if (EMBED_PROVIDER === 'ollama') {
-    const res = await fetch(`${OLLAMA_BASE}/api/embed`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: EMBED_MODEL, input: text }),
-      signal: AbortSignal.timeout(10000),
+// --- Verify collection dimension matches config before seeding (D-18) ---
+async function verifyCollectionDim(collection) {
+  const expectedDim = _cfg.embedDim;
+  if (!expectedDim) {
+    console.error(`  [FAIL] embedDim not set in config.json. Run setup.sh first.`);
+    process.exit(1);
+  }
+  try {
+    const res = await fetch(`${QDRANT_BASE}/collections/${collection}`, {
+      headers: QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {},
+      signal: AbortSignal.timeout(5000),
     });
-    if (!res.ok) throw new Error(`Ollama embed failed: ${res.status}`);
-    return (await res.json()).embeddings?.[0];
-  } else if (EMBED_PROVIDER === 'gemini') {
-    const key = process.env.GEMINI_API_KEY || _cfg.geminiKey || '';
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${EMBED_MODEL}:embedContent?key=${key}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: { parts: [{ text: text.slice(0, 8000) }] } }),
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!res.ok) throw new Error(`Gemini embed failed: ${res.status}`);
-    return (await res.json()).embedding?.values;
-  } else {
-    // OpenAI-compatible (OpenAI, SiliconFlow, Together, etc.)
-    const endpoint = EMBED_ENDPOINT || 'https://api.openai.com/v1/embeddings';
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${EMBED_KEY}` },
-      body: JSON.stringify({ model: EMBED_MODEL, input: text.slice(0, 8000) }),
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!res.ok) throw new Error(`Embed failed: ${res.status} ${await res.text()}`);
-    return (await res.json()).data?.[0]?.embedding;
+    if (!res.ok) {
+      console.error(`  [FAIL] Collection "${collection}" not found. Run setup.sh first.`);
+      process.exit(1);
+    }
+    const data = await res.json();
+    const actualDim = data.result?.config?.params?.vectors?.size;
+    if (actualDim !== expectedDim) {
+      console.error(`  [FAIL] Collection "${collection}" dim=${actualDim}, config expects ${expectedDim}`);
+      console.error(`  Fix: Re-run setup.sh to recreate collections with correct dimensions.`);
+      process.exit(1);
+    }
+  } catch (e) {
+    console.error(`  [FAIL] Cannot reach Qdrant: ${e.message}`);
+    process.exit(1);
   }
 }
 
@@ -157,13 +162,13 @@ async function store(vector, payload, collection) {
 
 // --- Main ---
 async function main() {
-  console.log(`\n🧠 Experience Bulk Seed`);
+  console.log(`\n Experience Bulk Seed`);
   console.log(`   Memory dir: ${MEMORY_DIR}`);
   console.log(`   Target tier: T${TIER} (${TIER === 0 ? 'principles' : 'behavioral'})`);
   console.log(`   Dry run: ${DRY_RUN}\n`);
 
   if (!fs.existsSync(MEMORY_DIR)) {
-    console.error(`✗ Memory dir not found: ${MEMORY_DIR}`);
+    console.error(`[FAIL] Memory dir not found: ${MEMORY_DIR}`);
     process.exit(1);
   }
 
@@ -174,6 +179,12 @@ async function main() {
   console.log(`Found ${files.length} feedback files\n`);
 
   const collection = TIER === 0 ? COLLECTION_T0 : COLLECTION_T1;
+
+  // Verify collection dimension before seeding
+  if (!DRY_RUN) {
+    await verifyCollectionDim(collection);
+  }
+
   let seeded = 0, skipped = 0, failed = 0;
 
   for (const file of files) {
@@ -181,7 +192,7 @@ async function main() {
     const parsed = parseMemoryFile(file);
 
     if (!parsed) {
-      console.log(`  ⚠ ${name} — could not parse, skipping`);
+      console.log(`  ! ${name} — could not parse, skipping`);
       skipped++;
       continue;
     }
@@ -203,36 +214,36 @@ async function main() {
       payload.principle = parsed.solution;
     }
 
-    console.log(`  ◆ ${parsed.name}`);
+    console.log(`  + ${parsed.name}`);
     console.log(`    trigger: ${parsed.trigger.slice(0, 80)}...`);
 
     if (DRY_RUN) {
-      console.log(`    → [dry-run] would store in ${collection}`);
+      console.log(`    -> [dry-run] would store in ${collection}`);
       seeded++;
       continue;
     }
 
     try {
-      const vector = await embed(embedText);
-      if (!vector) { console.log(`    ✗ embed failed`); failed++; continue; }
+      const vector = await getEmbeddingRaw(embedText);
+      if (!vector) { console.log(`    [FAIL] embed returned null`); failed++; continue; }
 
       const dup = await isDuplicate(vector, collection);
-      if (dup) { console.log(`    → duplicate, skipping`); skipped++; continue; }
+      if (dup) { console.log(`    -> duplicate, skipping`); skipped++; continue; }
 
       const id = await store(vector, payload, collection);
-      console.log(`    ✓ stored → ${id.slice(0, 8)}...`);
+      console.log(`    ok stored -> ${id.slice(0, 8)}...`);
       seeded++;
     } catch (e) {
-      console.log(`    ✗ error: ${e.message}`);
+      console.log(`    [FAIL] error: ${e.message}`);
       failed++;
     }
   }
 
-  console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+  console.log(`\n----------------------------------`);
   console.log(` Seeded:  ${seeded}`);
   console.log(` Skipped: ${skipped} (duplicate or parse fail)`);
   console.log(` Failed:  ${failed}`);
-  console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+  console.log(`----------------------------------\n`);
 }
 
 main().catch(e => { console.error(e); process.exit(1); });
