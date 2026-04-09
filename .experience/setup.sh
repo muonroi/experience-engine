@@ -33,6 +33,18 @@ CONFIG_FILE="$INSTALL_DIR/config.json"
 
 if [ -f "$CONFIG_FILE" ] && [ -z "$EXP_RESET_CONFIG" ]; then
   echo "  ✓ Existing config found"
+  echo ""
+  echo "  [1] Keep existing config"
+  echo "  [2] Reconfigure from scratch"
+  printf "  Choice [1/2]: "; read -r REUSE_CHOICE
+  if [ "$REUSE_CHOICE" = "2" ]; then
+    echo "  → Starting fresh..."
+    rm -f "$CONFIG_FILE"
+    # Fall through to interactive prompts below
+  fi
+fi
+
+if [ -f "$CONFIG_FILE" ] && [ -z "$EXP_RESET_CONFIG" ]; then
   # Load config fields via node writing to stdout, read with while+IFS
   while IFS='=' read -r key val; do
     [ -n "$key" ] && export "$key"="$val"
