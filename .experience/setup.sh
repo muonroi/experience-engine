@@ -234,6 +234,70 @@ if [ "$NI_MODE" = "true" ]; then
   KEEP_CONFIG=false
 fi
 
+# ── NI mode dimension probe (must run before config write) ───────────────
+if [ "$NI_MODE" = "true" ] && [ -z "$EMBED_DIM" ]; then
+  echo "  Probing embedding dimension from API..."
+  EMBED_DIM=$(node -e "
+(async () => {
+  const provider = '$EMBED_PROVIDER';
+  const model = '$EMBED_MODEL';
+  const key = '$EMBED_KEY';
+  const endpoint = '$EMBED_ENDPOINT';
+  const ollamaUrl = '$OLLAMA_URL';
+  const testInput = 'dimension probe test';
+  try {
+    let vec;
+    if (provider === 'ollama') {
+      const url = ollamaUrl || 'http://localhost:11434';
+      const res = await fetch(url + '/api/embed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, input: testInput }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) { process.stderr.write('HTTP ' + res.status + '\n'); process.exit(1); }
+      const d = await res.json();
+      vec = d.embeddings?.[0];
+    } else if (provider === 'gemini') {
+      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':embedContent?key=' + key, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: { parts: [{ text: testInput }] } }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) { process.stderr.write('HTTP ' + res.status + '\n'); process.exit(1); }
+      const d = await res.json();
+      vec = d.embedding?.values;
+    } else {
+      const ep = endpoint || 'https://api.openai.com/v1/embeddings';
+      const res = await fetch(ep, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+        body: JSON.stringify({ model, input: testInput }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) { process.stderr.write('HTTP ' + res.status + '\n'); process.exit(1); }
+      const d = await res.json();
+      vec = d.data?.[0]?.embedding;
+    }
+    if (!vec || vec.length === 0) { process.stderr.write('Empty embedding\n'); process.exit(1); }
+    process.stdout.write(String(vec.length));
+  } catch(e) { process.stderr.write(e.message + '\n'); process.exit(1); }
+})();
+" 2>/tmp/exp-dim-err)
+
+  if [ $? -ne 0 ] || [ -z "$EMBED_DIM" ]; then
+    echo ""
+    echo "  [FAIL] Cannot probe embed dimension ($EMBED_PROVIDER / $EMBED_MODEL)"
+    if [ -s /tmp/exp-dim-err ]; then
+      echo "  Error: $(cat /tmp/exp-dim-err)"
+    fi
+    echo "  Fix:   Set EXP_EMBED_DIM=<number> or verify API key/endpoint"
+    exit 1
+  fi
+  echo "  Embed dimension: $EMBED_DIM (probed from API)"
+fi
+
 # ── Step A: Vector store selection ────────────────────────────────────────
 if [ "$KEEP_CONFIG" = "false" ] && [ "$NI_MODE" = "false" ]; then
   echo ""
@@ -729,7 +793,7 @@ const cfg = {
   version:        '3.1',
   installedAt:    new Date().toISOString()
 };
-const target = path.join('$INSTALL_DIR', 'config.json');
+const target = path.join(require('os').homedir(), '.experience', 'config.json');
 const tmp = target + '.tmp';
 try {
   fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2));
@@ -1011,7 +1075,7 @@ done <<< "$_HC_RAW"
 # 1. Embed API probe
 printf "  Embed API (%s)... " "$HC_embedProvider"
 EMBED_RESULT=$(node -e "
-(async(){
+(async () => {
   try {
     const core = require(require('path').join(require('os').homedir(),'.experience','experience-core.js'));
     const vec = await core.getEmbeddingRaw('health check probe');
@@ -1052,7 +1116,7 @@ fi
 # 3. Qdrant collections dimension check
 printf "  Collections... "
 COLL_RESULT=$(node -e "
-(async(){
+(async () => {
   try {
     const cfg = JSON.parse(require('fs').readFileSync(require('path').join(require('os').homedir(),'.experience','config.json'),'utf8'));
     const base = cfg.qdrantUrl || 'http://localhost:6333';
