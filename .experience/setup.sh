@@ -400,6 +400,9 @@ echo "◆ [4/5] Verifying Qdrant collections..."
 QDRANT_AUTH=""
 [ -n "$QDRANT_KEY" ] && QDRANT_AUTH="-H \"api-key: $QDRANT_KEY\""
 
+# Read embedDim from config.json (per D-01)
+EMBED_DIM=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.experience/config.json','utf8')).embedDim||768)}catch{console.log(768)}")
+
 for COLL in experience-principles experience-behavioral experience-selfqa; do
   STATUS=$(eval "curl -s -m 5 $QDRANT_AUTH $QDRANT_URL/collections/$COLL" | grep -o '"status":"[^"]*"' | head -1)
   if echo "$STATUS" | grep -q "green\|yellow"; then
@@ -407,8 +410,8 @@ for COLL in experience-principles experience-behavioral experience-selfqa; do
   else
     eval "curl -s -m 5 -X PUT $QDRANT_AUTH $QDRANT_URL/collections/$COLL \
       -H 'Content-Type: application/json' \
-      -d '{\"vectors\":{\"size\":768,\"distance\":\"Cosine\"}}'" >/dev/null
-    echo "  ✓ $COLL created"
+      -d '{\"vectors\":{\"size\":'$EMBED_DIM',\"distance\":\"Cosine\"}}'" >/dev/null
+    echo "  + $COLL created (dim=$EMBED_DIM)"
   fi
 done
 
