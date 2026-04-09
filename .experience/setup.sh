@@ -32,7 +32,7 @@ echo "◆ [1/5] Resolving config..."
 CONFIG_FILE="$INSTALL_DIR/config.json"
 
 if [ -f "$CONFIG_FILE" ] && [ -z "$EXP_RESET_CONFIG" ]; then
-  echo "  ✓ Existing config found — reusing (set EXP_RESET_CONFIG=1 to reconfigure)"
+  echo "  ✓ Existing config found"
   # Load config fields via node writing to stdout, read with while+IFS
   while IFS='=' read -r key val; do
     [ -n "$key" ] && export "$key"="$val"
@@ -60,6 +60,48 @@ try{
   ].join('\n')+'\n');
 }catch{}
 " 2>/dev/null)
+
+  # Validate: cloud providers MUST have API keys — if missing, force reconfigure
+  CONFIG_VALID=true
+  if [ "$EMBED_PROVIDER" = "openai" ] && [ -z "$OPENAI_KEY" ] && [ -z "$EXP_BRAIN_KEY" ]; then
+    echo "  ⚠ OpenAI selected but no API key found"
+    CONFIG_VALID=false
+  elif [ "$EMBED_PROVIDER" = "gemini" ] && [ -z "$GEMINI_KEY" ]; then
+    echo "  ⚠ Gemini selected but no API key found"
+    CONFIG_VALID=false
+  fi
+  if [ "$BRAIN_PROVIDER" = "claude" ] && [ -z "$ANTHROPIC_KEY" ]; then
+    echo "  ⚠ Claude brain selected but no API key found"
+    CONFIG_VALID=false
+  elif [ "$BRAIN_PROVIDER" = "deepseek" ] && [ -z "$DEEPSEEK_KEY" ]; then
+    echo "  ⚠ DeepSeek brain selected but no API key found"
+    CONFIG_VALID=false
+  fi
+  if [ "$BRAIN_PROVIDER" = "ollama" ] || [ "$EMBED_PROVIDER" = "ollama" ]; then
+    if [ -n "$OLLAMA_URL" ]; then
+      if ! curl -s -m 3 "$OLLAMA_URL/api/tags" >/dev/null 2>&1; then
+        echo "  ⚠ Ollama selected but not reachable at $OLLAMA_URL"
+        CONFIG_VALID=false
+      fi
+    fi
+  fi
+
+  if [ "$CONFIG_VALID" = false ]; then
+    echo ""
+    echo "  Config has issues. What do you want to do?"
+    echo "  [1] Reconfigure (pick new provider)"
+    echo "  [2] Keep and continue anyway"
+    printf "  Choice [1/2]: "; read -r FIX_CHOICE
+    if [ "$FIX_CHOICE" = "1" ]; then
+      # Clear provider vars to trigger interactive prompts
+      unset EMBED_PROVIDER BRAIN_PROVIDER QDRANT_URL
+      echo "  → Reconfiguring..."
+    else
+      echo "  → Keeping existing config"
+    fi
+  else
+    echo "  ✓ Config valid — reusing"
+  fi
 fi
 
 # Env var overrides
