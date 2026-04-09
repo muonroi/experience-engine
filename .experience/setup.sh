@@ -417,9 +417,21 @@ QDRANT_AUTH=""
 EMBED_DIM=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.experience/config.json','utf8')).embedDim||768)}catch{console.log(768)}")
 
 for COLL in experience-principles experience-behavioral experience-selfqa; do
-  STATUS=$(eval "curl -s -m 5 $QDRANT_AUTH $QDRANT_URL/collections/$COLL" | grep -o '"status":"[^"]*"' | head -1)
+  COLL_INFO=$(eval "curl -s -m 5 $QDRANT_AUTH $QDRANT_URL/collections/$COLL" 2>/dev/null)
+  STATUS=$(echo "$COLL_INFO" | grep -o '"status":"[^"]*"' | head -1)
+  CURRENT_DIM=$(echo "$COLL_INFO" | grep -o '"size":[0-9]*' | head -1 | cut -d: -f2)
+
   if echo "$STATUS" | grep -q "green\|yellow"; then
-    echo "  ✓ $COLL exists"
+    if [ -n "$CURRENT_DIM" ] && [ "$CURRENT_DIM" != "$EMBED_DIM" ]; then
+      echo "  ⚠ $COLL dimension mismatch: have ${CURRENT_DIM}, need ${EMBED_DIM} — recreating..."
+      eval "curl -s -m 5 -X DELETE $QDRANT_AUTH $QDRANT_URL/collections/$COLL" >/dev/null
+      eval "curl -s -m 5 -X PUT $QDRANT_AUTH $QDRANT_URL/collections/$COLL \
+        -H 'Content-Type: application/json' \
+        -d '{\"vectors\":{\"size\":'$EMBED_DIM',\"distance\":\"Cosine\"}}'" >/dev/null
+      echo "  ✓ $COLL recreated (dim=$EMBED_DIM)"
+    else
+      echo "  ✓ $COLL exists (dim=$CURRENT_DIM)"
+    fi
   else
     eval "curl -s -m 5 -X PUT $QDRANT_AUTH $QDRANT_URL/collections/$COLL \
       -H 'Content-Type: application/json' \
