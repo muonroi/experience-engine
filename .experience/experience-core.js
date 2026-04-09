@@ -296,9 +296,39 @@ async function extractFromSession(transcript, projectPath) {
   return stored;
 }
 
+// --- Language/context detection ---
+
+const LANG_MAP = {
+  '.ts': 'TypeScript', '.tsx': 'TypeScript React',
+  '.js': 'JavaScript', '.jsx': 'JavaScript React',
+  '.cs': 'C#', '.fs': 'F#',
+  '.py': 'Python', '.rb': 'Ruby',
+  '.rs': 'Rust', '.go': 'Go',
+  '.java': 'Java', '.kt': 'Kotlin',
+  '.swift': 'Swift', '.cpp': 'C++', '.c': 'C',
+  '.lua': 'Lua', '.sh': 'Shell', '.bash': 'Shell',
+  '.ps1': 'PowerShell', '.psm1': 'PowerShell',
+  '.sql': 'SQL', '.graphql': 'GraphQL',
+  '.html': 'HTML', '.css': 'CSS', '.scss': 'SCSS',
+  '.yaml': 'YAML', '.yml': 'YAML', '.json': 'JSON',
+  '.xml': 'XML', '.proto': 'Protobuf',
+  '.dockerfile': 'Docker', '.tf': 'Terraform',
+};
+
+function detectContext(filePath) {
+  if (!filePath) return null;
+  const normalized = filePath.replace(/\\/g, '/');
+  const parts = normalized.split('.');
+  if (parts.length < 2) return null;
+  const ext = '.' + parts.pop().toLowerCase();
+  return LANG_MAP[ext] || null;
+}
+
 // --- Query construction ---
 
 function buildQuery(toolName, toolInput) {
+  const filePath = toolInput?.file_path || toolInput?.path || '';
+  const context = detectContext(filePath);
   let raw;
   // Normalize tool names across agents
   const tool = (toolName || '').toLowerCase();
@@ -311,6 +341,9 @@ function buildQuery(toolName, toolInput) {
     raw = `Write: ${toolInput.file_path || toolInput.path || ''} — ${(toolInput.content || '').slice(0, 300)}`;
   } else {
     raw = `${toolName}: ${JSON.stringify(toolInput).slice(0, 200)}`;
+  }
+  if (context) {
+    raw = `[${context}] ${raw}`;
   }
   return raw.slice(0, QUERY_MAX_CHARS);
 }
@@ -526,12 +559,13 @@ async function isDuplicate(qa) {
 
 // --- Store ---
 
-function buildStorePayload(id, qa) {
+function buildStorePayload(id, qa, domain) {
   return {
     id, trigger: qa.trigger, question: qa.question,
     reasoning: qa.reasoning || [], solution: qa.solution,
     confidence: 0.5, hitCount: 0, tier: 2,
     lastHitAt: null, ignoreCount: 0,
+    domain: domain || null,
     createdAt: new Date().toISOString(), createdFrom: 'session-extractor',
   };
 }
@@ -658,7 +692,7 @@ function computeEffectiveConfidence(data) {
   return base * ageFactor;
 }
 
-function computeEffectiveScore(point, data) {
+function computeEffectiveScore(point, data, queryDomain) {
   const cosine = point.score || 0;
   const hitBoost = Math.log2(1 + (data.hitCount || 0)) * 0.05;
   const daysSinceHit = data.lastHitAt
@@ -668,7 +702,8 @@ function computeEffectiveScore(point, data) {
     ? Math.min(0.15, (daysSinceHit - 30) / 335 * 0.15)
     : 0;
   const ignorePenalty = (data.ignoreCount || 0) >= 3 ? 0.10 : 0;
-  return cosine + hitBoost - recencyPenalty - ignorePenalty;
+  const domainPenalty = (queryDomain && !data.domain) ? 0.03 : 0;
+  return cosine + hitBoost - recencyPenalty - ignorePenalty - domainPenalty;
 }
 
 function rerankByQuality(points) {
@@ -963,4 +998,4 @@ async function getEmbeddingRaw(text, signal) {
 
 // --- Exports ---
 
-module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, _activityLog: activityLog, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _suggestionHistory, _incrementIgnoreCountData: incrementIgnoreCountData };
+module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa, null), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _suggestionHistory, _incrementIgnoreCountData: incrementIgnoreCountData };
