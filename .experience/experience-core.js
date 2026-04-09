@@ -209,6 +209,55 @@ function detectMistakes(transcript) {
     }
   }
 
+  // User correction (per D-10, D-12) — proximity window after tool call
+  const toolCallPattern = /Tool(Use|Call)|tool_name|toolName|>\s*(Edit|Write|Bash|Read)/i;
+  const correctionPattern = /\b(no[,.]?\s|wrong|don't|instead|not that|stop|undo|revert this)\b/i;
+  for (let i = 0; i < lines.length; i++) {
+    if (toolCallPattern.test(lines[i])) {
+      // Check next 5 lines for user correction
+      for (let j = i + 1; j <= Math.min(i + 5, lines.length - 1); j++) {
+        if (correctionPattern.test(lines[j])) {
+          mistakes.push({
+            type: 'user_correction',
+            context: `User corrected agent after tool call at line ${i}`,
+            excerpt: lines.slice(Math.max(0, i - 1), j + 2).join('\n')
+          });
+          break;
+        }
+      }
+    }
+  }
+
+  // Test fail -> fix (per D-10)
+  const testFailPattern = /\bFAIL\b|test\s+failed|AssertionError|AssertError|FAILED|assert\.|expect\(.*\)\.to/i;
+  const fixActionPattern = /(Edit|Write|write_file|replace|replace_in_file)/i;
+  for (let i = 0; i < lines.length; i++) {
+    if (testFailPattern.test(lines[i])) {
+      for (let j = i + 1; j <= Math.min(i + 10, lines.length - 1); j++) {
+        if (fixActionPattern.test(lines[j])) {
+          mistakes.push({
+            type: 'test_fail_fix',
+            context: `Test failure at line ${i} followed by fix at line ${j}`,
+            excerpt: lines.slice(Math.max(0, i - 1), j + 3).join('\n')
+          });
+          break;
+        }
+      }
+    }
+  }
+
+  // Git revert (per D-10)
+  const gitRevertPattern = /git\s+(revert|reset\s+--hard|checkout\s+--\s|restore\s)/i;
+  for (let i = 0; i < lines.length; i++) {
+    if (gitRevertPattern.test(lines[i])) {
+      mistakes.push({
+        type: 'git_revert',
+        context: `Git revert/reset detected at line ${i}`,
+        excerpt: lines.slice(Math.max(0, i - 3), i + 3).join('\n')
+      });
+    }
+  }
+
   return mistakes;
 }
 
