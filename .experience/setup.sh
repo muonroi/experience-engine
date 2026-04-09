@@ -247,6 +247,19 @@ async function main() {
   const count = await extractFromSession(transcript);
   fs.writeFileSync(MARKER, JSON.stringify({ file: log, line: lines.length }));
   if (count > 0) process.stderr.write('🧠 Experience: +' + count + ' lessons\n');
+  // Evolution trigger with 24h throttle (per D-08)
+  try {
+    const evolveMarker = home + '/.experience/.evolve-marker';
+    let lastEvolve = 0;
+    try { lastEvolve = JSON.parse(fs.readFileSync(evolveMarker, 'utf8')).ts || 0; } catch {}
+    if (Date.now() - lastEvolve > 86400000) { // 24 hours
+      const { evolve } = require(home + '/.experience/experience-core.js');
+      const r = await evolve();
+      fs.writeFileSync(evolveMarker, JSON.stringify({ ts: Date.now() }));
+      const total = r.promoted + r.abstracted + r.demoted + r.archived;
+      if (total > 0) process.stderr.write('🧬 Evolution: +' + r.promoted + ' promoted, ' + r.abstracted + ' abstracted, ' + r.demoted + ' demoted, ' + r.archived + ' archived\n');
+    }
+  } catch {}
 }
 function findCurrentSession() {
   const dir = path.join(home, '.claude', 'projects');

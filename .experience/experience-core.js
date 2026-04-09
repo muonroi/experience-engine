@@ -599,6 +599,177 @@ async function syncToQdrant() {
   return synced;
 }
 
+// --- Evolution Engine (per D-03) ---
+
+async function evolve() {
+  const results = { promoted: 0, abstracted: 0, demoted: 0, archived: 0 };
+
+  // Step 1: Promote T2 -> T1 (per D-04)
+  // Read all T2 entries, filter hitCount >= 3, write to T1, delete from T2
+  const t2Entries = await getAllEntries('experience-selfqa');
+  for (const entry of t2Entries) {
+    const data = parsePayload(entry);
+    if (!data || (data.hitCount || 0) < 3) continue;
+    data.tier = 1;
+    data.promotedAt = new Date().toISOString();
+    const vector = entry.vector || await getEmbedding(`${data.trigger} ${data.solution}`);
+    if (!vector) continue;
+    await upsertEntry('experience-behavioral', entry.id, vector, data);
+    await deleteEntry('experience-selfqa', entry.id);
+    results.promoted++;
+  }
+
+  // Step 2: Abstract T2 clusters -> T0 (per D-05)
+  // Cluster T2 by cosine > 0.80, groups of 3+ -> brain abstract -> T0 principle
+  const remainingT2 = await getAllEntries('experience-selfqa');
+  const clustered = clusterByCosine(remainingT2, 0.80);
+  for (const cluster of clustered) {
+    if (cluster.length < 3) continue;
+    const summaries = cluster.map(e => {
+      const d = parsePayload(e);
+      return d ? `${d.trigger}: ${d.solution}` : '';
+    }).filter(Boolean);
+
+    const prompt = `Given these ${summaries.length} related experiences, extract ONE general principle covering all cases. Format as JSON: {"principle":"When [condition], always [action] because [reason]"}\n\n${summaries.join('\n')}`;
+
+    const brains = { ollama: brainOllama, openai: brainOpenAI, gemini: brainGemini, claude: brainClaude, deepseek: brainDeepSeek };
+    const fn = brains[BRAIN_PROVIDER] || brains.ollama;
+    const result = await fn(prompt);
+    if (!result?.principle) continue;
+
+    const vector = await getEmbedding(result.principle);
+    if (!vector) continue;
+
+    const id = crypto.randomUUID();
+    await upsertEntry('experience-principles', id, vector, {
+      id, principle: result.principle, solution: result.principle,
+      tier: 0, confidence: 0.85, hitCount: 0,
+      createdAt: new Date().toISOString(), createdFrom: 'evolution-abstraction',
+      sourceCount: cluster.length,
+    });
+
+    // Delete source entries from T2
+    for (const e of cluster) {
+      await deleteEntry('experience-selfqa', e.id);
+    }
+    results.abstracted++;
+  }
+
+  // Step 3: Demote T1 -> T2 (per D-06)
+  const t1Entries = await getAllEntries('experience-behavioral');
+  for (const entry of t1Entries) {
+    const data = parsePayload(entry);
+    if (!data) continue;
+    if (data.contradiction || (data.hitCount || 0) < 0) {
+      data.tier = 2;
+      data.confidence = Math.max(0.1, (data.confidence || 0.5) - 0.2);
+      data.demotedAt = new Date().toISOString();
+      const vector = entry.vector || await getEmbedding(`${data.trigger} ${data.solution}`);
+      if (!vector) continue;
+      await upsertEntry('experience-selfqa', entry.id, vector, data);
+      await deleteEntry('experience-behavioral', entry.id);
+      results.demoted++;
+    }
+  }
+
+  // Step 4: Archive stale T2 (per D-07)
+  const now = Date.now();
+  const NINETY_DAYS = 90 * 24 * 60 * 60 * 1000;
+  const allT2 = await getAllEntries('experience-selfqa');
+  for (const entry of allT2) {
+    const data = parsePayload(entry);
+    if (!data) continue;
+    const age = now - new Date(data.createdAt || 0).getTime();
+    if (age > NINETY_DAYS && (data.hitCount || 0) === 0) {
+      await deleteEntry('experience-selfqa', entry.id);
+      results.archived++;
+    }
+  }
+
+  return results;
+}
+
+// --- Evolution helpers ---
+
+function parsePayload(entry) {
+  try { return JSON.parse(entry.payload?.json || '{}'); } catch { return null; }
+}
+
+function clusterByCosine(entries, threshold) {
+  // Simple pairwise greedy clustering
+  const used = new Set();
+  const clusters = [];
+  for (let i = 0; i < entries.length; i++) {
+    if (used.has(i) || !entries[i].vector) continue;
+    const cluster = [entries[i]];
+    used.add(i);
+    for (let j = i + 1; j < entries.length; j++) {
+      if (used.has(j) || !entries[j].vector) continue;
+      if (cosineSimilarity(entries[i].vector, entries[j].vector) > threshold) {
+        cluster.push(entries[j]);
+        used.add(j);
+      }
+    }
+    clusters.push(cluster);
+  }
+  return clusters;
+}
+
+async function getAllEntries(collection) {
+  if (!(await checkQdrant())) {
+    return fileStoreRead(collection);
+  }
+  // Qdrant: scroll all points
+  const points = [];
+  let offset = null;
+  do {
+    try {
+      const body = { limit: 100, with_payload: true, with_vector: true };
+      if (offset) body.offset = offset;
+      const res = await fetch(`${QDRANT_BASE}/collections/${collection}/points/scroll`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) break;
+      const data = await res.json();
+      const batch = data.result?.points || [];
+      points.push(...batch);
+      offset = data.result?.next_page_offset || null;
+    } catch { break; }
+  } while (offset);
+  return points;
+}
+
+async function upsertEntry(collection, id, vector, data) {
+  const payload = { json: JSON.stringify(data) };
+  if (!(await checkQdrant())) {
+    fileStoreUpsert(collection, id, vector, payload);
+    return;
+  }
+  await fetch(`${QDRANT_BASE}/collections/${collection}/points`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+    body: JSON.stringify({ points: [{ id, vector, payload }] }),
+    signal: AbortSignal.timeout(5000),
+  });
+}
+
+async function deleteEntry(collection, id) {
+  if (!(await checkQdrant())) {
+    const entries = fileStoreRead(collection);
+    fileStoreWrite(collection, entries.filter(e => e.id !== id));
+    return;
+  }
+  await fetch(`${QDRANT_BASE}/collections/${collection}/points/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+    body: JSON.stringify({ points: [id] }),
+    signal: AbortSignal.timeout(5000),
+  });
+}
+
 // --- Exports ---
 
-module.exports = { intercept, extractFromSession, recordHit, syncToQdrant };
+module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve };
