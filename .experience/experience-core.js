@@ -163,13 +163,34 @@ async function intercept(toolName, toolInput, signal) {
     searchCollection(COLLECTIONS[2].name, vector, COLLECTIONS[2].topK, signal),
   ]);
 
+  // Rerank by quality score before formatting (Phase 103)
+  const r0 = rerankByQuality(t0);
+  const r1 = rerankByQuality(t1);
+  const r2 = rerankByQuality(t2);
+
   const lines = [
-    ...applyBudget(formatPoints(t0), COLLECTIONS[0].budgetChars),
-    ...applyBudget(formatPoints(t1), COLLECTIONS[1].budgetChars),
-    ...applyBudget(formatPoints(t2), COLLECTIONS[2].budgetChars),
+    ...applyBudget(formatPoints(r0), COLLECTIONS[0].budgetChars),
+    ...applyBudget(formatPoints(r1), COLLECTIONS[1].budgetChars),
+    ...applyBudget(formatPoints(r2), COLLECTIONS[2].budgetChars),
   ];
 
-  activityLog({ op: 'intercept', query: query.slice(0, 120), scores: [...t0, ...t1, ...t2].map(p => p.score).sort((a, b) => b - a).slice(0, 3), result: lines.length > 0 ? 'suggestion' : null, project: extractProjectPath(toolInput) });
+  // Fire-and-forget recordHit for each surfaced point (Phase 103)
+  const allReranked = [
+    ...r0.map(p => ({ ...p, _collection: COLLECTIONS[0].name })),
+    ...r1.map(p => ({ ...p, _collection: COLLECTIONS[1].name })),
+    ...r2.map(p => ({ ...p, _collection: COLLECTIONS[2].name })),
+  ];
+  const surfaced = allReranked.filter(p => {
+    try {
+      const exp = JSON.parse(p.payload?.json || '{}');
+      return exp.solution && computeEffectiveConfidence(exp) >= MIN_CONFIDENCE;
+    } catch { return false; }
+  });
+  if (surfaced.length > 0) {
+    Promise.all(surfaced.map(p => recordHit(p._collection, p.id))).catch(() => {});
+  }
+
+  activityLog({ op: 'intercept', query: query.slice(0, 120), scores: [...r0, ...r1, ...r2].map(p => p._effectiveScore ?? p.score).sort((a, b) => b - a).slice(0, 3), result: lines.length > 0 ? 'suggestion' : null, project: extractProjectPath(toolInput) });
 
   return lines.length > 0 ? lines.join('\n---\n') : null;
 }
@@ -429,6 +450,16 @@ async function isDuplicate(qa) {
 
 // --- Store ---
 
+function buildStorePayload(id, qa) {
+  return {
+    id, trigger: qa.trigger, question: qa.question,
+    reasoning: qa.reasoning || [], solution: qa.solution,
+    confidence: 0.5, hitCount: 0, tier: 2,
+    lastHitAt: null, ignoreCount: 0,
+    createdAt: new Date().toISOString(), createdFrom: 'session-extractor',
+  };
+}
+
 async function storeExperience(qa) {
   const text = `${qa.trigger} ${qa.question} ${qa.solution}`;
   const vector = await getEmbedding(text);
@@ -436,12 +467,7 @@ async function storeExperience(qa) {
 
   const id = crypto.randomUUID();
   const payload = {
-    json: JSON.stringify({
-      id, trigger: qa.trigger, question: qa.question,
-      reasoning: qa.reasoning || [], solution: qa.solution,
-      confidence: 0.5, hitCount: 0, tier: 2,
-      createdAt: new Date().toISOString(), createdFrom: 'session-extractor',
-    })
+    json: JSON.stringify(buildStorePayload(id, qa))
   };
 
   if (!(await checkQdrant())) {
@@ -584,15 +610,18 @@ function rerankByQuality(points) {
 function formatPoints(points) {
   const lines = [];
   for (const point of points) {
-    const score = point.score ?? 0;
-    if (score < MIN_CONFIDENCE) continue;
     let exp;
     try { exp = JSON.parse(point.payload?.json || '{}'); } catch { continue; }
     if (!exp.solution) continue;
-    if (score >= HIGH_CONFIDENCE) {
-      lines.push(`⚠️ [Experience - High Confidence (${score.toFixed(2)})]: ${exp.solution}`);
+    // Use effective confidence for the MIN_CONFIDENCE filter (NOISE-03)
+    const effConf = computeEffectiveConfidence(exp);
+    if (effConf < MIN_CONFIDENCE) continue;
+    // Use _effectiveScore (from rerankByQuality) for display, fallback to raw score
+    const displayScore = point._effectiveScore ?? point.score ?? 0;
+    if (displayScore >= HIGH_CONFIDENCE) {
+      lines.push(`⚠️ [Experience - High Confidence (${displayScore.toFixed(2)})]: ${exp.solution}`);
     } else {
-      lines.push(`💡 [Suggestion (${score.toFixed(2)})]: ${exp.solution}`);
+      lines.push(`💡 [Suggestion (${displayScore.toFixed(2)})]: ${exp.solution}`);
     }
   }
   return lines;
@@ -611,6 +640,13 @@ function applyBudget(lines, maxChars) {
 
 // --- recordHit: increment hitCount on experience entries ---
 
+function applyHitUpdate(data) {
+  data.hitCount = (data.hitCount || 0) + 1;
+  data.lastHitAt = new Date().toISOString();
+  data.ignoreCount = 0;
+  return data;
+}
+
 async function recordHit(collection, pointId) {
   if (!(await checkQdrant())) {
     // FileStore: update hitCount in-place
@@ -618,7 +654,7 @@ async function recordHit(collection, pointId) {
     const entry = entries.find(e => e.id === pointId);
     if (entry && entry.payload?.json) {
       const data = JSON.parse(entry.payload.json);
-      data.hitCount = (data.hitCount || 0) + 1;
+      applyHitUpdate(data);
       entry.payload.json = JSON.stringify(data);
       fileStoreWrite(collection, entries);
     }
@@ -634,7 +670,7 @@ async function recordHit(collection, pointId) {
     const point = (await res.json()).result;
     if (!point?.payload?.json) return;
     const data = JSON.parse(point.payload.json);
-    data.hitCount = (data.hitCount || 0) + 1;
+    applyHitUpdate(data);
     await fetch(`${QDRANT_BASE}/collections/${collection}/points/payload`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
@@ -851,4 +887,4 @@ async function getEmbeddingRaw(text, signal) {
 
 // --- Exports ---
 
-module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, _activityLog: activityLog, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality };
+module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, _activityLog: activityLog, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa), _recordHitUpdatesFields: applyHitUpdate };
