@@ -610,6 +610,7 @@ function buildStorePayload(id, qa, domain) {
     reasoning: qa.reasoning || [], solution: qa.solution,
     confidence: 0.5, hitCount: 0, tier: 2,
     lastHitAt: null, ignoreCount: 0,
+    confirmedAt: [],  // Phase 108: temporal trace
     domain: domain || null,
     createdAt: new Date().toISOString(), createdFrom: 'session-extractor',
   };
@@ -785,7 +786,18 @@ function computeEffectiveScore(point, data, queryDomain) {
     : 0;
   const ignorePenalty = (data.ignoreCount || 0) >= 3 ? 0.10 : 0;
   const domainPenalty = (queryDomain && !data.domain) ? 0.03 : 0;
-  return cosine + hitBoost - recencyPenalty - ignorePenalty - domainPenalty;
+  // Phase 108: temporal boost/penalty from confirmedAt trace
+  let temporalAdj = 0;
+  const confirmed = Array.isArray(data.confirmedAt) ? data.confirmedAt : [];
+  if (confirmed.length > 0) {
+    const mostRecent = new Date(confirmed[confirmed.length - 1]).getTime();
+    const daysSinceConfirm = (Date.now() - mostRecent) / 86400000;
+    if (daysSinceConfirm <= 7) temporalAdj = 0.05;       // recently confirmed — boost
+    else if (daysSinceConfirm > 60) temporalAdj = -0.08;  // stale — penalty
+  }
+  // Phase 108: superseded experience penalty
+  const supersededPenalty = data.superseded ? 0.15 : 0;
+  return cosine + hitBoost - recencyPenalty - ignorePenalty - domainPenalty + temporalAdj - supersededPenalty;
 }
 
 function rerankByQuality(points, queryDomain) {
@@ -837,6 +849,10 @@ function applyHitUpdate(data) {
   data.hitCount = (data.hitCount || 0) + 1;
   data.lastHitAt = new Date().toISOString();
   data.ignoreCount = 0;
+  // Phase 108: temporal trace — append to confirmedAt (cap at 50)
+  if (!Array.isArray(data.confirmedAt)) data.confirmedAt = [];
+  data.confirmedAt.push(data.lastHitAt);
+  if (data.confirmedAt.length > 50) data.confirmedAt = data.confirmedAt.slice(-50);
   return data;
 }
 

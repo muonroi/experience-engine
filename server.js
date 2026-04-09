@@ -21,7 +21,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { intercept, extractFromSession, evolve, getEdgesForId } = require('./.experience/experience-core');
+const { intercept, extractFromSession, evolve, getEdgesForId, getEmbeddingRaw } = require('./.experience/experience-core');
 const { parseSince, loadEvents, filterEvents, computeStats, loadTop5 } = require('./tools/exp-stats');
 
 // --- Config ---
@@ -149,6 +149,63 @@ async function handleGraph(req, res, url) {
   json(res, { id, edges: enriched, count: enriched.length });
 }
 
+async function handleTimeline(req, res, url) {
+  const topic = url.searchParams.get('topic');
+  if (!topic) return error(res, 'topic query parameter is required');
+
+  // Semantic search for experiences matching the topic
+  const vector = await getEmbeddingRaw(topic);
+  if (!vector) return error(res, 'Embedding unavailable', 503);
+
+  // Search across all experience collections
+  const collections = ['experience-principles', 'experience-behavioral', 'experience-selfqa'];
+  const allResults = [];
+  for (const coll of collections) {
+    try {
+      const fs = require('node:fs');
+      const pathMod = require('node:path');
+      const storeDir = pathMod.join(os.homedir(), '.experience', 'store');
+      const filePath = pathMod.join(storeDir, `${coll}.json`);
+      const entries = (() => { try { return JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch { return []; } })();
+      for (const entry of entries) {
+        if (!entry.vector || entry.vector.length !== vector.length) continue;
+        let dot = 0, na = 0, nb = 0;
+        for (let i = 0; i < vector.length; i++) { dot += vector[i] * entry.vector[i]; na += vector[i] ** 2; nb += entry.vector[i] ** 2; }
+        const sim = Math.sqrt(na) * Math.sqrt(nb) === 0 ? 0 : dot / (Math.sqrt(na) * Math.sqrt(nb));
+        if (sim > 0.5) {
+          const data = (() => { try { return JSON.parse(entry.payload?.json || '{}'); } catch { return {}; } })();
+          allResults.push({ id: entry.id, collection: coll, score: sim, ...data });
+        }
+      }
+    } catch { /* skip collection */ }
+  }
+
+  // Sort by most recent confirmation (confirmedAt last entry, fallback to createdAt)
+  allResults.sort((a, b) => {
+    const aTime = (Array.isArray(a.confirmedAt) && a.confirmedAt.length > 0) ? new Date(a.confirmedAt[a.confirmedAt.length - 1]).getTime() : new Date(a.createdAt || 0).getTime();
+    const bTime = (Array.isArray(b.confirmedAt) && b.confirmedAt.length > 0) ? new Date(b.confirmedAt[b.confirmedAt.length - 1]).getTime() : new Date(b.createdAt || 0).getTime();
+    return bTime - aTime;
+  });
+
+  // Check for supersedes edges
+  const { getEdgesOfType } = require('./.experience/experience-core');
+  const supersedes = getEdgesOfType('supersedes');
+  const supersededIds = new Set(supersedes.map(e => e.target));
+
+  const timeline = allResults.slice(0, 20).map(r => ({
+    id: r.id,
+    trigger: r.trigger,
+    solution: r.solution,
+    tier: r.tier,
+    confirmedAt: r.confirmedAt || [],
+    createdAt: r.createdAt,
+    superseded: supersededIds.has(r.id),
+    score: parseFloat(r.score.toFixed(3)),
+  }));
+
+  json(res, { topic, timeline, count: timeline.length });
+}
+
 // --- Server ---
 
 const server = http.createServer(async (req, res) => {
@@ -169,6 +226,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/evolve' && req.method === 'POST') return await handleEvolve(req, res);
     if (p === '/api/stats' && req.method === 'GET') return await handleStats(req, res, url);
     if (p === '/api/graph' && req.method === 'GET') return await handleGraph(req, res, url);
+    if (p === '/api/timeline' && req.method === 'GET') return await handleTimeline(req, res, url);
     error(res, 'Not found', 404);
   } catch (err) {
     error(res, err.message || 'Internal server error', 500);
@@ -186,4 +244,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { server, handleHealth, handleIntercept, handleExtract, handleEvolve, handleStats, handleGraph };
+module.exports = { server, handleHealth, handleIntercept, handleExtract, handleEvolve, handleStats, handleGraph, handleTimeline };

@@ -161,6 +161,24 @@ server.listen(0, async () => {
     console.log('\n--- GET /api/graph CORS ---');
     assert(graphUnknownRes.headers.get('access-control-allow-origin') === '*', 'graph has CORS');
 
+    // 18. Timeline endpoint — missing topic
+    console.log('\n--- GET /api/timeline (no topic) ---');
+    const timelineNoTopicRes = await fetch(`${base}/api/timeline`);
+    assert(timelineNoTopicRes.status === 400, 'timeline without topic returns 400');
+
+    // 19. Timeline endpoint — with topic (may return 503 if no embed provider, or 200)
+    console.log('\n--- GET /api/timeline?topic=test ---');
+    const timelineRes = await fetch(`${base}/api/timeline?topic=test`);
+    assert(timelineRes.status === 200 || timelineRes.status === 503, 'timeline returns 200 or 503');
+    if (timelineRes.status === 200) {
+      const timelineData = await timelineRes.json();
+      assert(Array.isArray(timelineData.timeline), 'timeline returns timeline array');
+      assert('count' in timelineData, 'timeline has count field');
+    }
+
+    // 20. Timeline CORS
+    assert(timelineNoTopicRes.headers.get('access-control-allow-origin') === '*', 'timeline has CORS');
+
   } finally {
     server.close();
     console.log(`\n${'='.repeat(40)}`);
