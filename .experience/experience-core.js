@@ -893,14 +893,24 @@ async function evolve(trigger) {
   }
 
   // Step 3: Demote T1 -> T2 (per D-06)
+  // Demotion triggers:
+  //   - ignoreCount >= 3: agent repeatedly ignores this suggestion (tracked by NOISE-04)
+  //   - confidence decayed below MIN_CONFIDENCE after aging
+  //   - contradiction flag set externally (future: user override)
   const t1Entries = await getAllEntries('experience-behavioral');
   for (const entry of t1Entries) {
     const data = parsePayload(entry);
     if (!data) continue;
-    if (data.contradiction || (data.hitCount || 0) < 0) {
+    const shouldDemote = data.contradiction
+      || (data.ignoreCount || 0) >= 3
+      || computeEffectiveConfidence(data) < MIN_CONFIDENCE;
+    if (shouldDemote) {
       data.tier = 2;
       data.confidence = Math.max(0.1, (data.confidence || 0.5) - 0.2);
       data.demotedAt = new Date().toISOString();
+      data.demoteReason = data.contradiction ? 'contradiction'
+        : (data.ignoreCount || 0) >= 3 ? 'ignored'
+        : 'confidence_decay';
       const vector = entry.vector || await getEmbedding(`${data.trigger} ${data.solution}`);
       if (!vector) continue;
       await upsertEntry('experience-selfqa', entry.id, vector, data);
