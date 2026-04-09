@@ -21,7 +21,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { intercept, extractFromSession, evolve } = require('./.experience/experience-core');
+const { intercept, extractFromSession, evolve, getEdgesForId } = require('./.experience/experience-core');
 const { parseSince, loadEvents, filterEvents, computeStats, loadTop5 } = require('./tools/exp-stats');
 
 // --- Config ---
@@ -135,6 +135,20 @@ async function handleStats(req, res, url) {
   json(res, { since: allTime ? 'all' : (sinceParam || '7d'), ...stats, top5 });
 }
 
+async function handleGraph(req, res, url) {
+  const id = url.searchParams.get('id');
+  if (!id) return error(res, 'id query parameter is required');
+
+  const edges = getEdgesForId(id);
+  const enriched = edges.map(edge => {
+    const targetId = edge.source === id ? edge.target : edge.source;
+    const direction = edge.source === id ? 'outgoing' : 'incoming';
+    return { type: edge.type, target: targetId, weight: edge.weight, direction, createdAt: edge.createdAt };
+  });
+
+  json(res, { id, edges: enriched, count: enriched.length });
+}
+
 // --- Server ---
 
 const server = http.createServer(async (req, res) => {
@@ -154,6 +168,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/extract' && req.method === 'POST') return await handleExtract(req, res);
     if (p === '/api/evolve' && req.method === 'POST') return await handleEvolve(req, res);
     if (p === '/api/stats' && req.method === 'GET') return await handleStats(req, res, url);
+    if (p === '/api/graph' && req.method === 'GET') return await handleGraph(req, res, url);
     error(res, 'Not found', 404);
   } catch (err) {
     error(res, err.message || 'Internal server error', 500);
@@ -171,4 +186,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { server, handleHealth, handleIntercept, handleExtract, handleEvolve, handleStats };
+module.exports = { server, handleHealth, handleIntercept, handleExtract, handleEvolve, handleStats, handleGraph };

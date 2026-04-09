@@ -245,6 +245,30 @@ async function intercept(toolName, toolInput, signal) {
     ...applyBudget(formatPoints(r2), COLLECTIONS[2].budgetChars),
   ];
 
+  // Phase 107: 1-hop graph-augmented retrieval
+  try {
+    const allIds = [...r0, ...r1, ...r2].map(p => p.id).filter(Boolean);
+    const seenIds = new Set(allIds);
+    for (const rid of allIds) {
+      const edges = getEdgesForId(rid);
+      for (const edge of edges) {
+        const targetId = edge.source === rid ? edge.target : edge.source;
+        if (seenIds.has(targetId)) continue;
+        seenIds.add(targetId);
+        for (const coll of COLLECTIONS) {
+          const found = await fetchPointById(coll.name, targetId);
+          if (found) {
+            const graphPoint = { ...found, score: (found.score || 0.5) * edge.weight * 0.8, _collection: coll.name, _graphEdge: edge.type };
+            const graphFormatted = formatPoints([graphPoint]);
+            const graphBudgeted = applyBudget(graphFormatted, 600);
+            lines.push(...graphBudgeted);
+            break;
+          }
+        }
+      }
+    }
+  } catch { /* never block intercept on graph failures */ }
+
   // Fire-and-forget recordHit for each surfaced point (Phase 103)
   const allReranked = [
     ...r0.map(p => ({ ...p, _collection: COLLECTIONS[0].name })),
@@ -709,6 +733,23 @@ async function embedVoyageAI(text, signal) {
 }
 
 // --- Qdrant search ---
+
+async function fetchPointById(collection, pointId) {
+  if (!(await checkQdrant())) {
+    const entries = fileStoreRead(collection);
+    const found = entries.find(e => e.id === pointId);
+    return found ? { id: found.id, score: 1.0, payload: found.payload } : null;
+  }
+  try {
+    const res = await fetch(`${QDRANT_BASE}/collections/${collection}/points/${pointId}`, {
+      headers: { 'Content-Type': 'application/json', ...(QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {}) },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.result ? { id: data.result.id, score: 1.0, payload: data.result.payload } : null;
+  } catch { return null; }
+}
 
 async function searchCollection(name, vector, topK, signal) {
   if (!(await checkQdrant())) return fileStoreSearch(name, vector, topK);
