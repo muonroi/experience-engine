@@ -18,7 +18,7 @@ SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo " Experience Engine v3.1 — Setup Wizard"
+echo " Experience Engine v3.2 — Setup Wizard"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo " Install dir: $INSTALL_DIR"
 echo ""
@@ -46,6 +46,9 @@ Non-interactive mode (CI/scripts):
     EXP_EMBED_ENDPOINT   custom embed endpoint URL (for siliconflow/custom)
     EXP_BRAIN_ENDPOINT   custom brain endpoint URL (for siliconflow/custom)
     EXP_OLLAMA_URL       Ollama URL (default: http://localhost:11434)
+    EXP_AGENTS           comma-separated agent list (default: all)
+                         values: claude,gemini,codex,opencode
+                         example: EXP_AGENTS=claude,gemini
 
   Example:
     EXP_QDRANT_URL=http://localhost:6333 EXP_EMBED_PROVIDER=openai \
@@ -790,7 +793,7 @@ const cfg = {
   tunnelSsh:      '$TUNNEL_SSH',
   minConfidence:  0.42,
   highConfidence: 0.60,
-  version:        '3.1',
+  version:        '3.2',
   installedAt:    new Date().toISOString()
 };
 const target = path.join(require('os').homedir(), '.experience', 'config.json');
@@ -931,9 +934,53 @@ for COLL in experience-principles experience-behavioral experience-selfqa; do
   fi
 done
 
-# ── Step 5: Patch global agent settings ───────────────────────────────────
+# ── Step 5: Agent selection + Patch global agent settings ─────────────────
 echo ""
-echo "◆ [5/6] Patching global agent settings..."
+
+# Determine which agents to patch
+SELECTED_AGENTS=""
+if [ -n "$EXP_AGENTS" ]; then
+  # Non-interactive: use EXP_AGENTS env var
+  SELECTED_AGENTS="$EXP_AGENTS"
+  echo "◆ [5/6] Patching agent settings (EXP_AGENTS=$SELECTED_AGENTS)..."
+elif [ "$NI_MODE" = "true" ]; then
+  # Non-interactive without EXP_AGENTS: patch all (backward compatible)
+  SELECTED_AGENTS="claude,gemini,codex,opencode"
+  echo "◆ [5/6] Patching all agent settings (non-interactive default)..."
+else
+  # Interactive: ask user which agents to patch
+  echo "◆ [5/6] Select AI agents to wire up..."
+  echo ""
+  echo "  Which agents do you use? (comma-separated numbers, or 'a' for all)"
+  echo ""
+  echo "  [1] Claude Code    ~/.claude/settings.json"
+  echo "  [2] Gemini CLI     ~/.gemini/settings.json"
+  echo "  [3] Codex CLI      ~/.codex/config.json"
+  echo "  [4] OpenCode       ~/.config/opencode/config.json"
+  echo ""
+  printf "  Select [a]: "; read -r AGENT_CHOICE
+  AGENT_CHOICE="${AGENT_CHOICE:-a}"
+
+  if [ "$AGENT_CHOICE" = "a" ] || [ "$AGENT_CHOICE" = "A" ]; then
+    SELECTED_AGENTS="claude,gemini,codex,opencode"
+  else
+    SELECTED_AGENTS=""
+    case "$AGENT_CHOICE" in *1*) SELECTED_AGENTS="${SELECTED_AGENTS}claude,";; esac
+    case "$AGENT_CHOICE" in *2*) SELECTED_AGENTS="${SELECTED_AGENTS}gemini,";; esac
+    case "$AGENT_CHOICE" in *3*) SELECTED_AGENTS="${SELECTED_AGENTS}codex,";; esac
+    case "$AGENT_CHOICE" in *4*) SELECTED_AGENTS="${SELECTED_AGENTS}opencode,";; esac
+    SELECTED_AGENTS="${SELECTED_AGENTS%,}"
+  fi
+
+  if [ -z "$SELECTED_AGENTS" ]; then
+    echo "  No agents selected — skipping hook patching."
+    echo "  You can re-run setup.sh later to add hooks."
+  else
+    echo "  Selected: $SELECTED_AGENTS"
+  fi
+  echo ""
+  echo "  Patching agent settings..."
+fi
 
 INTERCEPTOR_PATH="$INSTALL_DIR/interceptor.js"
 STOP_PATH="$INSTALL_DIR/stop-extractor.js"
@@ -942,14 +989,16 @@ STOP_PATH="$INSTALL_DIR/stop-extractor.js"
 INTERCEPTOR_FWD=$(echo "$INTERCEPTOR_PATH" | sed 's|\\|/|g' | sed 's|^/\([a-zA-Z]\)/|\1:/|')
 STOP_FWD=$(echo "$STOP_PATH" | sed 's|\\|/|g' | sed 's|^/\([a-zA-Z]\)/|\1:/|')
 
-EXP_INTERCEPTOR="$INTERCEPTOR_FWD" EXP_STOP="$STOP_FWD" node << 'JSEOF'
+EXP_SELECTED_AGENTS="$SELECTED_AGENTS" EXP_INTERCEPTOR="$INTERCEPTOR_FWD" EXP_STOP="$STOP_FWD" node << 'JSEOF'
 const fs = require('fs'), path = require('path'), os = require('os');
 const home = os.homedir();
 const interceptor = process.env.EXP_INTERCEPTOR;
 const stop = process.env.EXP_STOP;
+const selected = (process.env.EXP_SELECTED_AGENTS || '').split(',').map(s => s.trim().toLowerCase());
 
 const AGENTS = [
   {
+    key: 'claude',
     name: 'Claude Code',
     file: path.join(home, '.claude', 'settings.json'),
     patch(cfg) {
@@ -965,6 +1014,7 @@ const AGENTS = [
     }
   },
   {
+    key: 'gemini',
     name: 'Gemini CLI',
     file: path.join(home, '.gemini', 'settings.json'),
     patch(cfg) {
@@ -980,6 +1030,7 @@ const AGENTS = [
     }
   },
   {
+    key: 'codex',
     name: 'Codex CLI',
     file: path.join(home, '.codex', 'config.json'),
     patch(cfg) {
@@ -995,6 +1046,7 @@ const AGENTS = [
     }
   },
   {
+    key: 'opencode',
     name: 'OpenCode',
     file: path.join(home, '.config', 'opencode', 'config.json'),
     patch(cfg) {
@@ -1012,6 +1064,9 @@ const AGENTS = [
 ];
 
 for (const agent of AGENTS) {
+  if (selected.length > 0 && selected[0] !== '' && !selected.includes(agent.key)) {
+    continue;
+  }
   try {
     let cfg = {};
     try { cfg = JSON.parse(fs.readFileSync(agent.file, 'utf8')); } catch {}
@@ -1149,7 +1204,7 @@ if [ "$HEALTH_FAIL" -eq 0 ]; then
   echo "  All checks passed ($HEALTH_PASS/$HEALTH_PASS)"
   echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo " Experience Engine v3.1 — INSTALLED"
+  echo " Experience Engine v3.2 — INSTALLED"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
   echo " Brain installed at: $INSTALL_DIR/"
