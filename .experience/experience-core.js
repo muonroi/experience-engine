@@ -44,8 +44,8 @@ const EMBED_KEY       = _cfg.embedKey      || process.env.EXPERIENCE_EMBED_KEY  
 const BRAIN_ENDPOINT  = _cfg.brainEndpoint || process.env.EXPERIENCE_BRAIN_ENDPOINT || '';
 const BRAIN_KEY       = _cfg.brainKey      || process.env.EXPERIENCE_BRAIN_KEY      || '';
 const EMBED_DIM       = _cfg.embedDim      || 768;
-const MIN_CONFIDENCE  = _cfg.minConfidence  || 0.55;
-const HIGH_CONFIDENCE = _cfg.highConfidence || 0.70;
+const MIN_CONFIDENCE  = _cfg.minConfidence  || 0.42;
+const HIGH_CONFIDENCE = _cfg.highConfidence || 0.60;
 
 const OLLAMA_EMBED_URL = `${OLLAMA_BASE}/api/embed`;
 const OLLAMA_GENERATE_URL = `${OLLAMA_BASE}/api/generate`;
