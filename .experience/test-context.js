@@ -10,6 +10,8 @@ const {
   _buildQuery: buildQuery,
   _computeEffectiveScore: computeEffectiveScore,
   _storeExperiencePayload: storeExperiencePayload,
+  _detectTranscriptDomain: detectTranscriptDomain,
+  _rerankByQuality: rerankByQuality,
 } = require('./experience-core.js');
 
 // --- CTX-01: detectContext ---
@@ -148,5 +150,83 @@ describe('CTX-04: computeEffectiveScore domain penalty', () => {
     const base = computeEffectiveScore({ score: 0.7 }, { hitCount: 0 });
     const result = computeEffectiveScore({ score: 0.7 }, { hitCount: 0, domain: 'C#' }, 'TypeScript');
     assert.strictEqual(result, base);
+  });
+});
+
+// --- CTX-05: detectTranscriptDomain ---
+
+describe('CTX-05: detectTranscriptDomain', () => {
+  it('returns TypeScript when .ts paths dominate', () => {
+    const transcript = [
+      'Edit src/auth.ts — added guard',
+      'Edit src/user.ts — fixed type',
+      'Edit src/api.ts — updated endpoint',
+      'Edit src/model.ts — new field',
+      'Edit src/route.ts — added route',
+      'Edit Services/Foo.cs — refactor',
+      'Edit Services/Bar.cs — fix',
+    ].join('\n');
+    assert.strictEqual(detectTranscriptDomain(transcript), 'TypeScript');
+  });
+
+  it('returns C# when only .cs paths present', () => {
+    const transcript = [
+      'Edit Services/AuthService.cs — added method',
+      'Edit Models/User.cs — new property',
+      'Edit Controllers/Api.cs — endpoint',
+    ].join('\n');
+    assert.strictEqual(detectTranscriptDomain(transcript), 'C#');
+  });
+
+  it('returns null when no file paths present', () => {
+    const transcript = 'Just a discussion about architecture with no file references.';
+    assert.strictEqual(detectTranscriptDomain(transcript), null);
+  });
+
+  it('returns non-null when .ts and .cs counts are equal', () => {
+    const transcript = [
+      'Edit foo.ts — change',
+      'Edit bar.cs — change',
+    ].join('\n');
+    const result = detectTranscriptDomain(transcript);
+    assert.ok(result !== null, 'should return a language, not null');
+  });
+});
+
+// --- CTX-06: rerankByQuality with queryDomain ---
+
+describe('CTX-06: rerankByQuality with queryDomain', () => {
+  it('domain-matched point ranks higher than untagged point at equal cosine', () => {
+    const points = [
+      {
+        id: 'a', score: 0.7,
+        payload: { json: JSON.stringify({ solution: 'fix A', confidence: 0.5, hitCount: 0, domain: 'TypeScript' }) },
+      },
+      {
+        id: 'b', score: 0.7,
+        payload: { json: JSON.stringify({ solution: 'fix B', confidence: 0.5, hitCount: 0 }) },
+      },
+    ];
+    const ranked = rerankByQuality(points, 'TypeScript');
+    // Point 'a' has domain match (no penalty), point 'b' has no domain (0.03 penalty)
+    assert.strictEqual(ranked[0].id, 'a', 'domain-matched point should rank first');
+    assert.ok(ranked[0]._effectiveScore > ranked[1]._effectiveScore,
+      'domain-matched should have higher effective score');
+  });
+
+  it('no penalty difference when queryDomain is null', () => {
+    const points = [
+      {
+        id: 'a', score: 0.7,
+        payload: { json: JSON.stringify({ solution: 'fix A', confidence: 0.5, hitCount: 0, domain: 'TypeScript' }) },
+      },
+      {
+        id: 'b', score: 0.7,
+        payload: { json: JSON.stringify({ solution: 'fix B', confidence: 0.5, hitCount: 0 }) },
+      },
+    ];
+    const ranked = rerankByQuality(points, null);
+    assert.strictEqual(ranked[0]._effectiveScore, ranked[1]._effectiveScore,
+      'both points should have equal effective score when no queryDomain');
   });
 });
