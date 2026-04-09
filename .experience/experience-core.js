@@ -7,29 +7,48 @@
  * API:
  *   intercept(toolName, toolInput, signal) → string | null
  *   extractFromSession(sessionLog)        → void (stores to Qdrant)
+ *   getEmbeddingRaw(text, signal)         → number[] | null
  *
- * Config via env vars or ~/.experience/config.json (set by setup.sh):
- *   EXPERIENCE_QDRANT_URL      (default: http://localhost:6333)
- *   EXPERIENCE_QDRANT_KEY      (default: empty)
- *   EXPERIENCE_OLLAMA_URL      (default: http://localhost:11434)
- *   EXPERIENCE_EMBED_MODEL     (default: nomic-embed-text)
- *   EXPERIENCE_BRAIN_MODEL     (default: qwen2.5:3b)
- *   EXPERIENCE_BRAIN_ENDPOINT  (OpenAI-compatible URL override)
- *   EXPERIENCE_BRAIN_KEY       (API key for brain endpoint)
- *   OPENAI_API_KEY / GEMINI_API_KEY / ANTHROPIC_API_KEY / DEEPSEEK_API_KEY
+ * Config via ~/.experience/config.json (set by setup.sh). Fallback: EXPERIENCE_* env vars.
  */
 
 'use strict';
 
-// --- Config ---
+// --- Native config loader (D-06) ---
+// Reads ~/.experience/config.json BEFORE any other config.
+// setup.sh writes this file. No injection, no env auto-detect.
+const _cfg = (() => {
+  try {
+    return JSON.parse(
+      require('fs').readFileSync(
+        require('path').join(require('os').homedir(), '.experience', 'config.json'),
+        'utf8'
+      )
+    );
+  } catch { return {}; }
+})();
 
-const QDRANT_BASE = process.env.EXPERIENCE_QDRANT_URL || 'http://localhost:6333';
-const QDRANT_API_KEY = process.env.EXPERIENCE_QDRANT_KEY || '';
-const OLLAMA_BASE = process.env.EXPERIENCE_OLLAMA_URL || 'http://localhost:11434';
+// --- Config (D-07, D-11) ---
+// Priority: config.json > EXPERIENCE_* env vars > defaults
+// NEVER fall back to ambient env (OPENAI_API_KEY, GEMINI_API_KEY, etc.)
+
+const QDRANT_BASE     = _cfg.qdrantUrl     || process.env.EXPERIENCE_QDRANT_URL     || 'http://localhost:6333';
+const QDRANT_API_KEY  = _cfg.qdrantKey     || process.env.EXPERIENCE_QDRANT_KEY     || '';
+const OLLAMA_BASE     = _cfg.ollamaUrl     || process.env.EXPERIENCE_OLLAMA_URL     || 'http://localhost:11434';
+const EMBED_PROVIDER  = _cfg.embedProvider || process.env.EXPERIENCE_EMBED_PROVIDER || 'ollama';
+const BRAIN_PROVIDER  = _cfg.brainProvider || process.env.EXPERIENCE_BRAIN_PROVIDER || 'ollama';
+const EMBED_MODEL     = _cfg.embedModel    || process.env.EXPERIENCE_EMBED_MODEL    || 'nomic-embed-text';
+const BRAIN_MODEL     = _cfg.brainModel    || process.env.EXPERIENCE_BRAIN_MODEL    || 'qwen2.5:3b';
+const EMBED_ENDPOINT  = _cfg.embedEndpoint || process.env.EXPERIENCE_EMBED_ENDPOINT || '';
+const EMBED_KEY       = _cfg.embedKey      || process.env.EXPERIENCE_EMBED_KEY      || '';
+const BRAIN_ENDPOINT  = _cfg.brainEndpoint || process.env.EXPERIENCE_BRAIN_ENDPOINT || '';
+const BRAIN_KEY       = _cfg.brainKey      || process.env.EXPERIENCE_BRAIN_KEY      || '';
+const EMBED_DIM       = _cfg.embedDim      || 768;
+const MIN_CONFIDENCE  = _cfg.minConfidence  || 0.55;
+const HIGH_CONFIDENCE = _cfg.highConfidence || 0.70;
+
 const OLLAMA_EMBED_URL = `${OLLAMA_BASE}/api/embed`;
 const OLLAMA_GENERATE_URL = `${OLLAMA_BASE}/api/generate`;
-const OLLAMA_EMBED_MODEL = process.env.EXPERIENCE_EMBED_MODEL || 'nomic-embed-text';
-const OLLAMA_BRAIN_MODEL = process.env.EXPERIENCE_BRAIN_MODEL || 'qwen2.5:3b';
 
 const COLLECTIONS = [
   { name: 'experience-principles', topK: 2, budgetChars: 800 },
@@ -39,8 +58,6 @@ const COLLECTIONS = [
 
 const SELFQA_COLLECTION = 'experience-selfqa';
 const DEDUP_THRESHOLD = 0.85;
-const HIGH_CONFIDENCE = 0.70;
-const MIN_CONFIDENCE = 0.55;
 const QUERY_MAX_CHARS = 500;
 
 // --- Qdrant availability (per D-14) ---
@@ -281,7 +298,7 @@ async function brainOllama(prompt) {
     const res = await fetch(OLLAMA_GENERATE_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: OLLAMA_BRAIN_MODEL, prompt, stream: false, options: { temperature: 0.3 } }),
+      body: JSON.stringify({ model: BRAIN_MODEL, prompt, stream: false, options: { temperature: 0.3 } }),
       signal: AbortSignal.timeout(90000),
     });
     if (!res.ok) return null;
@@ -292,10 +309,8 @@ async function brainOllama(prompt) {
 
 async function brainOpenAI(prompt) {
   // Reused for any OpenAI-compatible API (OpenAI, SiliconFlow, Together, Groq, etc.)
-  // EXPERIENCE_BRAIN_ENDPOINT overrides base URL
-  const endpoint = process.env.EXPERIENCE_BRAIN_ENDPOINT || 'https://api.openai.com/v1/chat/completions';
-  const apiKey = process.env.EXPERIENCE_BRAIN_KEY || process.env.OPENAI_API_KEY || '';
-  const body = { model: process.env.EXPERIENCE_BRAIN_MODEL || 'gpt-4o-mini', messages: [{ role:'user', content: prompt }], temperature: 0.3 };
+  const endpoint = BRAIN_ENDPOINT || 'https://api.openai.com/v1/chat/completions';
+  const body = { model: BRAIN_MODEL || 'gpt-4o-mini', messages: [{ role:'user', content: prompt }], temperature: 0.3 };
   // Only add json_object mode for known-supporting providers (OpenAI, DeepSeek)
   if (endpoint.includes('openai.com') || endpoint.includes('deepseek.com')) {
     body.response_format = { type: 'json_object' };
@@ -303,7 +318,7 @@ async function brainOpenAI(prompt) {
   try {
     const res = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${BRAIN_KEY}` },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(15000),
     });
@@ -318,8 +333,8 @@ async function brainOpenAI(prompt) {
 
 async function brainGemini(prompt) {
   try {
-    const model = process.env.EXPERIENCE_BRAIN_MODEL || 'gemini-2.0-flash';
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`, {
+    const model = BRAIN_MODEL || 'gemini-2.0-flash';
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${BRAIN_KEY}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0.3 } }),
@@ -335,8 +350,8 @@ async function brainClaude(prompt) {
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: process.env.EXPERIENCE_BRAIN_MODEL || 'claude-haiku-4-5-20251001', max_tokens: 512, messages: [{ role:'user', content: prompt }] }),
+      headers: { 'Content-Type': 'application/json', 'x-api-key': BRAIN_KEY, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: BRAIN_MODEL || 'claude-haiku-4-5-20251001', max_tokens: 512, messages: [{ role:'user', content: prompt }] }),
       signal: AbortSignal.timeout(15000),
     });
     if (!res.ok) return null;
@@ -350,8 +365,8 @@ async function brainDeepSeek(prompt) {
   try {
     const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}` },
-      body: JSON.stringify({ model: process.env.EXPERIENCE_BRAIN_MODEL || 'deepseek-chat', messages: [{ role:'user', content: prompt }], temperature: 0.3, response_format: { type:'json_object' } }),
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${BRAIN_KEY}` },
+      body: JSON.stringify({ model: BRAIN_MODEL || 'deepseek-chat', messages: [{ role:'user', content: prompt }], temperature: 0.3, response_format: { type:'json_object' } }),
       signal: AbortSignal.timeout(15000),
     });
     if (!res.ok) return null;
@@ -413,24 +428,18 @@ async function storeExperience(qa) {
   });
 }
 
-// --- Provider abstraction ---
-// EXPERIENCE_EMBED_PROVIDER: ollama (default) | openai | gemini | voyageai
-// EXPERIENCE_BRAIN_PROVIDER: ollama (default) | openai | gemini | claude | deepseek
-//
-// Each provider needs its own API key env var:
-//   OPENAI_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, VOYAGEAI_API_KEY
+// --- Provider abstraction (D-08, D-09, D-10) ---
+// EMBED_PROVIDER / BRAIN_PROVIDER come from config.json (set by setup.sh).
+// Dim is ALWAYS read from config.json (EMBED_DIM constant) — never hardcoded here.
+// siliconflow and custom are first-class providers (reuse OpenAI-compatible fn).
 
-// Provider set by config.json (injected at top of file by setup.sh)
-// No auto-detection from env vars — user must run setup.sh to configure
-const EMBED_PROVIDER  = process.env.EXPERIENCE_EMBED_PROVIDER  || 'ollama';
-const BRAIN_PROVIDER  = process.env.EXPERIENCE_BRAIN_PROVIDER  || 'ollama';
-
-// Embedding providers config
 const EMBED_PROVIDERS = {
-  ollama:    { dim: 768,  fn: embedOllama },
-  openai:    { dim: 1536, fn: embedOpenAI },
-  gemini:    { dim: 768,  fn: embedGemini },
-  voyageai:  { dim: 1024, fn: embedVoyageAI },
+  ollama:       { fn: embedOllama },
+  openai:       { fn: embedOpenAI },
+  gemini:       { fn: embedGemini },
+  voyageai:     { fn: embedVoyageAI },
+  siliconflow:  { fn: embedOpenAI },
+  custom:       { fn: embedOpenAI },
 };
 
 async function getEmbedding(text, signal) {
@@ -443,7 +452,7 @@ async function embedOllama(text, signal) {
     const res = await fetch(OLLAMA_EMBED_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: OLLAMA_EMBED_MODEL, input: text }),
+      body: JSON.stringify({ model: EMBED_MODEL, input: text }),
       signal: signal || AbortSignal.timeout(10000),
     });
     if (!res.ok) return null;
@@ -452,14 +461,13 @@ async function embedOllama(text, signal) {
 }
 
 async function embedOpenAI(text, signal) {
-  // Supports OpenAI, SiliconFlow, and any OpenAI-compatible embedding API
-  const endpoint = process.env.EXPERIENCE_EMBED_ENDPOINT || 'https://api.openai.com/v1/embeddings';
-  const apiKey = process.env.EXPERIENCE_EMBED_KEY || process.env.OPENAI_API_KEY || '';
+  // Supports OpenAI, SiliconFlow, custom, and any OpenAI-compatible embedding API
+  const endpoint = EMBED_ENDPOINT || 'https://api.openai.com/v1/embeddings';
   try {
     const res = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: process.env.EXPERIENCE_EMBED_MODEL || 'text-embedding-3-small', input: text.slice(0, 8000) }),
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${EMBED_KEY}` },
+      body: JSON.stringify({ model: EMBED_MODEL || 'text-embedding-3-small', input: text.slice(0, 8000) }),
       signal: signal || AbortSignal.timeout(10000),
     });
     if (!res.ok) return null;
@@ -469,8 +477,8 @@ async function embedOpenAI(text, signal) {
 
 async function embedGemini(text, signal) {
   try {
-    const model = process.env.EXPERIENCE_EMBED_MODEL || 'text-embedding-004';
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${process.env.GEMINI_API_KEY}`, {
+    const model = EMBED_MODEL || 'text-embedding-004';
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${EMBED_KEY}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: { parts: [{ text: text.slice(0, 8000) }] } }),
@@ -485,8 +493,8 @@ async function embedVoyageAI(text, signal) {
   try {
     const res = await fetch('https://api.voyageai.com/v1/embeddings', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.VOYAGEAI_API_KEY}` },
-      body: JSON.stringify({ model: process.env.EXPERIENCE_EMBED_MODEL || 'voyage-code-3', input: [text.slice(0, 8000)] }),
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${EMBED_KEY}` },
+      body: JSON.stringify({ model: EMBED_MODEL || 'voyage-code-3', input: [text.slice(0, 8000)] }),
       signal: signal || AbortSignal.timeout(10000),
     });
     if (!res.ok) return null;
@@ -772,6 +780,12 @@ async function deleteEntry(collection, id) {
   });
 }
 
+// --- getEmbeddingRaw: exported for external callers (e.g. bulk-seed.js) (D-16) ---
+
+async function getEmbeddingRaw(text, signal) {
+  return getEmbedding(text, signal);
+}
+
 // --- Exports ---
 
-module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve };
+module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw };
