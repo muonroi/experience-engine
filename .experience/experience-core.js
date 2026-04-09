@@ -221,6 +221,8 @@ function fileStoreUpsert(collection, id, vector, payload) {
 
 async function intercept(toolName, toolInput, signal) {
   const query = buildQuery(toolName, toolInput);
+  const filePath = toolInput?.file_path || toolInput?.path || '';
+  const queryDomain = detectContext(filePath);
   const vector = await getEmbedding(query, signal);
   if (!vector) return null;
 
@@ -230,10 +232,10 @@ async function intercept(toolName, toolInput, signal) {
     searchCollection(COLLECTIONS[2].name, vector, COLLECTIONS[2].topK, signal),
   ]);
 
-  // Rerank by quality score before formatting (Phase 103)
-  const r0 = rerankByQuality(t0);
-  const r1 = rerankByQuality(t1);
-  const r2 = rerankByQuality(t2);
+  // Rerank by quality score before formatting (Phase 103, 104)
+  const r0 = rerankByQuality(t0, queryDomain);
+  const r1 = rerankByQuality(t1, queryDomain);
+  const r2 = rerankByQuality(t2, queryDomain);
 
   const lines = [
     ...applyBudget(formatPoints(r0), COLLECTIONS[0].budgetChars),
@@ -273,8 +275,25 @@ async function intercept(toolName, toolInput, signal) {
 
 // --- Extract: detect mistakes and store lessons ---
 
+function detectTranscriptDomain(transcript) {
+  if (!transcript) return null;
+  const pattern = /[\w/\\.-]+\.(ts|tsx|js|jsx|cs|py|rs|go|java|kt|swift|cpp|c|rb|lua|sh|ps1|sql)\b/gi;
+  const counts = {};
+  let match;
+  while ((match = pattern.exec(transcript)) !== null) {
+    const ext = '.' + match[1].toLowerCase();
+    counts[ext] = (counts[ext] || 0) + 1;
+  }
+  const entries = Object.entries(counts);
+  if (entries.length === 0) return null;
+  entries.sort((a, b) => b[1] - a[1]);
+  return detectContext(entries[0][0]) || null;
+}
+
 async function extractFromSession(transcript, projectPath) {
   if (!transcript || transcript.length < 100) return 0;
+
+  const domain = detectTranscriptDomain(transcript);
 
   const mistakes = detectMistakes(transcript);
   if (mistakes.length === 0) {
@@ -288,7 +307,7 @@ async function extractFromSession(transcript, projectPath) {
       const qa = await extractQA(mistake);
       if (!qa || !qa.trigger || !qa.solution) continue;
       if (await isDuplicate(qa)) continue;
-      await storeExperience(qa);
+      await storeExperience(qa, domain);
       stored++;
     } catch { /* skip */ }
   }
@@ -570,14 +589,14 @@ function buildStorePayload(id, qa, domain) {
   };
 }
 
-async function storeExperience(qa) {
+async function storeExperience(qa, domain) {
   const text = `${qa.trigger} ${qa.question} ${qa.solution}`;
   const vector = await getEmbedding(text);
   if (!vector) return;
 
   const id = crypto.randomUUID();
   const payload = {
-    json: JSON.stringify(buildStorePayload(id, qa))
+    json: JSON.stringify(buildStorePayload(id, qa, domain))
   };
 
   if (!(await checkQdrant())) {
@@ -706,12 +725,12 @@ function computeEffectiveScore(point, data, queryDomain) {
   return cosine + hitBoost - recencyPenalty - ignorePenalty - domainPenalty;
 }
 
-function rerankByQuality(points) {
+function rerankByQuality(points, queryDomain) {
   return points
     .map(p => {
       let data = {};
       try { data = JSON.parse(p.payload?.json || '{}'); } catch { /* default */ }
-      return { ...p, _effectiveScore: computeEffectiveScore(p, data) };
+      return { ...p, _effectiveScore: computeEffectiveScore(p, data, queryDomain) };
     })
     .sort((a, b) => b._effectiveScore - a._effectiveScore);
 }
@@ -998,4 +1017,4 @@ async function getEmbeddingRaw(text, signal) {
 
 // --- Exports ---
 
-module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa, null), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _suggestionHistory, _incrementIgnoreCountData: incrementIgnoreCountData };
+module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa, null), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _suggestionHistory, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain };
