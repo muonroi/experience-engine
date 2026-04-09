@@ -179,6 +179,28 @@ server.listen(0, async () => {
     // 20. Timeline CORS
     assert(timelineNoTopicRes.headers.get('access-control-allow-origin') === '*', 'timeline has CORS');
 
+    // 21. User endpoint
+    console.log('\n--- GET /api/user ---');
+    const userRes = await fetch(`${base}/api/user`);
+    const userData = await userRes.json();
+    assert(userRes.status === 200, 'user returns 200');
+    assert(typeof userData.user === 'string', 'user has user field');
+
+    // 22. Share validation — missing principleId
+    console.log('\n--- POST /api/principles/share (no id) ---');
+    const shareNoIdRes = await postJson(base, '/api/principles/share', {});
+    assert(shareNoIdRes.status === 400, 'share without principleId returns 400');
+
+    // 23. Share with unknown id → 404
+    console.log('\n--- POST /api/principles/share (unknown) ---');
+    const shareUnknownRes = await postJson(base, '/api/principles/share', { principleId: '00000000-0000-0000-0000-000000000000' });
+    assert(shareUnknownRes.status === 404, 'share with unknown id returns 404');
+
+    // 24. Import validation — missing fields
+    console.log('\n--- POST /api/principles/import (empty) ---');
+    const importEmptyRes = await postJson(base, '/api/principles/import', {});
+    assert(importEmptyRes.status === 400, 'import without principle returns 400');
+
   } finally {
     server.close();
     console.log(`\n${'='.repeat(40)}`);

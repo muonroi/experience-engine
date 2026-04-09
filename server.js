@@ -21,7 +21,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { intercept, extractFromSession, evolve, getEdgesForId, getEmbeddingRaw } = require('./.experience/experience-core');
+const { intercept, extractFromSession, evolve, getEdgesForId, getEmbeddingRaw, sharePrinciple, importPrinciple, EXP_USER } = require('./.experience/experience-core');
 const { parseSince, loadEvents, filterEvents, computeStats, loadTop5 } = require('./tools/exp-stats');
 
 // --- Config ---
@@ -149,6 +149,26 @@ async function handleGraph(req, res, url) {
   json(res, { id, edges: enriched, count: enriched.length });
 }
 
+async function handleShare(req, res) {
+  const body = await readBody(req);
+  if (!body.principleId) return error(res, 'principleId is required');
+  const shared = sharePrinciple(body.principleId);
+  if (!shared) return error(res, 'Principle not found', 404);
+  json(res, { shared, success: true });
+}
+
+async function handleImport(req, res) {
+  const body = await readBody(req);
+  if (!body.principle && !body.solution) return error(res, 'principle or solution is required');
+  const result = await importPrinciple(body);
+  if (!result) return error(res, 'Import failed (embedding unavailable)', 503);
+  json(res, { imported: result, success: true });
+}
+
+function handleUser(req, res) {
+  json(res, { user: EXP_USER });
+}
+
 async function handleTimeline(req, res, url) {
   const topic = url.searchParams.get('topic');
   if (!topic) return error(res, 'topic query parameter is required');
@@ -227,6 +247,9 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/stats' && req.method === 'GET') return await handleStats(req, res, url);
     if (p === '/api/graph' && req.method === 'GET') return await handleGraph(req, res, url);
     if (p === '/api/timeline' && req.method === 'GET') return await handleTimeline(req, res, url);
+    if (p === '/api/principles/share' && req.method === 'POST') return await handleShare(req, res);
+    if (p === '/api/principles/import' && req.method === 'POST') return await handleImport(req, res);
+    if (p === '/api/user' && req.method === 'GET') return handleUser(req, res);
     error(res, 'Not found', 404);
   } catch (err) {
     error(res, err.message || 'Internal server error', 500);
@@ -244,4 +267,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { server, handleHealth, handleIntercept, handleExtract, handleEvolve, handleStats, handleGraph, handleTimeline };
+module.exports = { server, handleHealth, handleIntercept, handleExtract, handleEvolve, handleStats, handleGraph, handleTimeline, handleShare, handleImport, handleUser };
