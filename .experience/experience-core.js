@@ -547,6 +547,38 @@ async function searchCollection(name, vector, topK, signal) {
   } catch { return fileStoreSearch(name, vector, topK); }
 }
 
+// --- Anti-Noise Scoring (Phase 103) ---
+
+function computeEffectiveConfidence(data) {
+  const base = data.confidence || 0.5;
+  const hits = data.hitCount || 0;
+  const ageFactor = Math.min(1.0, 0.7 + (hits * 0.06));
+  return base * ageFactor;
+}
+
+function computeEffectiveScore(point, data) {
+  const cosine = point.score || 0;
+  const hitBoost = Math.log2(1 + (data.hitCount || 0)) * 0.05;
+  const daysSinceHit = data.lastHitAt
+    ? (Date.now() - new Date(data.lastHitAt).getTime()) / 86400000
+    : 0;
+  const recencyPenalty = daysSinceHit > 30
+    ? Math.min(0.15, (daysSinceHit - 30) / 335 * 0.15)
+    : 0;
+  const ignorePenalty = (data.ignoreCount || 0) >= 3 ? 0.10 : 0;
+  return cosine + hitBoost - recencyPenalty - ignorePenalty;
+}
+
+function rerankByQuality(points) {
+  return points
+    .map(p => {
+      let data = {};
+      try { data = JSON.parse(p.payload?.json || '{}'); } catch { /* default */ }
+      return { ...p, _effectiveScore: computeEffectiveScore(p, data) };
+    })
+    .sort((a, b) => b._effectiveScore - a._effectiveScore);
+}
+
 // --- Formatting ---
 
 function formatPoints(points) {
@@ -819,4 +851,4 @@ async function getEmbeddingRaw(text, signal) {
 
 // --- Exports ---
 
-module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, _activityLog: activityLog };
+module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, _activityLog: activityLog, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality };
