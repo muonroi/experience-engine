@@ -9,6 +9,9 @@ const {
   _computeEffectiveScore: computeEffectiveScore,
   _computeEffectiveConfidence: computeEffectiveConfidence,
   _rerankByQuality: rerankByQuality,
+  _formatPoints: formatPoints,
+  _storeExperiencePayload: storeExperiencePayload,
+  _recordHitUpdatesFields: recordHitUpdatesFields,
 } = require('./experience-core.js');
 
 // Helper: create a Qdrant-shaped point
@@ -175,5 +178,76 @@ describe('rerankByQuality', () => {
     const ranked = rerankByQuality(points);
     assert.strictEqual(ranked[0].id, 'test-id'); // both have same id, check scores
     assert.ok(ranked[0]._effectiveScore > ranked[1]._effectiveScore);
+  });
+});
+
+// --- Task 1 Integration: formatPoints uses effective confidence ---
+
+describe('formatPoints with effective confidence', () => {
+  it('filters by effective confidence, not raw cosine score', () => {
+    // A new experience (hitCount=0) with confidence=0.5 has effectiveConfidence=0.35
+    // which is below MIN_CONFIDENCE (0.42), so it should be filtered out even if
+    // raw cosine score is above MIN_CONFIDENCE
+    const points = [
+      mkPoint(0.50, { hitCount: 0, confidence: 0.5, solution: 'test solution' }),
+    ];
+    const lines = formatPoints(points);
+    // effectiveConfidence = 0.5 * 0.7 = 0.35 < 0.42 => filtered out
+    assert.strictEqual(lines.length, 0, 'should filter out low effective confidence');
+  });
+
+  it('includes points with high effective confidence', () => {
+    // hitCount=5 => ageFactor=1.0, confidence=0.8 => effectiveConf=0.8 >= 0.42
+    const points = [
+      mkPoint(0.50, { hitCount: 5, confidence: 0.8, solution: 'proven solution' }),
+    ];
+    const lines = formatPoints(points);
+    assert.strictEqual(lines.length, 1, 'should include high effective confidence point');
+  });
+
+  it('displays _effectiveScore in output line when available', () => {
+    const points = [
+      { id: 'x', score: 0.50, _effectiveScore: 0.72,
+        payload: { json: JSON.stringify({ hitCount: 5, confidence: 0.8, solution: 'good fix' }) } },
+    ];
+    const lines = formatPoints(points);
+    assert.strictEqual(lines.length, 1);
+    assert.ok(lines[0].includes('0.72'), 'should use _effectiveScore for display');
+  });
+});
+
+// --- Task 1 Integration: storeExperience payload init fields ---
+
+describe('storeExperience payload initialization', () => {
+  it('includes lastHitAt: null and ignoreCount: 0 in payload', () => {
+    const payload = storeExperiencePayload({
+      trigger: 'test', question: 'q', solution: 's',
+    });
+    assert.strictEqual(payload.lastHitAt, null, 'lastHitAt should init to null');
+    assert.strictEqual(payload.ignoreCount, 0, 'ignoreCount should init to 0');
+  });
+
+  it('still includes original fields', () => {
+    const payload = storeExperiencePayload({
+      trigger: 'test', question: 'q', solution: 's',
+    });
+    assert.strictEqual(payload.confidence, 0.5);
+    assert.strictEqual(payload.hitCount, 0);
+    assert.strictEqual(payload.tier, 2);
+    assert.ok(payload.createdAt);
+  });
+});
+
+// --- Task 1 Integration: recordHit updates lastHitAt and ignoreCount ---
+
+describe('recordHit field updates', () => {
+  it('updates lastHitAt and resets ignoreCount', () => {
+    const data = { hitCount: 2, ignoreCount: 5, lastHitAt: null };
+    const updated = recordHitUpdatesFields(data);
+    assert.strictEqual(updated.hitCount, 3);
+    assert.strictEqual(updated.ignoreCount, 0, 'ignoreCount should reset to 0');
+    assert.ok(updated.lastHitAt, 'lastHitAt should be set');
+    // Verify it's a valid ISO string
+    assert.ok(!isNaN(new Date(updated.lastHitAt).getTime()), 'lastHitAt should be valid ISO');
   });
 });
