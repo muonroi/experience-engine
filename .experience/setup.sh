@@ -65,10 +65,14 @@ try{
     'EXP_BRAIN_MODEL='+(c.brainModel||''),
     'EXP_BRAIN_ENDPOINT='+(c.brainEndpoint||''),
     'EXP_BRAIN_KEY='+(c.brainKey||''),
+    'EXP_EMBED_MODEL='+(c.embedModel||''),
+    'EXP_EMBED_ENDPOINT='+(c.embedEndpoint||''),
+    'EXP_EMBED_KEY='+(c.embedKey||''),
     'OPENAI_KEY='+  (c.openaiKey||''),
     'GEMINI_KEY='+  (c.geminiKey||''),
     'ANTHROPIC_KEY='+(c.anthropicKey||''),
     'DEEPSEEK_KEY='+ (c.deepseekKey||''),
+    'KEEP_CONFIG=true',
   ].join('\n')+'\n');
 }catch{}
 " 2>/dev/null)
@@ -116,31 +120,14 @@ try{
   fi
 fi
 
-# Env var overrides
+# Non-interactive mode: env var overrides (for CI/scripts only)
+# These are the ONLY way to skip interactive prompts
 [ -n "$EXP_QDRANT_URL" ]      && QDRANT_URL="$EXP_QDRANT_URL"
 [ -n "$EXP_QDRANT_KEY" ]      && QDRANT_KEY="$EXP_QDRANT_KEY"
 [ -n "$EXP_OLLAMA_URL" ]      && OLLAMA_URL="$EXP_OLLAMA_URL"
 [ -n "$EXP_TUNNEL_SSH" ]      && TUNNEL_SSH="$EXP_TUNNEL_SSH"
 [ -n "$EXP_EMBED_PROVIDER" ]  && EMBED_PROVIDER="$EXP_EMBED_PROVIDER"
 [ -n "$EXP_BRAIN_PROVIDER" ]  && BRAIN_PROVIDER="$EXP_BRAIN_PROVIDER"
-
-# Auto-detect provider from env vars if not explicitly set
-# Embed: prefer Ollama if URL set (free), then cloud APIs
-if [ -z "$EMBED_PROVIDER" ]; then
-  if [ -n "$EXP_OLLAMA_URL" ]; then EMBED_PROVIDER="ollama"
-  elif [ -n "$OPENAI_API_KEY" ]; then EMBED_PROVIDER="openai"
-  elif [ -n "$GEMINI_API_KEY" ]; then EMBED_PROVIDER="gemini"
-  fi
-fi
-if [ -z "$BRAIN_PROVIDER" ]; then
-  if [ -n "$EXP_BRAIN_KEY" ] || [ -n "$EXP_BRAIN_ENDPOINT" ]; then BRAIN_PROVIDER="openai"
-  elif [ -n "$OPENAI_API_KEY" ]; then BRAIN_PROVIDER="openai"
-  elif [ -n "$GEMINI_API_KEY" ]; then BRAIN_PROVIDER="gemini"
-  elif [ -n "$ANTHROPIC_API_KEY" ]; then BRAIN_PROVIDER="claude"
-  elif [ -n "$DEEPSEEK_API_KEY" ]; then BRAIN_PROVIDER="deepseek"
-  elif [ -n "$EXP_OLLAMA_URL" ]; then BRAIN_PROVIDER="ollama"
-  fi
-fi
 
 # Interactive prompts if still missing
 if [ -z "$QDRANT_URL" ]; then
@@ -328,6 +315,10 @@ HOOKEOF
 
 chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js"
 
+# Write config.json — skip if keeping existing config (avoid overwriting with incomplete vars)
+if [ "$KEEP_CONFIG" = "true" ]; then
+  echo "  ✓ Config preserved (keep mode)"
+else
 # Write config.json — use env vars inside Node to avoid path mangling
 EXP_Q_URL="$QDRANT_URL"     EXP_Q_KEY="$QDRANT_KEY" \
 EXP_OLLAMA="$OLLAMA_URL"    EXP_TUNNEL="$TUNNEL_SSH" \
@@ -335,13 +326,61 @@ EXP_OPENAI="$OPENAI_KEY"    EXP_GEMINI="$GEMINI_KEY" \
 EXP_ANTHROPIC="$ANTHROPIC_KEY" EXP_DEEPSEEK="$DEEPSEEK_KEY" \
 EXP_EMBED_P="$EMBED_PROVIDER"  EXP_BRAIN_P="$BRAIN_PROVIDER" \
 node << 'JSEOF'
+(async () => {
 const fs = require('fs'), path = require('path'), os = require('os');
 const e = process.env;
-const embedP = e.EXP_EMBED_P || (e.EXP_OPENAI ? 'openai' : e.EXP_GEMINI ? 'gemini' : 'ollama');
-const brainP = e.EXP_BRAIN_P || (e.EXP_OPENAI ? 'openai' : e.EXP_GEMINI ? 'gemini' : e.EXP_ANTHROPIC ? 'claude' : e.EXP_DEEPSEEK ? 'deepseek' : 'ollama');
-const embedDims = { openai:1536, gemini:768, voyageai:1024, ollama:768 };
+const embedP = e.EXP_EMBED_P || 'ollama';
+const brainP = e.EXP_BRAIN_P || 'ollama';
 const embedModels = { openai:'text-embedding-3-small', gemini:'text-embedding-004', voyageai:'voyage-code-3', ollama:'nomic-embed-text' };
 const brainModels = { openai:'gpt-4o-mini', gemini:'gemini-2.0-flash', claude:'claude-haiku-4-5-20251001', deepseek:'deepseek-chat', ollama:'qwen2.5:3b' };
+
+// Probe actual embedding dimension — never hardcode
+async function probeEmbedDim() {
+  const model = e.EXP_EMBED_MODEL || embedModels[embedP] || 'nomic-embed-text';
+  const testInput = 'dimension probe';
+  try {
+    let res;
+    if (embedP === 'ollama') {
+      const url = e.EXP_OLLAMA || 'http://localhost:11434';
+      res = await fetch(url + '/api/embed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, input: testInput }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) return 768;
+      const d = await res.json();
+      return d.embeddings?.[0]?.length || 768;
+    } else if (embedP === 'gemini') {
+      const key = e.EXP_GEMINI || '';
+      res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':embedContent?key=' + key, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: { parts: [{ text: testInput }] } }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) return 768;
+      const d = await res.json();
+      return d.embedding?.values?.length || 768;
+    } else {
+      // OpenAI-compatible (OpenAI, SiliconFlow, Together, etc.)
+      const endpoint = e.EXP_EMBED_ENDPOINT || 'https://api.openai.com/v1/embeddings';
+      const key = e.EXP_EMBED_KEY || e.EXP_OPENAI || '';
+      res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+        body: JSON.stringify({ model, input: testInput }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) return 1536;
+      const d = await res.json();
+      return d.data?.[0]?.embedding?.length || 1536;
+    }
+  } catch { return 768; }
+}
+
+const embedDim = await probeEmbedDim();
+console.log('  ✓ Embed dimension: ' + embedDim + ' (probed from API)');
 
 const cfg = {
   qdrantUrl:      e.EXP_Q_URL    || 'http://localhost:6333',
@@ -360,7 +399,7 @@ const cfg = {
   brainKey:       e.EXP_BRAIN_KEY      || '',
   embedEndpoint:  e.EXP_EMBED_ENDPOINT || '',
   embedKey:       e.EXP_EMBED_KEY      || '',
-  embedDim:       embedDims[embedP]   || 768,
+  embedDim:       embedDim,
   installedAt: new Date().toISOString(),
   version: '3.0'
 };
@@ -370,7 +409,9 @@ fs.writeFileSync(file, JSON.stringify(cfg, null, 2));
 console.log('  ✓ Config saved');
 console.log('  ✓ Embed:  ' + embedP + ' (' + cfg.embedModel + ')');
 console.log('  ✓ Brain:  ' + brainP + ' (' + cfg.brainModel + ')');
+})();
 JSEOF
+fi # end KEEP_CONFIG check
 
 # Patch experience-core.js to read config from ~/.experience/config.json
 node << 'JSEOF'

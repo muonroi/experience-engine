@@ -26,7 +26,10 @@ try { _cfg = JSON.parse(require('fs').readFileSync(require('path').join(require(
 const QDRANT_BASE = process.env.EXPERIENCE_QDRANT_URL || _cfg.qdrantUrl || 'http://localhost:6333';
 const QDRANT_API_KEY = process.env.EXPERIENCE_QDRANT_KEY || _cfg.qdrantKey || '';
 const OLLAMA_BASE = process.env.EXPERIENCE_OLLAMA_URL || _cfg.ollamaUrl || 'http://localhost:11434';
-const EMBED_MODEL = process.env.EXPERIENCE_EMBED_MODEL || 'nomic-embed-text';
+const EMBED_MODEL = process.env.EXPERIENCE_EMBED_MODEL || _cfg.embedModel || 'nomic-embed-text';
+const EMBED_PROVIDER = process.env.EXPERIENCE_EMBED_PROVIDER || _cfg.embedProvider || 'ollama';
+const EMBED_ENDPOINT = process.env.EXPERIENCE_EMBED_ENDPOINT || _cfg.embedEndpoint || '';
+const EMBED_KEY = process.env.EXPERIENCE_EMBED_KEY || _cfg.embedKey || _cfg.openaiKey || '';
 
 const COLLECTION_T1 = 'experience-behavioral';
 const COLLECTION_T0 = 'experience-principles';
@@ -86,16 +89,39 @@ function parseMemoryFile(filePath) {
   };
 }
 
-// --- Embed ---
+// --- Embed (provider-aware, reads from config.json) ---
 async function embed(text) {
-  const res = await fetch(`${OLLAMA_BASE}/api/embed`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: EMBED_MODEL, input: text }),
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!res.ok) throw new Error(`Embed failed: ${res.status}`);
-  return (await res.json()).embeddings?.[0];
+  if (EMBED_PROVIDER === 'ollama') {
+    const res = await fetch(`${OLLAMA_BASE}/api/embed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: EMBED_MODEL, input: text }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) throw new Error(`Ollama embed failed: ${res.status}`);
+    return (await res.json()).embeddings?.[0];
+  } else if (EMBED_PROVIDER === 'gemini') {
+    const key = process.env.GEMINI_API_KEY || _cfg.geminiKey || '';
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${EMBED_MODEL}:embedContent?key=${key}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: { parts: [{ text: text.slice(0, 8000) }] } }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) throw new Error(`Gemini embed failed: ${res.status}`);
+    return (await res.json()).embedding?.values;
+  } else {
+    // OpenAI-compatible (OpenAI, SiliconFlow, Together, etc.)
+    const endpoint = EMBED_ENDPOINT || 'https://api.openai.com/v1/embeddings';
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${EMBED_KEY}` },
+      body: JSON.stringify({ model: EMBED_MODEL, input: text.slice(0, 8000) }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) throw new Error(`Embed failed: ${res.status} ${await res.text()}`);
+    return (await res.json()).data?.[0]?.embedding;
+  }
 }
 
 // --- Dedup check ---

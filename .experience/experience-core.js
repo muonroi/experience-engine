@@ -39,8 +39,8 @@ const COLLECTIONS = [
 
 const SELFQA_COLLECTION = 'experience-selfqa';
 const DEDUP_THRESHOLD = 0.85;
-const HIGH_CONFIDENCE = 0.75;
-const MIN_CONFIDENCE = 0.65;
+const HIGH_CONFIDENCE = 0.70;
+const MIN_CONFIDENCE = 0.55;
 const QUERY_MAX_CHARS = 500;
 
 // --- Qdrant availability (per D-14) ---
@@ -420,8 +420,10 @@ async function storeExperience(qa) {
 // Each provider needs its own API key env var:
 //   OPENAI_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, VOYAGEAI_API_KEY
 
-const EMBED_PROVIDER  = process.env.EXPERIENCE_EMBED_PROVIDER  || (process.env.OPENAI_API_KEY ? 'openai' : process.env.GEMINI_API_KEY ? 'gemini' : 'ollama');
-const BRAIN_PROVIDER  = process.env.EXPERIENCE_BRAIN_PROVIDER  || (process.env.OPENAI_API_KEY ? 'openai' : process.env.GEMINI_API_KEY ? 'gemini' : process.env.ANTHROPIC_API_KEY ? 'claude' : process.env.DEEPSEEK_API_KEY ? 'deepseek' : process.env.EXPERIENCE_BRAIN_KEY ? 'openai' : 'ollama');
+// Provider set by config.json (injected at top of file by setup.sh)
+// No auto-detection from env vars — user must run setup.sh to configure
+const EMBED_PROVIDER  = process.env.EXPERIENCE_EMBED_PROVIDER  || 'ollama';
+const BRAIN_PROVIDER  = process.env.EXPERIENCE_BRAIN_PROVIDER  || 'ollama';
 
 // Embedding providers config
 const EMBED_PROVIDERS = {
