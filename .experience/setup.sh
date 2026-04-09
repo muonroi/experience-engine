@@ -1,244 +1,632 @@
 #!/bin/bash
-# Experience Engine — Universal Setup
+# Experience Engine — Universal Setup Wizard v3.1
 #
 # Works from ANY project directory. Installs brain to ~/.experience/ (user-level).
 # Global agent hooks point to ~/.experience/ — no project path hardcoded.
 #
 # Usage:
-#   bash .experience/setup.sh                    # interactive config
-#   bash .experience/setup.sh --local            # use local Qdrant + Ollama
-#   bash .experience/setup.sh --vps              # use VPS (prompts for details)
-#   EXP_QDRANT_URL=http://... bash setup.sh      # fully non-interactive via env
+#   bash .experience/setup.sh               # interactive wizard (fresh install)
+#   bash .experience/setup.sh --help        # show all options
+#   bash .experience/setup.sh --local       # shortcut: local Docker Qdrant + Ollama
+#   bash .experience/setup.sh --vps         # shortcut: VPS Qdrant via SSH tunnel
 #
 # Supported agents: Claude Code, Gemini CLI, Codex CLI, OpenCode
 # Prerequisites: Node.js 20+
-
-set -e
 
 INSTALL_DIR="$HOME/.experience"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo " 🧠 Experience Engine — Universal Setup"
+echo " Experience Engine v3.1 — Setup Wizard"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo " Install dir: $INSTALL_DIR"
 echo ""
 
-# ── Step 1: Resolve config ─────────────────────────────────────────────────
-echo "◆ [1/5] Resolving config..."
+# ── Step 0: --help flag ────────────────────────────────────────────────────
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+  cat <<'HELP'
+Usage: bash setup.sh [OPTIONS]
 
-# Priority: env vars > existing config file > interactive prompts
-CONFIG_FILE="$INSTALL_DIR/config.json"
+Options:
+  --help, -h     Show this help message
+  --local        Shortcut: local Docker Qdrant + Ollama
+  --vps          Shortcut: VPS Qdrant via SSH tunnel
 
-if [ -f "$CONFIG_FILE" ] && [ -z "$EXP_RESET_CONFIG" ]; then
-  echo "  ✓ Existing config found"
-  echo ""
-  echo "  [1] Keep existing config"
-  echo "  [2] Reconfigure from scratch"
-  printf "  Choice [1/2]: "; read -r REUSE_CHOICE
-  if [ "$REUSE_CHOICE" = "2" ]; then
-    echo "  → Starting fresh..."
-    rm -f "$CONFIG_FILE"
-    # Fall through to interactive prompts below
-  fi
+Non-interactive mode (CI/scripts):
+  Set ALL required EXP_* variables:
+    EXP_QDRANT_URL       Qdrant server URL (e.g. http://localhost:6333)
+    EXP_QDRANT_KEY       Qdrant API key (empty for local)
+    EXP_EMBED_PROVIDER   ollama | openai | gemini | siliconflow | custom
+    EXP_BRAIN_PROVIDER   ollama | openai | gemini | claude | deepseek | siliconflow | custom
+    EXP_EMBED_MODEL      embedding model name
+    EXP_BRAIN_MODEL      brain LLM model name
+    EXP_EMBED_KEY        API key for embed provider (empty for ollama)
+    EXP_BRAIN_KEY        API key for brain provider (empty for ollama)
+    EXP_EMBED_ENDPOINT   custom embed endpoint URL (for siliconflow/custom)
+    EXP_BRAIN_ENDPOINT   custom brain endpoint URL (for siliconflow/custom)
+    EXP_OLLAMA_URL       Ollama URL (default: http://localhost:11434)
+
+  Example:
+    EXP_QDRANT_URL=http://localhost:6333 EXP_EMBED_PROVIDER=openai \
+    EXP_EMBED_KEY=sk-... EXP_EMBED_MODEL=text-embedding-3-small \
+    EXP_BRAIN_PROVIDER=openai EXP_BRAIN_KEY=sk-... \
+    EXP_BRAIN_MODEL=gpt-4o-mini bash setup.sh
+
+Reconfigure:
+  Run setup.sh again and choose [2] Reconfigure.
+HELP
+  exit 0
 fi
 
-if [ -f "$CONFIG_FILE" ] && [ -z "$EXP_RESET_CONFIG" ]; then
-  # Load config fields via node writing to stdout, read with while+IFS
-  while IFS='=' read -r key val; do
-    [ -n "$key" ] && export "$key"="$val"
-  done < <(node -e "
-const fs=require('fs'),path=require('path'),os=require('os');
-const f=path.join(os.homedir(),'.experience','config.json');
-try{
+# ── Non-interactive detection (CI/scripts — ALL vars must be set) ──────────
+NI_MODE=false
+if [ -n "$EXP_QDRANT_URL" ] && [ -n "$EXP_EMBED_PROVIDER" ] && \
+   [ -n "$EXP_BRAIN_PROVIDER" ] && [ -n "$EXP_EMBED_MODEL" ] && \
+   [ -n "$EXP_BRAIN_MODEL" ]; then
+  NI_MODE=true
+  echo "  Non-interactive mode: all EXP_* vars provided"
+elif [ -n "$EXP_QDRANT_URL" ] || [ -n "$EXP_EMBED_PROVIDER" ] || \
+     [ -n "$EXP_BRAIN_PROVIDER" ]; then
+  echo "  Warning: some EXP_* vars are set but not all required ones."
+  echo "  Falling through to interactive mode."
+  echo "  Required: EXP_QDRANT_URL, EXP_EMBED_PROVIDER, EXP_BRAIN_PROVIDER,"
+  echo "            EXP_EMBED_MODEL, EXP_BRAIN_MODEL"
+  echo ""
+fi
+
+# ── Shortcut flags ────────────────────────────────────────────────────────
+if [[ "$1" == "--local" ]]; then
+  NI_MODE=true
+  EXP_QDRANT_URL="http://localhost:6333"
+  EXP_QDRANT_KEY=""
+  EXP_EMBED_PROVIDER="ollama"
+  EXP_BRAIN_PROVIDER="ollama"
+  EXP_EMBED_MODEL="nomic-embed-text"
+  EXP_BRAIN_MODEL="qwen2.5:3b"
+  EXP_OLLAMA_URL="http://localhost:11434"
+  EXP_EMBED_KEY=""
+  EXP_BRAIN_KEY=""
+  EXP_EMBED_ENDPOINT=""
+  EXP_BRAIN_ENDPOINT=""
+  echo "  Shortcut --local: local Docker Qdrant + Ollama"
+fi
+
+CONFIG_FILE="$INSTALL_DIR/config.json"
+KEEP_CONFIG=false
+
+# ── Step 1: Resolve config ─────────────────────────────────────────────────
+echo "◆ [1/6] Resolving config..."
+
+if [ -f "$CONFIG_FILE" ] && [ "$NI_MODE" = "false" ]; then
+  echo ""
+  echo "  Existing config found at $CONFIG_FILE"
+  echo ""
+  echo "  [1] Keep existing config (skip Steps A+B)"
+  echo "  [2] Reconfigure from scratch"
+  printf "  Choice [1/2]: "; read -r REUSE_CHOICE
+
+  if [ "$REUSE_CHOICE" = "2" ]; then
+    echo "  Starting fresh configuration..."
+    KEEP_CONFIG=false
+  else
+    KEEP_CONFIG=true
+    echo "  Loading and validating existing config..."
+
+    # Load existing config fields
+    _LOAD_RESULT=$(node -e "
+try {
+  const fs=require('fs'), path=require('path'), os=require('os');
+  const f=path.join(os.homedir(),'.experience','config.json');
   const c=JSON.parse(fs.readFileSync(f,'utf8'));
-  const ep=c.embedProvider||(c.openaiKey?'openai':c.geminiKey?'gemini':'ollama');
-  const bp=c.brainProvider||(c.openaiKey?'openai':c.geminiKey?'gemini':c.anthropicKey?'claude':c.deepseekKey?'deepseek':'ollama');
-  process.stdout.write([
+  const fields=[
     'QDRANT_URL='+  (c.qdrantUrl||''),
     'QDRANT_KEY='+  (c.qdrantKey||''),
     'OLLAMA_URL='+  (c.ollamaUrl||''),
     'TUNNEL_SSH='+  (c.tunnelSsh||''),
-    'EMBED_PROVIDER='+ ep,
-    'BRAIN_PROVIDER='+ bp,
-    'EXP_BRAIN_MODEL='+(c.brainModel||''),
-    'EXP_BRAIN_ENDPOINT='+(c.brainEndpoint||''),
-    'EXP_BRAIN_KEY='+(c.brainKey||''),
-    'EXP_EMBED_MODEL='+(c.embedModel||''),
-    'EXP_EMBED_ENDPOINT='+(c.embedEndpoint||''),
-    'EXP_EMBED_KEY='+(c.embedKey||''),
-    'OPENAI_KEY='+  (c.openaiKey||''),
-    'GEMINI_KEY='+  (c.geminiKey||''),
-    'ANTHROPIC_KEY='+(c.anthropicKey||''),
-    'DEEPSEEK_KEY='+ (c.deepseekKey||''),
-    'KEEP_CONFIG=true',
-  ].join('\n')+'\n');
-}catch{}
-" 2>/dev/null)
+    'EMBED_PROVIDER='+(c.embedProvider||''),
+    'BRAIN_PROVIDER='+(c.brainProvider||''),
+    'EMBED_MODEL='+ (c.embedModel||''),
+    'BRAIN_MODEL='+ (c.brainModel||''),
+    'EMBED_ENDPOINT='+(c.embedEndpoint||''),
+    'EMBED_KEY='+(c.embedKey||''),
+    'BRAIN_ENDPOINT='+(c.brainEndpoint||''),
+    'BRAIN_KEY='+(c.brainKey||''),
+    'EMBED_DIM='+(c.embedDim||768),
+  ];
+  process.stdout.write(fields.join('\n')+'\n');
+} catch(e) { process.stderr.write('LOAD_FAILED: '+e.message+'\n'); process.exit(1); }
+" 2>&1)
 
-  # Validate: cloud providers MUST have API keys — if missing, force reconfigure
-  CONFIG_VALID=true
-  if [ "$EMBED_PROVIDER" = "openai" ] && [ -z "$OPENAI_KEY" ] && [ -z "$EXP_BRAIN_KEY" ]; then
-    echo "  ⚠ OpenAI selected but no API key found"
-    CONFIG_VALID=false
-  elif [ "$EMBED_PROVIDER" = "gemini" ] && [ -z "$GEMINI_KEY" ]; then
-    echo "  ⚠ Gemini selected but no API key found"
-    CONFIG_VALID=false
-  fi
-  if [ "$BRAIN_PROVIDER" = "claude" ] && [ -z "$ANTHROPIC_KEY" ]; then
-    echo "  ⚠ Claude brain selected but no API key found"
-    CONFIG_VALID=false
-  elif [ "$BRAIN_PROVIDER" = "deepseek" ] && [ -z "$DEEPSEEK_KEY" ]; then
-    echo "  ⚠ DeepSeek brain selected but no API key found"
-    CONFIG_VALID=false
-  fi
-  if [ "$BRAIN_PROVIDER" = "ollama" ] || [ "$EMBED_PROVIDER" = "ollama" ]; then
-    if [ -n "$OLLAMA_URL" ]; then
-      if ! curl -s -m 3 "$OLLAMA_URL/api/tags" >/dev/null 2>&1; then
-        echo "  ⚠ Ollama selected but not reachable at $OLLAMA_URL"
+    if echo "$_LOAD_RESULT" | grep -q "LOAD_FAILED"; then
+      echo ""
+      echo "  [FAIL] Cannot read existing config: $(echo "$_LOAD_RESULT" | grep LOAD_FAILED)"
+      echo "  Fix:   Check $CONFIG_FILE is valid JSON"
+      echo ""
+      echo "  [1] Reconfigure from scratch"
+      echo "  [2] Continue anyway (may fail)"
+      printf "  Choice [1/2]: "; read -r FIX_CHOICE
+      if [ "$FIX_CHOICE" = "1" ]; then
+        KEEP_CONFIG=false
+      else
+        echo "  Continuing with partial config..."
+      fi
+    else
+      while IFS='=' read -r key val; do
+        [ -n "$key" ] && export "$key"="$val"
+      done <<< "$_LOAD_RESULT"
+
+      # Validate loaded config
+      CONFIG_VALID=true
+      VALIDATION_ISSUES=""
+
+      # Check required fields exist
+      if [ -z "$QDRANT_URL" ]; then
+        VALIDATION_ISSUES="${VALIDATION_ISSUES}\n    - Missing: qdrantUrl"
         CONFIG_VALID=false
+      fi
+      if [ -z "$EMBED_PROVIDER" ]; then
+        VALIDATION_ISSUES="${VALIDATION_ISSUES}\n    - Missing: embedProvider"
+        CONFIG_VALID=false
+      fi
+      if [ -z "$BRAIN_PROVIDER" ]; then
+        VALIDATION_ISSUES="${VALIDATION_ISSUES}\n    - Missing: brainProvider"
+        CONFIG_VALID=false
+      fi
+      if [ -z "$EMBED_DIM" ] || [ "$EMBED_DIM" = "0" ]; then
+        VALIDATION_ISSUES="${VALIDATION_ISSUES}\n    - Missing: embedDim"
+        CONFIG_VALID=false
+      fi
+
+      # Check API keys for cloud providers
+      if [ "$EMBED_PROVIDER" = "openai" ] && [ -z "$EMBED_KEY" ]; then
+        VALIDATION_ISSUES="${VALIDATION_ISSUES}\n    - OpenAI embed selected but no embedKey found"
+        CONFIG_VALID=false
+      fi
+      if [ "$EMBED_PROVIDER" = "gemini" ] && [ -z "$EMBED_KEY" ]; then
+        VALIDATION_ISSUES="${VALIDATION_ISSUES}\n    - Gemini embed selected but no embedKey found"
+        CONFIG_VALID=false
+      fi
+      if [ "$BRAIN_PROVIDER" = "claude" ] && [ -z "$BRAIN_KEY" ]; then
+        VALIDATION_ISSUES="${VALIDATION_ISSUES}\n    - Claude brain selected but no brainKey found"
+        CONFIG_VALID=false
+      fi
+      if [ "$BRAIN_PROVIDER" = "deepseek" ] && [ -z "$BRAIN_KEY" ]; then
+        VALIDATION_ISSUES="${VALIDATION_ISSUES}\n    - DeepSeek brain selected but no brainKey found"
+        CONFIG_VALID=false
+      fi
+
+      if [ "$CONFIG_VALID" = false ]; then
+        echo ""
+        echo "  Config has issues:"
+        printf "$VALIDATION_ISSUES\n"
+        echo ""
+        echo "  [1] Reconfigure (pick new providers)"
+        echo "  [2] Continue anyway"
+        printf "  Choice [1/2]: "; read -r FIX_CHOICE
+        if [ "$FIX_CHOICE" = "1" ]; then
+          KEEP_CONFIG=false
+          echo "  Reconfiguring..."
+        else
+          echo "  Continuing with existing config..."
+        fi
+      else
+        echo "  Config valid — keeping existing"
       fi
     fi
   fi
-
-  if [ "$CONFIG_VALID" = false ]; then
-    echo ""
-    echo "  Config has issues. What do you want to do?"
-    echo "  [1] Reconfigure (pick new provider)"
-    echo "  [2] Keep and continue anyway"
-    printf "  Choice [1/2]: "; read -r FIX_CHOICE
-    if [ "$FIX_CHOICE" = "1" ]; then
-      # Clear provider vars to trigger interactive prompts
-      unset EMBED_PROVIDER BRAIN_PROVIDER QDRANT_URL
-      echo "  → Reconfiguring..."
-    else
-      echo "  → Keeping existing config"
-    fi
-  else
-    echo "  ✓ Config valid — reusing"
-  fi
 fi
 
-# Non-interactive mode: env var overrides (for CI/scripts only)
-# These are the ONLY way to skip interactive prompts
-[ -n "$EXP_QDRANT_URL" ]      && QDRANT_URL="$EXP_QDRANT_URL"
-[ -n "$EXP_QDRANT_KEY" ]      && QDRANT_KEY="$EXP_QDRANT_KEY"
-[ -n "$EXP_OLLAMA_URL" ]      && OLLAMA_URL="$EXP_OLLAMA_URL"
-[ -n "$EXP_TUNNEL_SSH" ]      && TUNNEL_SSH="$EXP_TUNNEL_SSH"
-[ -n "$EXP_EMBED_PROVIDER" ]  && EMBED_PROVIDER="$EXP_EMBED_PROVIDER"
-[ -n "$EXP_BRAIN_PROVIDER" ]  && BRAIN_PROVIDER="$EXP_BRAIN_PROVIDER"
+if [ "$NI_MODE" = "true" ]; then
+  # Load all vars from EXP_* env vars
+  QDRANT_URL="${EXP_QDRANT_URL}"
+  QDRANT_KEY="${EXP_QDRANT_KEY:-}"
+  EMBED_PROVIDER="${EXP_EMBED_PROVIDER}"
+  BRAIN_PROVIDER="${EXP_BRAIN_PROVIDER}"
+  EMBED_MODEL="${EXP_EMBED_MODEL}"
+  BRAIN_MODEL="${EXP_BRAIN_MODEL}"
+  EMBED_KEY="${EXP_EMBED_KEY:-}"
+  BRAIN_KEY="${EXP_BRAIN_KEY:-}"
+  EMBED_ENDPOINT="${EXP_EMBED_ENDPOINT:-}"
+  BRAIN_ENDPOINT="${EXP_BRAIN_ENDPOINT:-}"
+  OLLAMA_URL="${EXP_OLLAMA_URL:-http://localhost:11434}"
+  TUNNEL_SSH=""
+  KEEP_CONFIG=false
+fi
 
-# Interactive prompts if still missing
-if [ -z "$QDRANT_URL" ]; then
-  echo "  ┌─────────────────────────────────────────────────────┐"
-  echo "  │  Step A — Vector store:                              │"
-  echo "  │  [1] Qdrant Cloud  (free tier — cloud.qdrant.io)    │"
-  echo "  │  [2] Local Docker  (docker run qdrant/qdrant)       │"
-  echo "  │  [3] VPS tunnel    (SSH -L to your server)          │"
-  echo "  └─────────────────────────────────────────────────────┘"
+# ── Step A: Vector store selection ────────────────────────────────────────
+if [ "$KEEP_CONFIG" = "false" ] && [ "$NI_MODE" = "false" ]; then
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo " Step A — Vector Store"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+  echo "  Where should experience vectors be stored?"
+  echo ""
+  echo "  [1] Qdrant Cloud     cloud.qdrant.io — free tier available"
+  echo "  [2] Local Docker     docker run qdrant/qdrant — needs Docker Desktop"
+  echo "  [3] VPS via SSH      SSH tunnel to your server"
+  echo ""
   printf "  Choice [1/2/3]: "; read -r STORE_CHOICE
 
   case "$STORE_CHOICE" in
     1)
-      echo "    → cloud.qdrant.io → New Cluster → copy URL + API key"
-      printf "  Qdrant URL: "; read -r QDRANT_URL
-      printf "  Qdrant API key: "; read -r QDRANT_KEY ;;
+      echo ""
+      echo "  Get your free Qdrant Cloud cluster at: https://cloud.qdrant.io"
+      echo "  New Cluster → copy Cluster URL + API key"
+      echo ""
+      printf "  Qdrant URL (https://xxx.qdrant.io): "; read -r QDRANT_URL
+      printf "  Qdrant API key: "; read -r QDRANT_KEY
+      TUNNEL_SSH=""
+      ;;
     2)
-      if ! docker ps >/dev/null 2>&1; then echo "  ✗ Docker not running."; exit 1; fi
-      docker ps | grep -q qdrant || { docker run -d --name qdrant -p 6333:6333 qdrant/qdrant >/dev/null 2>&1; sleep 2; }
-      QDRANT_URL="http://localhost:6333"; QDRANT_KEY=""
-      echo "  ✓ Qdrant running on localhost:6333" ;;
+      echo ""
+      echo "  Checking Docker..."
+      if ! docker ps >/dev/null 2>&1; then
+        echo ""
+        echo "  [FAIL] Docker is not running or not installed"
+        echo "  Fix:   Start Docker Desktop, then re-run setup.sh"
+        exit 1
+      fi
+      if docker ps | grep -q qdrant; then
+        echo "  Qdrant container already running"
+      else
+        echo "  Starting Qdrant container..."
+        if ! docker run -d --name qdrant -p 6333:6333 -v qdrant_storage:/qdrant/storage qdrant/qdrant 2>/tmp/exp-docker-err; then
+          echo ""
+          echo "  [FAIL] Docker failed to start Qdrant"
+          echo "  Error: $(tail -3 /tmp/exp-docker-err)"
+          echo "  Fix:   Make sure Docker Desktop is running, then re-run setup.sh"
+          exit 1
+        fi
+        sleep 2
+      fi
+      QDRANT_URL="http://localhost:6333"
+      QDRANT_KEY=""
+      TUNNEL_SSH=""
+      echo "  Qdrant running at localhost:6333"
+      ;;
     3)
-      printf "  VPS user@host: "; read -r VPS_HOST
-      printf "  SSH key [~/.ssh/id_rsa]: "; read -r VPS_KEY; VPS_KEY="${VPS_KEY:-$HOME/.ssh/id_rsa}"
-      QDRANT_URL="http://localhost:16333"
-      TUNNEL_SSH="ssh -i $VPS_KEY -f -N -o ServerAliveInterval=60 -L 16333:localhost:6333 $VPS_HOST"
-      printf "  Qdrant API key on VPS: "; read -r QDRANT_KEY ;;
+      echo ""
+      printf "  VPS user@host (e.g. user@72.61.127.154): "; read -r VPS_HOST
+      printf "  SSH key path [~/.ssh/id_rsa]: "; read -r VPS_KEY
+      VPS_KEY="${VPS_KEY:-$HOME/.ssh/id_rsa}"
+      printf "  Remote Qdrant port [6333]: "; read -r VPS_PORT
+      VPS_PORT="${VPS_PORT:-6333}"
+      LOCAL_TUNNEL_PORT="16333"
+      QDRANT_URL="http://localhost:$LOCAL_TUNNEL_PORT"
+      TUNNEL_SSH="ssh -i $VPS_KEY -f -N -o ServerAliveInterval=60 -L ${LOCAL_TUNNEL_PORT}:localhost:${VPS_PORT} $VPS_HOST"
+      printf "  Qdrant API key on VPS (empty if none): "; read -r QDRANT_KEY
+      echo "  VPS tunnel configured (will start after install)"
+      ;;
+    *)
+      echo ""
+      echo "  [FAIL] Invalid choice: $STORE_CHOICE"
+      echo "  Fix:   Re-run setup.sh and choose 1, 2, or 3"
+      exit 1
+      ;;
   esac
 fi
 
-if [ -z "$EMBED_PROVIDER" ]; then
+# ── Step B: AI provider selection ────────────────────────────────────────
+if [ "$KEEP_CONFIG" = "false" ] && [ "$NI_MODE" = "false" ]; then
   echo ""
-  echo "  ┌──────────────────────────────────────────────────────┐"
-  echo "  │  Step B — AI provider (embedding + extraction):      │"
-  echo "  │  [1] OpenAI       sk-...   embed + brain in one key  │"
-  echo "  │  [2] Gemini       AIza...  free tier available        │"
-  echo "  │  [3] Claude       sk-ant-  haiku brain, need embed   │"
-  echo "  │  [4] DeepSeek     ...      cheapest direct API        │"
-  echo "  │  [5] SiliconFlow  sk-...   cheapest OpenAI-compatible │"
-  echo "  │  [6] Custom       any OpenAI-compatible endpoint      │"
-  echo "  │  [7] Ollama       local    100%% free, no API key     │"
-  echo "  └──────────────────────────────────────────────────────┘"
-  printf "  Choice [1-7]: "; read -r AI_CHOICE
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo " Step B — AI Provider for Embeddings"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+  echo "  Which provider generates embedding vectors?"
+  echo ""
+  echo "  [1] Ollama       local, free — nomic-embed-text"
+  echo "  [2] OpenAI       text-embedding-3-small / large"
+  echo "  [3] Gemini       text-embedding-004"
+  echo "  [4] VoyageAI     voyage-code-3 (code-optimized)"
+  echo "  [5] SiliconFlow  Qwen3-Embedding — cheap + fast"
+  echo "  [6] Custom       any OpenAI-compatible endpoint"
+  echo ""
+  printf "  Choice [1-6]: "; read -r EMBED_CHOICE
 
-  case "$AI_CHOICE" in
+  case "$EMBED_CHOICE" in
     1)
-      echo "    → platform.openai.com/api-keys"
-      printf "  OpenAI API key (sk-...): "; read -r OPENAI_KEY
-      EMBED_PROVIDER="openai"; BRAIN_PROVIDER="openai" ;;
+      echo ""
+      if ! command -v ollama >/dev/null 2>&1; then
+        echo "  [FAIL] Ollama not found"
+        echo "  Fix:   Install Ollama from https://ollama.ai then re-run setup.sh"
+        exit 1
+      fi
+      OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
+      printf "  Ollama URL [http://localhost:11434]: "; read -r _OURL
+      [ -n "$_OURL" ] && OLLAMA_URL="$_OURL"
+      printf "  Embed model [nomic-embed-text]: "; read -r EMBED_MODEL
+      EMBED_MODEL="${EMBED_MODEL:-nomic-embed-text}"
+      echo "  Pulling model $EMBED_MODEL..."
+      if ! ollama pull "$EMBED_MODEL" 2>/tmp/exp-ollama-err; then
+        echo "  [FAIL] Could not pull $EMBED_MODEL"
+        echo "  Error: $(tail -3 /tmp/exp-ollama-err)"
+        echo "  Fix:   Check Ollama is running and model name is correct"
+        exit 1
+      fi
+      EMBED_PROVIDER="ollama"
+      EMBED_KEY=""
+      EMBED_ENDPOINT=""
+      ;;
     2)
-      echo "    → aistudio.google.com/apikey"
-      printf "  Gemini API key (AIza...): "; read -r GEMINI_KEY
-      EMBED_PROVIDER="gemini"; BRAIN_PROVIDER="gemini" ;;
+      echo ""
+      echo "  Get your API key at: https://platform.openai.com/api-keys"
+      printf "  OpenAI API key (sk-...): "; read -r EMBED_KEY
+      printf "  Embed model [text-embedding-3-small]: "; read -r EMBED_MODEL
+      EMBED_MODEL="${EMBED_MODEL:-text-embedding-3-small}"
+      EMBED_PROVIDER="openai"
+      EMBED_ENDPOINT="https://api.openai.com/v1/embeddings"
+      ;;
     3)
-      echo "    → console.anthropic.com/settings/keys"
-      echo "    Note: Claude has no embedding API — need Ollama or another embed provider"
-      printf "  Anthropic API key (sk-ant-...): "; read -r ANTHROPIC_KEY
-      printf "  Ollama URL for embedding [http://localhost:11434]: "; read -r OLLAMA_URL
-      OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
-      EMBED_PROVIDER="ollama"; BRAIN_PROVIDER="claude" ;;
+      echo ""
+      echo "  Get your API key at: https://aistudio.google.com/apikey"
+      printf "  Gemini API key (AIza...): "; read -r EMBED_KEY
+      printf "  Embed model [text-embedding-004]: "; read -r EMBED_MODEL
+      EMBED_MODEL="${EMBED_MODEL:-text-embedding-004}"
+      EMBED_PROVIDER="gemini"
+      EMBED_ENDPOINT=""
+      ;;
     4)
-      echo "    → platform.deepseek.com/api_keys"
-      echo "    Note: DeepSeek has no embedding API — need Ollama for embed"
-      printf "  DeepSeek API key: "; read -r DEEPSEEK_KEY
-      printf "  Ollama URL for embedding [http://localhost:11434]: "; read -r OLLAMA_URL
-      OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
-      EMBED_PROVIDER="ollama"; BRAIN_PROVIDER="deepseek" ;;
+      echo ""
+      echo "  Get your API key at: https://www.voyageai.com"
+      printf "  VoyageAI API key: "; read -r EMBED_KEY
+      printf "  Embed model [voyage-code-3]: "; read -r EMBED_MODEL
+      EMBED_MODEL="${EMBED_MODEL:-voyage-code-3}"
+      EMBED_PROVIDER="openai"
+      EMBED_ENDPOINT="https://api.voyageai.com/v1/embeddings"
+      ;;
     5)
-      echo "    → docs.siliconflow.com → Get API key"
-      echo "    SiliconFlow supports embed + brain — no Ollama needed!"
-      printf "  SiliconFlow API key (sk-...): "; read -r SF_KEY
-      printf "  Brain model [Qwen/Qwen2.5-7B-Instruct]: "; read -r SF_BRAIN
-      SF_BRAIN="${SF_BRAIN:-Qwen/Qwen2.5-7B-Instruct}"
-      printf "  Embed model [Qwen/Qwen3-Embedding-0.6B]: "; read -r SF_EMBED
-      SF_EMBED="${SF_EMBED:-Qwen/Qwen3-Embedding-0.6B}"
-      EMBED_PROVIDER="openai"; BRAIN_PROVIDER="openai"
-      EXP_BRAIN_ENDPOINT="https://api.siliconflow.com/v1/chat/completions"
-      EXP_BRAIN_KEY="$SF_KEY"
-      EXP_BRAIN_MODEL="$SF_BRAIN"
-      EXP_EMBED_ENDPOINT="https://api.siliconflow.com/v1/embeddings"
-      EXP_EMBED_KEY="$SF_KEY"
-      EXP_EMBED_MODEL="$SF_EMBED" ;;
+      echo ""
+      echo "  Get your API key at: https://siliconflow.com"
+      printf "  SiliconFlow API key (sk-...): "; read -r EMBED_KEY
+      printf "  Embed model [Qwen/Qwen3-Embedding-0.6B]: "; read -r EMBED_MODEL
+      EMBED_MODEL="${EMBED_MODEL:-Qwen/Qwen3-Embedding-0.6B}"
+      EMBED_PROVIDER="siliconflow"
+      EMBED_ENDPOINT="https://api.siliconflow.com/v1/embeddings"
+      ;;
     6)
-      echo "    Any OpenAI-compatible API (Together, Groq, Fireworks, etc.)"
-      printf "  Chat completions URL (e.g. https://api.xxx.com/v1/chat/completions): "; read -r EXP_BRAIN_ENDPOINT
-      printf "  API key: "; read -r EXP_BRAIN_KEY
-      printf "  Model name: "; read -r EXP_BRAIN_MODEL
-      printf "  Ollama URL for embedding [http://localhost:11434]: "; read -r OLLAMA_URL
-      OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
-      EMBED_PROVIDER="ollama"; BRAIN_PROVIDER="openai" ;;
-    7)
-      if ! command -v ollama >/dev/null 2>&1; then echo "  ✗ Install Ollama from https://ollama.ai"; exit 1; fi
-      echo "  ○ Pulling models (first time: a few minutes)..."
-      ollama pull nomic-embed-text >/dev/null 2>&1 & ollama pull qwen2.5:3b >/dev/null 2>&1 & wait
-      OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
-      EMBED_PROVIDER="ollama"; BRAIN_PROVIDER="ollama"
-      echo "  ✓ Ollama ready" ;;
+      echo ""
+      echo "  Any OpenAI-compatible embedding API"
+      printf "  Embeddings endpoint URL: "; read -r EMBED_ENDPOINT
+      printf "  API key: "; read -r EMBED_KEY
+      printf "  Embed model name: "; read -r EMBED_MODEL
+      EMBED_PROVIDER="custom"
+      ;;
+    *)
+      echo ""
+      echo "  [FAIL] Invalid choice: $EMBED_CHOICE"
+      exit 1
+      ;;
   esac
+
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo " Step B (cont.) — AI Provider for Brain (LLM Reasoning)"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+  echo "  Which LLM analyzes sessions and extracts lessons?"
+  echo ""
+  echo "  [1] Ollama       local, free — qwen2.5:3b"
+  echo "  [2] OpenAI       gpt-4o-mini"
+  echo "  [3] Gemini       gemini-2.0-flash"
+  echo "  [4] Claude       claude-haiku"
+  echo "  [5] DeepSeek     deepseek-chat — cheapest direct API"
+  echo "  [6] SiliconFlow  Qwen2.5 — cheap + fast"
+  echo "  [7] Custom       any OpenAI-compatible endpoint"
+  echo ""
+  printf "  Choice [1-7]: "; read -r BRAIN_CHOICE
+
+  case "$BRAIN_CHOICE" in
+    1)
+      echo ""
+      OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
+      if ! command -v ollama >/dev/null 2>&1; then
+        echo "  [FAIL] Ollama not found"
+        echo "  Fix:   Install Ollama from https://ollama.ai then re-run setup.sh"
+        exit 1
+      fi
+      printf "  Brain model [qwen2.5:3b]: "; read -r BRAIN_MODEL
+      BRAIN_MODEL="${BRAIN_MODEL:-qwen2.5:3b}"
+      echo "  Pulling model $BRAIN_MODEL..."
+      if ! ollama pull "$BRAIN_MODEL" 2>/tmp/exp-ollama-err; then
+        echo "  [FAIL] Could not pull $BRAIN_MODEL"
+        echo "  Error: $(tail -3 /tmp/exp-ollama-err)"
+        echo "  Fix:   Check Ollama is running and model name is correct"
+        exit 1
+      fi
+      BRAIN_PROVIDER="ollama"
+      BRAIN_KEY=""
+      BRAIN_ENDPOINT=""
+      ;;
+    2)
+      echo ""
+      echo "  Get your API key at: https://platform.openai.com/api-keys"
+      printf "  OpenAI API key (sk-...): "; read -r BRAIN_KEY
+      printf "  Brain model [gpt-4o-mini]: "; read -r BRAIN_MODEL
+      BRAIN_MODEL="${BRAIN_MODEL:-gpt-4o-mini}"
+      BRAIN_PROVIDER="openai"
+      BRAIN_ENDPOINT="https://api.openai.com/v1/chat/completions"
+      ;;
+    3)
+      echo ""
+      echo "  Get your API key at: https://aistudio.google.com/apikey"
+      printf "  Gemini API key (AIza...): "; read -r BRAIN_KEY
+      printf "  Brain model [gemini-2.0-flash]: "; read -r BRAIN_MODEL
+      BRAIN_MODEL="${BRAIN_MODEL:-gemini-2.0-flash}"
+      BRAIN_PROVIDER="gemini"
+      BRAIN_ENDPOINT=""
+      ;;
+    4)
+      echo ""
+      echo "  Get your API key at: https://console.anthropic.com/settings/keys"
+      printf "  Anthropic API key (sk-ant-...): "; read -r BRAIN_KEY
+      printf "  Brain model [claude-haiku-4-5]: "; read -r BRAIN_MODEL
+      BRAIN_MODEL="${BRAIN_MODEL:-claude-haiku-4-5}"
+      BRAIN_PROVIDER="claude"
+      BRAIN_ENDPOINT=""
+      ;;
+    5)
+      echo ""
+      echo "  Get your API key at: https://platform.deepseek.com/api_keys"
+      printf "  DeepSeek API key: "; read -r BRAIN_KEY
+      printf "  Brain model [deepseek-chat]: "; read -r BRAIN_MODEL
+      BRAIN_MODEL="${BRAIN_MODEL:-deepseek-chat}"
+      BRAIN_PROVIDER="deepseek"
+      BRAIN_ENDPOINT="https://api.deepseek.com/v1/chat/completions"
+      ;;
+    6)
+      echo ""
+      echo "  Get your API key at: https://siliconflow.com"
+      printf "  SiliconFlow API key (sk-...): "; read -r BRAIN_KEY
+      printf "  Brain model [Qwen/Qwen2.5-7B-Instruct]: "; read -r BRAIN_MODEL
+      BRAIN_MODEL="${BRAIN_MODEL:-Qwen/Qwen2.5-7B-Instruct}"
+      BRAIN_PROVIDER="siliconflow"
+      BRAIN_ENDPOINT="https://api.siliconflow.com/v1/chat/completions"
+      ;;
+    7)
+      echo ""
+      echo "  Any OpenAI-compatible chat completions API"
+      printf "  Chat completions URL: "; read -r BRAIN_ENDPOINT
+      printf "  API key: "; read -r BRAIN_KEY
+      printf "  Model name: "; read -r BRAIN_MODEL
+      BRAIN_PROVIDER="custom"
+      ;;
+    *)
+      echo ""
+      echo "  [FAIL] Invalid choice: $BRAIN_CHOICE"
+      exit 1
+      ;;
+  esac
+
+  # ── Dimension probe (after Step B) ──────────────────────────────────────
+  echo ""
+  echo "  Probing embedding dimension from API..."
+
+  EMBED_DIM=$(node -e "
+(async () => {
+  const provider = '$EMBED_PROVIDER';
+  const model = '$EMBED_MODEL';
+  const key = '$EMBED_KEY';
+  const endpoint = '$EMBED_ENDPOINT';
+  const ollamaUrl = '$OLLAMA_URL';
+  const testInput = 'dimension probe test';
+
+  try {
+    let vec;
+    if (provider === 'ollama') {
+      const url = ollamaUrl || 'http://localhost:11434';
+      const res = await fetch(url + '/api/embed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, input: testInput }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) {
+        process.stderr.write('HTTP ' + res.status + ' from ' + url + '\n');
+        process.exit(1);
+      }
+      const d = await res.json();
+      vec = d.embeddings?.[0];
+    } else if (provider === 'gemini') {
+      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':embedContent?key=' + key, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: { parts: [{ text: testInput }] } }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) {
+        const err = await res.text().catch(()=>'');
+        process.stderr.write('HTTP ' + res.status + ': ' + err.slice(0,200) + '\n');
+        process.exit(1);
+      }
+      const d = await res.json();
+      vec = d.embedding?.values;
+    } else {
+      // openai / siliconflow / custom / voyageai
+      const ep = endpoint || 'https://api.openai.com/v1/embeddings';
+      const res = await fetch(ep, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+        body: JSON.stringify({ model, input: testInput }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) {
+        const err = await res.text().catch(()=>'');
+        process.stderr.write('HTTP ' + res.status + ': ' + err.slice(0,200) + '\n');
+        process.exit(1);
+      }
+      const d = await res.json();
+      vec = d.data?.[0]?.embedding;
+    }
+    if (!vec || vec.length === 0) {
+      process.stderr.write('Empty embedding response\n');
+      process.exit(1);
+    }
+    process.stdout.write(String(vec.length));
+  } catch(e) {
+    process.stderr.write(e.message + '\n');
+    process.exit(1);
+  }
+})();
+" 2>/tmp/exp-dim-err)
+
+  if [ $? -ne 0 ] || [ -z "$EMBED_DIM" ]; then
+    echo ""
+    echo "  [FAIL] Cannot reach embed API ($EMBED_PROVIDER / $EMBED_MODEL)"
+    if [ -s /tmp/exp-dim-err ]; then
+      echo "  Error: $(cat /tmp/exp-dim-err)"
+    fi
+    echo "  Fix:   Verify your API key and endpoint, then re-run setup.sh"
+    exit 1
+  fi
+
+  echo "  Embed dimension: $EMBED_DIM (probed from API)"
 fi
 
-echo "  ✓ Config resolved"
+# ── Step C: Optional seed ─────────────────────────────────────────────────
+DO_SEED=false
+SEED_DIR=""
+if [ "$NI_MODE" = "false" ]; then
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo " Step C (optional) — Bootstrap brain from existing memory rules?"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+  echo "  This seeds your experience brain from feedback_*.md files"
+  echo "  in your ~/.claude/memory/ or similar directory."
+  echo ""
+  printf "  Path to memory dir (Enter to skip): "; read -r SEED_PATH
+  if [ -n "$SEED_PATH" ]; then
+    if [ -d "$SEED_PATH" ]; then
+      DO_SEED=true
+      SEED_DIR="$SEED_PATH"
+      echo "  Will seed from: $SEED_DIR"
+    else
+      echo "  Warning: $SEED_PATH is not a directory — skipping seed"
+    fi
+  else
+    echo "  Seed skipped"
+  fi
+fi
 
-# ── Step 2: Install to ~/.experience/ ─────────────────────────────────────
-echo "◆ [2/5] Installing to $INSTALL_DIR..."
+# ── Install step ──────────────────────────────────────────────────────────
+echo ""
+echo "◆ [2/6] Installing to $INSTALL_DIR..."
 
 mkdir -p "$INSTALL_DIR"
 
-# Copy core files
-cp "$SRC_DIR/experience-core.js" "$INSTALL_DIR/experience-core.js"
+# Copy core files — source is always canonical
+if ! cp "$SRC_DIR/experience-core.js" "$INSTALL_DIR/experience-core.js"; then
+  echo ""
+  echo "  [FAIL] Could not copy experience-core.js"
+  echo "  Error: source=$SRC_DIR/experience-core.js"
+  echo "  Fix:   Make sure you're running setup.sh from the experience-engine directory"
+  exit 1
+fi
 
-# Write wrapper hooks (self-contained, no relative paths)
+# Write wrapper hook: interceptor.js
 cat > "$INSTALL_DIR/interceptor.js" << 'HOOKEOF'
 #!/usr/bin/env node
 'use strict';
@@ -267,6 +655,7 @@ process.stdin.on('end', async () => {
 });
 HOOKEOF
 
+# Write wrapper hook: stop-extractor.js
 cat > "$INSTALL_DIR/stop-extractor.js" << 'HOOKEOF'
 #!/usr/bin/env node
 'use strict';
@@ -287,18 +676,17 @@ async function main() {
   const transcript = newLines.map(l => { try { const e = JSON.parse(l); const c = e.content || e.message || ''; return typeof c === 'string' ? c.slice(0, 300) : ''; } catch { return ''; } }).filter(Boolean).join('\n');
   const count = await extractFromSession(transcript);
   fs.writeFileSync(MARKER, JSON.stringify({ file: log, line: lines.length }));
-  if (count > 0) process.stderr.write('🧠 Experience: +' + count + ' lessons\n');
-  // Evolution trigger with 24h throttle (per D-08)
+  if (count > 0) process.stderr.write('Experience: +' + count + ' lessons\n');
   try {
     const evolveMarker = home + '/.experience/.evolve-marker';
     let lastEvolve = 0;
     try { lastEvolve = JSON.parse(fs.readFileSync(evolveMarker, 'utf8')).ts || 0; } catch {}
-    if (Date.now() - lastEvolve > 86400000) { // 24 hours
+    if (Date.now() - lastEvolve > 86400000) {
       const { evolve } = require(home + '/.experience/experience-core.js');
       const r = await evolve();
       fs.writeFileSync(evolveMarker, JSON.stringify({ ts: Date.now() }));
       const total = r.promoted + r.abstracted + r.demoted + r.archived;
-      if (total > 0) process.stderr.write('🧬 Evolution: +' + r.promoted + ' promoted, ' + r.abstracted + ' abstracted, ' + r.demoted + ' demoted, ' + r.archived + ' archived\n');
+      if (total > 0) process.stderr.write('Evolution: +' + r.promoted + ' promoted, ' + r.abstracted + ' abstracted, ' + r.demoted + ' demoted, ' + r.archived + ' archived\n');
     }
   } catch {}
 }
@@ -315,155 +703,75 @@ HOOKEOF
 
 chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js"
 
-# Write config.json — skip if keeping existing config (avoid overwriting with incomplete vars)
-if [ "$KEEP_CONFIG" = "true" ]; then
-  echo "  ✓ Config preserved (keep mode)"
-else
-# Write config.json — use env vars inside Node to avoid path mangling
-EXP_Q_URL="$QDRANT_URL"     EXP_Q_KEY="$QDRANT_KEY" \
-EXP_OLLAMA="$OLLAMA_URL"    EXP_TUNNEL="$TUNNEL_SSH" \
-EXP_OPENAI="$OPENAI_KEY"    EXP_GEMINI="$GEMINI_KEY" \
-EXP_ANTHROPIC="$ANTHROPIC_KEY" EXP_DEEPSEEK="$DEEPSEEK_KEY" \
-EXP_EMBED_P="$EMBED_PROVIDER"  EXP_BRAIN_P="$BRAIN_PROVIDER" \
-node << 'JSEOF'
-(async () => {
-const fs = require('fs'), path = require('path'), os = require('os');
-const e = process.env;
-const embedP = e.EXP_EMBED_P || 'ollama';
-const brainP = e.EXP_BRAIN_P || 'ollama';
-const embedModels = { openai:'text-embedding-3-small', gemini:'text-embedding-004', voyageai:'voyage-code-3', ollama:'nomic-embed-text' };
-const brainModels = { openai:'gpt-4o-mini', gemini:'gemini-2.0-flash', claude:'claude-haiku-4-5-20251001', deepseek:'deepseek-chat', ollama:'qwen2.5:3b' };
+# Atomic config write — only when NOT keeping config
+if [ "$KEEP_CONFIG" = "false" ]; then
+  echo "  Writing config.json..."
 
-// Probe actual embedding dimension — never hardcode
-async function probeEmbedDim() {
-  const model = e.EXP_EMBED_MODEL || embedModels[embedP] || 'nomic-embed-text';
-  const testInput = 'dimension probe';
-  try {
-    let res;
-    if (embedP === 'ollama') {
-      const url = e.EXP_OLLAMA || 'http://localhost:11434';
-      res = await fetch(url + '/api/embed', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, input: testInput }),
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!res.ok) return 768;
-      const d = await res.json();
-      return d.embeddings?.[0]?.length || 768;
-    } else if (embedP === 'gemini') {
-      const key = e.EXP_GEMINI || '';
-      res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':embedContent?key=' + key, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: { parts: [{ text: testInput }] } }),
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!res.ok) return 768;
-      const d = await res.json();
-      return d.embedding?.values?.length || 768;
-    } else {
-      // OpenAI-compatible (OpenAI, SiliconFlow, Together, etc.)
-      const endpoint = e.EXP_EMBED_ENDPOINT || 'https://api.openai.com/v1/embeddings';
-      const key = e.EXP_EMBED_KEY || e.EXP_OPENAI || '';
-      res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
-        body: JSON.stringify({ model, input: testInput }),
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!res.ok) return 1536;
-      const d = await res.json();
-      return d.data?.[0]?.embedding?.length || 1536;
-    }
-  } catch { return 768; }
-}
-
-const embedDim = await probeEmbedDim();
-console.log('  ✓ Embed dimension: ' + embedDim + ' (probed from API)');
-
-const cfg = {
-  qdrantUrl:      e.EXP_Q_URL    || 'http://localhost:6333',
-  qdrantKey:      e.EXP_Q_KEY    || '',
-  ollamaUrl:      e.EXP_OLLAMA   || '',
-  tunnelSsh:      e.EXP_TUNNEL   || '',
-  openaiKey:      e.EXP_OPENAI   || '',
-  geminiKey:      e.EXP_GEMINI   || '',
-  anthropicKey:   e.EXP_ANTHROPIC|| '',
-  deepseekKey:    e.EXP_DEEPSEEK || '',
-  embedProvider:  embedP,
-  brainProvider:  brainP,
-  embedModel:     e.EXP_EMBED_MODEL  || embedModels[embedP] || 'nomic-embed-text',
-  brainModel:     e.EXP_BRAIN_MODEL  || brainModels[brainP] || 'qwen2.5:3b',
-  brainEndpoint:  e.EXP_BRAIN_ENDPOINT || '',
-  brainKey:       e.EXP_BRAIN_KEY      || '',
-  embedEndpoint:  e.EXP_EMBED_ENDPOINT || '',
-  embedKey:       e.EXP_EMBED_KEY      || '',
-  embedDim:       embedDim,
-  installedAt: new Date().toISOString(),
-  version: '3.0'
-};
-const file = path.join(os.homedir(), '.experience', 'config.json');
-fs.mkdirSync(path.dirname(file), { recursive: true });
-fs.writeFileSync(file, JSON.stringify(cfg, null, 2));
-console.log('  ✓ Config saved');
-console.log('  ✓ Embed:  ' + embedP + ' (' + cfg.embedModel + ')');
-console.log('  ✓ Brain:  ' + brainP + ' (' + cfg.brainModel + ')');
-})();
-JSEOF
-fi # end KEEP_CONFIG check
-
-# Patch experience-core.js to read config from ~/.experience/config.json
-node << 'JSEOF'
+  node -e "
 const fs = require('fs');
-const home = require('os').homedir();
-const coreFile = home + '/.experience/experience-core.js';
-let core = fs.readFileSync(coreFile, 'utf8');
-const configBlock = `
-// --- Load config from ~/.experience/config.json (set by setup.sh) ---
-(function() {
-  try {
-    const cfg = JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.experience/config.json', 'utf8'));
-    const set = (e, v) => { if (v && !process.env[e]) process.env[e] = v; };
-    set('EXPERIENCE_QDRANT_URL',  cfg.qdrantUrl);
-    set('EXPERIENCE_QDRANT_KEY',  cfg.qdrantKey);
-    set('EXPERIENCE_OLLAMA_URL',  cfg.ollamaUrl);
-    set('EXPERIENCE_EMBED_MODEL', cfg.embedModel);
-    set('EXPERIENCE_BRAIN_MODEL', cfg.brainModel);
-    set('EXPERIENCE_EMBED_PROVIDER',  cfg.embedProvider);
-    set('EXPERIENCE_BRAIN_PROVIDER',  cfg.brainProvider);
-    set('EXPERIENCE_BRAIN_ENDPOINT',  cfg.brainEndpoint);
-    set('EXPERIENCE_BRAIN_KEY',       cfg.brainKey);
-    set('EXPERIENCE_EMBED_ENDPOINT',  cfg.embedEndpoint);
-    set('EXPERIENCE_EMBED_KEY',       cfg.embedKey);
-    set('OPENAI_API_KEY',    cfg.openaiKey);
-    set('GEMINI_API_KEY',    cfg.geminiKey);
-    set('ANTHROPIC_API_KEY', cfg.anthropicKey);
-    set('DEEPSEEK_API_KEY',  cfg.deepseekKey);
-  } catch {}
-})();
-`;
-if (!core.includes('Load config from ~/.experience')) {
-  core = core.replace("'use strict';", "'use strict';\n" + configBlock);
-  fs.writeFileSync(coreFile, core);
-  console.log('  ✓ Config loader injected into experience-core.js');
+const path = require('path');
+const cfg = {
+  qdrantUrl:      '$QDRANT_URL',
+  qdrantKey:      '$QDRANT_KEY',
+  embedProvider:  '$EMBED_PROVIDER',
+  brainProvider:  '$BRAIN_PROVIDER',
+  embedModel:     '$EMBED_MODEL',
+  brainModel:     '$BRAIN_MODEL',
+  embedEndpoint:  '$EMBED_ENDPOINT',
+  embedKey:       '$EMBED_KEY',
+  brainEndpoint:  '$BRAIN_ENDPOINT',
+  brainKey:       '$BRAIN_KEY',
+  embedDim:       $EMBED_DIM,
+  ollamaUrl:      '$OLLAMA_URL',
+  tunnelSsh:      '$TUNNEL_SSH',
+  minConfidence:  0.55,
+  highConfidence: 0.70,
+  version:        '3.1',
+  installedAt:    new Date().toISOString()
+};
+const target = path.join('$INSTALL_DIR', 'config.json');
+const tmp = target + '.tmp';
+try {
+  fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2));
+  fs.renameSync(tmp, target);
+  console.log('  Config written: ' + target);
+} catch(e) {
+  process.stderr.write('[FAIL] Could not write config: ' + e.message + '\n');
+  process.exit(1);
 }
-JSEOF
+"
+  if [ $? -ne 0 ]; then
+    echo ""
+    echo "  [FAIL] Config write failed — aborting"
+    exit 1
+  fi
+else
+  echo "  Config preserved (keep mode — no rewrite)"
+fi
 
-echo "  ✓ Installed: $INSTALL_DIR/"
+echo "  Installed: $INSTALL_DIR/"
 
-# ── Step 3: Start tunnel (if VPS mode) ────────────────────────────────────
+# ── Step 3 (was Step 3): Start SSH tunnel ────────────────────────────────
+echo ""
+echo "◆ [3/6] SSH tunnel..."
 if [ -n "$TUNNEL_SSH" ]; then
-  echo "◆ [3/5] Starting SSH tunnel..."
-  LOCAL_PORT=$(echo "$QDRANT_URL" | grep -o ':[0-9]*$' | tr -d ':')
   if curl -s -m 2 "$QDRANT_URL/collections" >/dev/null 2>&1; then
-    echo "  ✓ Tunnel already active"
+    echo "  Tunnel already active"
   else
-    eval "$TUNNEL_SSH" 2>/dev/null && sleep 2
+    echo "  Starting tunnel..."
+    if ! eval "$TUNNEL_SSH" 2>/tmp/exp-tunnel-err; then
+      echo ""
+      echo "  [FAIL] SSH tunnel failed to start"
+      echo "  Error: $(tail -3 /tmp/exp-tunnel-err)"
+      echo "  Fix:   Check SSH key path and VPS host are correct"
+      exit 1
+    fi
+    sleep 2
     if curl -s -m 3 "$QDRANT_URL/collections" >/dev/null 2>&1; then
-      echo "  ✓ Tunnel started"
+      echo "  Tunnel started — Qdrant reachable at $QDRANT_URL"
     else
-      echo "  ✗ Tunnel failed — check SSH config"
+      echo "  Warning: Tunnel started but Qdrant not responding at $QDRANT_URL"
+      echo "           Check that Qdrant is running on the VPS"
     fi
   fi
 
@@ -472,9 +780,8 @@ if [ -n "$TUNNEL_SSH" ]; then
   case "$OS" in
     MINGW*|MSYS*|CYGWIN*|Windows*)
       STARTUP="$APPDATA/Microsoft/Windows/Start Menu/Programs/Startup/experience-tunnel.vbs"
-      echo "Set WshShell = CreateObject(\"WScript.Shell\")" > "$STARTUP"
-      echo "WshShell.Run \"$TUNNEL_SSH\", 0, False" >> "$STARTUP"
-      echo "  ✓ Auto-start: Windows startup script"
+      printf "Set WshShell = CreateObject(\"WScript.Shell\")\nWshShell.Run \"%s\", 0, False\n" "$TUNNEL_SSH" > "$STARTUP"
+      echo "  Auto-start: Windows startup script"
       ;;
     Darwin*)
       PLIST="$HOME/Library/LaunchAgents/com.experience-engine.tunnel.plist"
@@ -489,54 +796,80 @@ if [ -n "$TUNNEL_SSH" ]; then
 </dict></plist>
 EOF
       launchctl load "$PLIST" 2>/dev/null
-      echo "  ✓ Auto-start: macOS LaunchAgent"
+      echo "  Auto-start: macOS LaunchAgent"
       ;;
     Linux*)
       SERVICE="$HOME/.config/systemd/user/experience-engine-tunnel.service"
       mkdir -p "$(dirname "$SERVICE")"
       printf "[Unit]\nDescription=Experience Engine Tunnel\nAfter=network.target\n[Service]\nExecStart=%s\nRestart=always\n[Install]\nWantedBy=default.target\n" "$TUNNEL_SSH" > "$SERVICE"
       systemctl --user daemon-reload && systemctl --user enable --now experience-engine-tunnel.service 2>/dev/null
-      echo "  ✓ Auto-start: systemd service"
+      echo "  Auto-start: systemd service"
       ;;
   esac
 else
-  echo "◆ [3/5] No tunnel needed (local or cloud Qdrant)"
+  echo "  No tunnel needed (local or cloud Qdrant)"
 fi
 
-# ── Step 4: Ensure Qdrant collections exist ───────────────────────────────
-echo "◆ [4/5] Verifying Qdrant collections..."
-QDRANT_AUTH=""
-[ -n "$QDRANT_KEY" ] && QDRANT_AUTH="-H \"api-key: $QDRANT_KEY\""
+# ── Step 4: Verify Qdrant collections ────────────────────────────────────
+echo ""
+echo "◆ [4/6] Verifying Qdrant collections..."
 
-# Read embedDim from config.json (per D-01)
-EMBED_DIM=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.experience/config.json','utf8')).embedDim||768)}catch{console.log(768)}")
+# Load embedDim from written config (handles both keep and new paths)
+EMBED_DIM=$(node -e "
+try {
+  const c=JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.experience/config.json','utf8'));
+  process.stdout.write(String(c.embedDim||768));
+} catch(e) {
+  process.stderr.write('Cannot read config: '+e.message+'\n');
+  process.stdout.write('768');
+}")
+
+QDRANT_AUTH_HEADER=""
+[ -n "$QDRANT_KEY" ] && QDRANT_AUTH_HEADER="-H \"api-key: $QDRANT_KEY\""
+
+# Load QDRANT_URL from config if not set (keep mode)
+if [ -z "$QDRANT_URL" ]; then
+  QDRANT_URL=$(node -e "try{const c=JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.experience/config.json','utf8'));process.stdout.write(c.qdrantUrl||'http://localhost:6333')}catch{process.stdout.write('http://localhost:6333')}")
+fi
 
 for COLL in experience-principles experience-behavioral experience-selfqa; do
-  COLL_INFO=$(eval "curl -s -m 5 $QDRANT_AUTH $QDRANT_URL/collections/$COLL" 2>/dev/null)
-  STATUS=$(echo "$COLL_INFO" | grep -o '"status":"[^"]*"' | head -1)
-  CURRENT_DIM=$(echo "$COLL_INFO" | grep -o '"size":[0-9]*' | head -1 | cut -d: -f2)
+  COLL_INFO=$(eval "curl -s -m 5 $QDRANT_AUTH_HEADER '$QDRANT_URL/collections/$COLL'" 2>/dev/null)
+  STATUS=$(echo "$COLL_INFO" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(d);process.stdout.write(j.result?.status||'')}catch{}})" 2>/dev/null)
+  CURRENT_DIM=$(echo "$COLL_INFO" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(d);process.stdout.write(String(j.result?.config?.params?.vectors?.size||0))}catch{}})" 2>/dev/null)
 
-  if echo "$STATUS" | grep -q "green\|yellow"; then
-    if [ -n "$CURRENT_DIM" ] && [ "$CURRENT_DIM" != "$EMBED_DIM" ]; then
-      echo "  ⚠ $COLL dimension mismatch: have ${CURRENT_DIM}, need ${EMBED_DIM} — recreating..."
-      eval "curl -s -m 5 -X DELETE $QDRANT_AUTH $QDRANT_URL/collections/$COLL" >/dev/null
-      eval "curl -s -m 5 -X PUT $QDRANT_AUTH $QDRANT_URL/collections/$COLL \
+  if [ "$STATUS" = "green" ] || [ "$STATUS" = "yellow" ]; then
+    if [ -n "$CURRENT_DIM" ] && [ "$CURRENT_DIM" != "0" ] && [ "$CURRENT_DIM" != "$EMBED_DIM" ]; then
+      echo "  Warning: $COLL dimension mismatch: have ${CURRENT_DIM}, need ${EMBED_DIM} — recreating..."
+      if ! eval "curl -s -m 10 -X DELETE $QDRANT_AUTH_HEADER '$QDRANT_URL/collections/$COLL'" >/dev/null 2>&1; then
+        echo "  [FAIL] Could not delete $COLL for recreation"
+        echo "  Fix:   Check Qdrant is accessible at $QDRANT_URL"
+        exit 1
+      fi
+      if ! eval "curl -s -m 10 -X PUT $QDRANT_AUTH_HEADER '$QDRANT_URL/collections/$COLL' \
         -H 'Content-Type: application/json' \
-        -d '{\"vectors\":{\"size\":'$EMBED_DIM',\"distance\":\"Cosine\"}}'" >/dev/null
-      echo "  ✓ $COLL recreated (dim=$EMBED_DIM)"
+        -d '{\"vectors\":{\"size\":${EMBED_DIM},\"distance\":\"Cosine\"}}'" >/dev/null 2>&1; then
+        echo "  [FAIL] Could not recreate $COLL (dim=$EMBED_DIM)"
+        exit 1
+      fi
+      echo "  $COLL recreated (dim=$EMBED_DIM)"
     else
-      echo "  ✓ $COLL exists (dim=$CURRENT_DIM)"
+      echo "  $COLL exists (dim=$CURRENT_DIM)"
     fi
   else
-    eval "curl -s -m 5 -X PUT $QDRANT_AUTH $QDRANT_URL/collections/$COLL \
+    if ! eval "curl -s -m 10 -X PUT $QDRANT_AUTH_HEADER '$QDRANT_URL/collections/$COLL' \
       -H 'Content-Type: application/json' \
-      -d '{\"vectors\":{\"size\":'$EMBED_DIM',\"distance\":\"Cosine\"}}'" >/dev/null
-    echo "  + $COLL created (dim=$EMBED_DIM)"
+      -d '{\"vectors\":{\"size\":${EMBED_DIM},\"distance\":\"Cosine\"}}'" >/dev/null 2>&1; then
+      echo "  [FAIL] Could not create collection $COLL"
+      echo "  Fix:   Check Qdrant is accessible at $QDRANT_URL"
+      exit 1
+    fi
+    echo "  $COLL created (dim=$EMBED_DIM)"
   fi
 done
 
 # ── Step 5: Patch global agent settings ───────────────────────────────────
-echo "◆ [5/5] Patching global agent settings..."
+echo ""
+echo "◆ [5/6] Patching global agent settings..."
 
 INTERCEPTOR_PATH="$INSTALL_DIR/interceptor.js"
 STOP_PATH="$INSTALL_DIR/stop-extractor.js"
@@ -621,26 +954,146 @@ for (const agent of AGENTS) {
     agent.patch(cfg);
     fs.mkdirSync(path.dirname(agent.file), { recursive: true });
     fs.writeFileSync(agent.file, JSON.stringify(cfg, null, 2));
-    console.log('  ✓ ' + agent.name);
+    console.log('  ' + agent.name);
   } catch(e) {
-    console.log('  ○ ' + agent.name + ': ' + e.message);
+    console.log('  ' + agent.name + ': ' + e.message);
   }
 }
 JSEOF
 
+# ── Step C execution: optional seed ───────────────────────────────────────
+if [ "$DO_SEED" = "true" ] && [ -n "$SEED_DIR" ]; then
+  echo ""
+  echo "◆ Seeding brain from $SEED_DIR..."
+  BULK_SEED="$SRC_DIR/../tools/experience-bulk-seed.js"
+  if [ -f "$BULK_SEED" ]; then
+    if ! node "$INSTALL_DIR/../tools/experience-bulk-seed.js" --memory-dir "$SEED_DIR" 2>/tmp/exp-seed-err; then
+      echo "  Warning: seed step had errors: $(tail -3 /tmp/exp-seed-err)"
+      echo "  You can retry: node ~/.experience/../tools/experience-bulk-seed.js --memory-dir $SEED_DIR"
+    else
+      echo "  Brain seeded from $SEED_DIR"
+    fi
+  else
+    echo "  Warning: bulk-seed tool not found at $BULK_SEED — skipping seed"
+  fi
+fi
+
+# ── Health Check ──────────────────────────────────────────────────────────
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo " 🧠 Experience Engine v3.0 — INSTALLED"
+echo " Health Check"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo " Brain:   $INSTALL_DIR/"
-echo " Qdrant:  $QDRANT_URL"
-echo " Ollama:  $OLLAMA_URL"
+
+HEALTH_PASS=0
+HEALTH_FAIL=0
+
+# Load config for health check (handles both keep and new paths)
+_HC_RAW=$(node -e "
+try {
+  const c=JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.experience/config.json','utf8'));
+  const fields=[
+    'HC_qdrantUrl='+    (c.qdrantUrl||''),
+    'HC_qdrantKey='+    (c.qdrantKey||''),
+    'HC_embedProvider='+(c.embedProvider||''),
+    'HC_brainProvider='+(c.brainProvider||''),
+    'HC_embedDim='+     (c.embedDim||768),
+  ];
+  process.stdout.write(fields.join('\n')+'\n');
+} catch(e) {
+  process.stderr.write('Cannot read config for health check: '+e.message+'\n');
+}
+" 2>/dev/null)
+while IFS='=' read -r k v; do
+  [ -n "$k" ] && export "$k"="$v"
+done <<< "$_HC_RAW"
+
+# 1. Embed API probe
+printf "  Embed API (%s)... " "$HC_embedProvider"
+EMBED_RESULT=$(node -e "
+(async(){
+  try {
+    const core = require(require('path').join(require('os').homedir(),'.experience','experience-core.js'));
+    const vec = await core.getEmbeddingRaw('health check probe');
+    if(vec && vec.length > 0) { console.log('OK dim=' + vec.length); process.exit(0); }
+    console.log('FAIL: empty response'); process.exit(1);
+  } catch(e) { console.log('FAIL: ' + e.message); process.exit(1); }
+})();
+" 2>&1)
+if [ $? -eq 0 ]; then
+  HEALTH_PASS=$((HEALTH_PASS+1))
+  echo "$EMBED_RESULT"
+else
+  HEALTH_FAIL=$((HEALTH_FAIL+1))
+  echo "$EMBED_RESULT"
+  echo "    Fix: Check embed provider config and API key, then re-run setup.sh"
+fi
+
+# 2. Qdrant connectivity probe
+printf "  Qdrant... "
+_QU="${HC_qdrantUrl:-http://localhost:6333}"
+_QK="${HC_qdrantKey:-}"
+if [ -n "$_QK" ]; then
+  QDRANT_CHECK=$(curl -s -o /dev/null -w "%{http_code}" "${_QU}/collections" \
+    -H "api-key: $_QK" --connect-timeout 5 2>/dev/null)
+else
+  QDRANT_CHECK=$(curl -s -o /dev/null -w "%{http_code}" "${_QU}/collections" \
+    --connect-timeout 5 2>/dev/null)
+fi
+if [ "$QDRANT_CHECK" = "200" ]; then
+  echo "OK"
+  HEALTH_PASS=$((HEALTH_PASS+1))
+else
+  echo "FAIL (HTTP $QDRANT_CHECK)"
+  echo "    Fix: Check Qdrant is running at ${_QU}"
+  HEALTH_FAIL=$((HEALTH_FAIL+1))
+fi
+
+# 3. Qdrant collections dimension check
+printf "  Collections... "
+COLL_RESULT=$(node -e "
+(async(){
+  try {
+    const cfg = JSON.parse(require('fs').readFileSync(require('path').join(require('os').homedir(),'.experience','config.json'),'utf8'));
+    const base = cfg.qdrantUrl || 'http://localhost:6333';
+    const headers = cfg.qdrantKey ? {'api-key': cfg.qdrantKey} : {};
+    const colls = ['experience-principles','experience-behavioral','experience-selfqa'];
+    let ok = 0;
+    for (const c of colls) {
+      const r = await fetch(base+'/collections/'+c, {headers, signal: AbortSignal.timeout(3000)});
+      if (!r.ok) { console.log('FAIL: ' + c + ' not found'); process.exit(1); }
+      const d = await r.json();
+      const dim = d.result?.config?.params?.vectors?.size;
+      if (dim !== cfg.embedDim) { console.log('FAIL: ' + c + ' dim=' + dim + ' expected=' + cfg.embedDim); process.exit(1); }
+      ok++;
+    }
+    console.log('OK (' + ok + '/3 collections, dim=' + cfg.embedDim + ')');
+  } catch(e) { console.log('FAIL: ' + e.message); process.exit(1); }
+})();
+" 2>&1)
+if [ $? -eq 0 ]; then
+  HEALTH_PASS=$((HEALTH_PASS+1))
+  echo "$COLL_RESULT"
+else
+  HEALTH_FAIL=$((HEALTH_FAIL+1))
+  echo "$COLL_RESULT"
+  echo "    Fix: Re-run setup.sh to recreate collections with correct dimensions"
+fi
+
 echo ""
-echo " Works in ANY project — no per-project setup needed."
-echo ""
-echo " Bootstrap brain from existing rules:"
-echo "   node ~/.experience/experience-core.js --seed <memory-dir>"
-echo ""
-echo " Reconfigure: EXP_RESET_CONFIG=1 bash .experience/setup.sh"
-echo ""
+if [ "$HEALTH_FAIL" -eq 0 ]; then
+  echo "  All checks passed ($HEALTH_PASS/$HEALTH_PASS)"
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo " Experience Engine v3.1 — INSTALLED"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+  echo " Brain installed at: $INSTALL_DIR/"
+  echo " Config at:          $INSTALL_DIR/config.json"
+  echo ""
+  echo " Works in ANY project — no per-project setup needed."
+  echo " Reconfigure: run setup.sh again and choose [2] Reconfigure."
+  echo ""
+else
+  echo "  $HEALTH_FAIL check(s) failed. Fix the issues above, then re-run setup.sh."
+fi
