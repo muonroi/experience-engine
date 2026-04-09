@@ -131,7 +131,26 @@ async function incrementIgnoreCount(collection, pointId) {
 
 // --- Qdrant availability (per D-14) ---
 let qdrantAvailable = null; // null = unchecked, true/false = checked
-const FILESTORE_DIR = require('path').join(require('os').homedir(), '.experience', 'store');
+// Phase 109: Multi-user support — user-namespaced store directory
+const EXP_USER = _cfg.user || process.env.EXP_USER || 'default';
+const FILESTORE_BASE = require('path').join(require('os').homedir(), '.experience', 'store');
+const FILESTORE_DIR = require('path').join(FILESTORE_BASE, EXP_USER);
+
+// Auto-migrate: if old-style files exist at base and user is 'default', move them
+(() => {
+  if (EXP_USER !== 'default') return;
+  try {
+    const oldFiles = fs.readdirSync(FILESTORE_BASE).filter(f => f.endsWith('.json') && !f.startsWith('.'));
+    if (oldFiles.length > 0 && !fs.existsSync(FILESTORE_DIR)) {
+      fs.mkdirSync(FILESTORE_DIR, { recursive: true });
+      for (const f of oldFiles) {
+        const src = pathMod.join(FILESTORE_BASE, f);
+        const dst = pathMod.join(FILESTORE_DIR, f);
+        if (!fs.existsSync(dst)) fs.renameSync(src, dst);
+      }
+    }
+  } catch { /* migration is best-effort */ }
+})();
 
 async function checkQdrant() {
   if (qdrantAvailable !== null) return qdrantAvailable;
@@ -1170,6 +1189,42 @@ async function deleteEntry(collection, id) {
   });
 }
 
+// --- Phase 109: Share/Import principles ---
+
+function sharePrinciple(principleId) {
+  const entries = fileStoreRead('experience-principles');
+  const entry = entries.find(e => e.id === principleId);
+  if (!entry) return null;
+  const data = parsePayload(entry);
+  if (!data) return null;
+  return {
+    principle: data.principle || data.solution,
+    solution: data.solution,
+    confidence: data.confidence,
+    domain: data.domain || null,
+    sharedAt: new Date().toISOString(),
+    sharedBy: EXP_USER,
+  };
+}
+
+async function importPrinciple(shared) {
+  if (!shared?.solution) return null;
+  const vector = await getEmbedding(shared.solution);
+  if (!vector) return null;
+  const id = crypto.randomUUID();
+  const payload = {
+    id, principle: shared.principle || shared.solution, solution: shared.solution,
+    tier: 0, confidence: Math.min(shared.confidence || 0.7, 0.8), // imported = slightly lower confidence
+    hitCount: 0, confirmedAt: [],
+    domain: shared.domain || null,
+    createdAt: new Date().toISOString(), createdFrom: 'imported',
+    importedFrom: shared.sharedBy || 'unknown',
+  };
+  await upsertEntry('experience-principles', id, vector, payload);
+  activityLog({ op: 'principle-import', id: id.slice(0, 8), from: shared.sharedBy || 'unknown' });
+  return { id, principle: payload.principle };
+}
+
 // --- getEmbeddingRaw: exported for external callers (e.g. bulk-seed.js) (D-16) ---
 
 async function getEmbeddingRaw(text, signal) {
@@ -1178,4 +1233,4 @@ async function getEmbeddingRaw(text, signal) {
 
 // --- Exports ---
 
-module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa, null), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _suggestionHistory, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain };
+module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa, null), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _suggestionHistory, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain };
