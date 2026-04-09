@@ -60,6 +60,73 @@ const SELFQA_COLLECTION = 'experience-selfqa';
 const DEDUP_THRESHOLD = 0.85;
 const QUERY_MAX_CHARS = 500;
 
+// --- Ignore tracking: consecutive suggestion detection (NOISE-04) ---
+const _suggestionHistory = []; // Array of { id, collection, suggestedAt }
+const MAX_SUGGESTION_HISTORY = 50;
+
+function trackSuggestions(surfacedPoints) {
+  const flagged = [];
+  for (const sp of surfacedPoints) {
+    _suggestionHistory.push({ id: sp.id, collection: sp.collection, suggestedAt: Date.now() });
+  }
+  // Trim to max size
+  while (_suggestionHistory.length > MAX_SUGGESTION_HISTORY) {
+    _suggestionHistory.shift();
+  }
+  // Check each surfaced point for 3+ consecutive appearances at the tail
+  for (const sp of surfacedPoints) {
+    let consecutive = 0;
+    // Walk backwards from end of history
+    for (let i = _suggestionHistory.length - 1; i >= 0; i--) {
+      if (_suggestionHistory[i].id === sp.id) {
+        consecutive++;
+      } else {
+        break; // streak broken
+      }
+    }
+    if (consecutive >= 3) {
+      flagged.push({ id: sp.id, collection: sp.collection, consecutive });
+    }
+  }
+  return { flagged };
+}
+
+function incrementIgnoreCountData(data) {
+  data.ignoreCount = (data.ignoreCount || 0) + 1;
+  return data;
+}
+
+async function incrementIgnoreCount(collection, pointId) {
+  if (!(await checkQdrant())) {
+    const entries = fileStoreRead(collection);
+    const entry = entries.find(e => e.id === pointId);
+    if (entry && entry.payload?.json) {
+      const data = JSON.parse(entry.payload.json);
+      incrementIgnoreCountData(data);
+      entry.payload.json = JSON.stringify(data);
+      fileStoreWrite(collection, entries);
+    }
+    return;
+  }
+  try {
+    const res = await fetch(`${QDRANT_BASE}/collections/${collection}/points/${pointId}`, {
+      headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return;
+    const point = (await res.json()).result;
+    if (!point?.payload?.json) return;
+    const data = JSON.parse(point.payload.json);
+    incrementIgnoreCountData(data);
+    await fetch(`${QDRANT_BASE}/collections/${collection}/points/payload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+      body: JSON.stringify({ points: [pointId], payload: { json: JSON.stringify(data) } }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch { /* silent */ }
+}
+
 // --- Qdrant availability (per D-14) ---
 let qdrantAvailable = null; // null = unchecked, true/false = checked
 const FILESTORE_DIR = require('path').join(require('os').homedir(), '.experience', 'store');
@@ -188,6 +255,15 @@ async function intercept(toolName, toolInput, signal) {
   });
   if (surfaced.length > 0) {
     Promise.all(surfaced.map(p => recordHit(p._collection, p.id))).catch(() => {});
+  }
+
+  // Track suggestions for ignore detection (NOISE-04)
+  const surfacedMeta = surfaced.map(p => ({ collection: p._collection, id: p.id }));
+  if (surfacedMeta.length > 0) {
+    const { flagged } = trackSuggestions(surfacedMeta);
+    if (flagged.length > 0) {
+      Promise.all(flagged.map(f => incrementIgnoreCount(f.collection, f.id))).catch(() => {});
+    }
   }
 
   activityLog({ op: 'intercept', query: query.slice(0, 120), scores: [...r0, ...r1, ...r2].map(p => p._effectiveScore ?? p.score).sort((a, b) => b - a).slice(0, 3), result: lines.length > 0 ? 'suggestion' : null, project: extractProjectPath(toolInput) });
@@ -887,4 +963,4 @@ async function getEmbeddingRaw(text, signal) {
 
 // --- Exports ---
 
-module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, _activityLog: activityLog, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa), _recordHitUpdatesFields: applyHitUpdate };
+module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, _activityLog: activityLog, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _suggestionHistory, _incrementIgnoreCountData: incrementIgnoreCountData };
