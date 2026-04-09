@@ -142,6 +142,25 @@ server.listen(0, async () => {
     });
     assert(badJsonRes.status >= 400, 'invalid JSON returns error status');
 
+    // 15. Graph endpoint — missing id
+    console.log('\n--- GET /api/graph (no id) ---');
+    const graphNoIdRes = await fetch(`${base}/api/graph`);
+    const graphNoIdData = await graphNoIdRes.json();
+    assert(graphNoIdRes.status === 400, 'graph without id returns 400');
+    assert(graphNoIdData.error === 'id query parameter is required', 'graph error message correct');
+
+    // 16. Graph endpoint — unknown id returns empty edges
+    console.log('\n--- GET /api/graph?id=unknown ---');
+    const graphUnknownRes = await fetch(`${base}/api/graph?id=00000000-0000-0000-0000-000000000000`);
+    const graphUnknownData = await graphUnknownRes.json();
+    assert(graphUnknownRes.status === 200, 'graph with unknown id returns 200');
+    assert(Array.isArray(graphUnknownData.edges), 'graph returns edges array');
+    assert(graphUnknownData.count === 0, 'graph returns 0 edges for unknown id');
+
+    // 17. Graph endpoint — CORS headers
+    console.log('\n--- GET /api/graph CORS ---');
+    assert(graphUnknownRes.headers.get('access-control-allow-origin') === '*', 'graph has CORS');
+
   } finally {
     server.close();
     console.log(`\n${'='.repeat(40)}`);
