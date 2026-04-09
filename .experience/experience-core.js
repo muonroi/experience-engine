@@ -57,7 +57,9 @@ const COLLECTIONS = [
 ];
 
 const SELFQA_COLLECTION = 'experience-selfqa';
+const EDGE_COLLECTION = 'experience-edges';
 const DEDUP_THRESHOLD = 0.85;
+const RELATES_TO_THRESHOLD = 0.70;
 const QUERY_MAX_CHARS = 500;
 
 // --- Ignore tracking: consecutive suggestion detection (NOISE-04) ---
@@ -601,15 +603,35 @@ async function storeExperience(qa, domain) {
 
   if (!(await checkQdrant())) {
     fileStoreUpsert(SELFQA_COLLECTION, id, vector, payload);
-    return;
+  } else {
+    await fetch(`${QDRANT_BASE}/collections/${SELFQA_COLLECTION}/points`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+      body: JSON.stringify({ points: [{ id, vector, payload }] }),
+      signal: AbortSignal.timeout(5000),
+    });
   }
 
-  await fetch(`${QDRANT_BASE}/collections/${SELFQA_COLLECTION}/points`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-    body: JSON.stringify({ points: [{ id, vector, payload }] }),
-    signal: AbortSignal.timeout(5000),
-  });
+  // Phase 107: Create relates-to and supersedes edges
+  if (vector) {
+    try {
+      const existing = await getAllEntries(SELFQA_COLLECTION);
+      for (const entry of existing) {
+        if (entry.id === id) continue;
+        if (!entry.vector || entry.vector.length !== vector.length) continue;
+        const sim = cosineSimilarity(vector, entry.vector);
+        if (sim > DEDUP_THRESHOLD) {
+          const d = parsePayload(entry);
+          if (d && d.trigger && qa.trigger && d.trigger === qa.trigger) {
+            createEdge(id, entry.id, 'supersedes', parseFloat(sim.toFixed(3)), 'store-supersedes');
+          }
+        }
+        if (sim > RELATES_TO_THRESHOLD && sim <= DEDUP_THRESHOLD) {
+          createEdge(id, entry.id, 'relates-to', parseFloat(sim.toFixed(3)), 'store-similarity');
+        }
+      }
+    } catch { /* never block store on edge creation */ }
+  }
 }
 
 // --- Provider abstraction (D-08, D-09, D-10) ---
@@ -836,6 +858,69 @@ async function syncToQdrant() {
   return synced;
 }
 
+// --- Edge graph (Phase 107) ---
+
+function createEdge(source, target, type, weight = 1.0, createdBy = 'auto') {
+  const edge = {
+    id: crypto.randomUUID(),
+    source, target,
+    type, // 'generalizes' | 'contradicts' | 'supersedes' | 'relates-to'
+    weight,
+    createdAt: new Date().toISOString(),
+    createdBy,
+  };
+  const edges = fileStoreRead(EDGE_COLLECTION);
+  const exists = edges.some(e => {
+    try {
+      const d = JSON.parse(e.payload?.json || '{}');
+      return d.source === source && d.target === target && d.type === type;
+    } catch { return false; }
+  });
+  if (exists) return null;
+  fileStoreUpsert(EDGE_COLLECTION, edge.id, [], { json: JSON.stringify(edge) });
+  upsertEdgeToQdrant(edge).catch(() => {});
+  activityLog({ op: 'edge-create', type, source: source.slice(0, 8), target: target.slice(0, 8) });
+  return edge;
+}
+
+async function upsertEdgeToQdrant(edge) {
+  if (!(await checkQdrant())) return;
+  try {
+    const check = await fetch(`${QDRANT_BASE}/collections/${EDGE_COLLECTION}`, {
+      headers: QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {},
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!check.ok) {
+      await fetch(`${QDRANT_BASE}/collections/${EDGE_COLLECTION}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+        body: JSON.stringify({ vectors: { size: 1, distance: 'Cosine' } }),
+        signal: AbortSignal.timeout(5000),
+      });
+    }
+  } catch { return; }
+  await fetch(`${QDRANT_BASE}/collections/${EDGE_COLLECTION}/points`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+    body: JSON.stringify({ points: [{ id: edge.id, vector: [0], payload: { json: JSON.stringify(edge) } }] }),
+    signal: AbortSignal.timeout(5000),
+  }).catch(() => {});
+}
+
+function getEdgesForId(experienceId) {
+  const edges = fileStoreRead(EDGE_COLLECTION);
+  return edges
+    .map(e => { try { return JSON.parse(e.payload?.json || '{}'); } catch { return null; } })
+    .filter(e => e && (e.source === experienceId || e.target === experienceId));
+}
+
+function getEdgesOfType(type) {
+  const edges = fileStoreRead(EDGE_COLLECTION);
+  return edges
+    .map(e => { try { return JSON.parse(e.payload?.json || '{}'); } catch { return null; } })
+    .filter(e => e && e.type === type);
+}
+
 // --- Evolution Engine (per D-03) ---
 
 async function evolve(trigger) {
@@ -885,6 +970,11 @@ async function evolve(trigger) {
       sourceCount: cluster.length,
     });
 
+    // Phase 107: Create generalizes edges (T2 sources -> T0 principle)
+    for (const e of cluster) {
+      createEdge(e.id, id, 'generalizes', 1.0, 'evolve-abstraction');
+    }
+
     // Delete source entries from T2
     for (const e of cluster) {
       await deleteEntry('experience-selfqa', e.id);
@@ -911,6 +1001,10 @@ async function evolve(trigger) {
       data.demoteReason = data.contradiction ? 'contradiction'
         : (data.ignoreCount || 0) >= 3 ? 'ignored'
         : 'confidence_decay';
+      // Phase 107: Create contradicts edge on demotion
+      if (data.demoteReason === 'contradiction' || data.demoteReason === 'ignored') {
+        createEdge(entry.id, entry.id, 'contradicts', 0.8, 'evolve-demotion');
+      }
       const vector = entry.vector || await getEmbedding(`${data.trigger} ${data.solution}`);
       if (!vector) continue;
       await upsertEntry('experience-selfqa', entry.id, vector, data);
@@ -1027,4 +1121,4 @@ async function getEmbeddingRaw(text, signal) {
 
 // --- Exports ---
 
-module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa, null), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _suggestionHistory, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain };
+module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa, null), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _suggestionHistory, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain };
