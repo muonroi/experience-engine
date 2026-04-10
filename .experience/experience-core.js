@@ -727,7 +727,7 @@ async function brainRelevanceFilter(actionQuery, suggestionLines, signal) {
 
   // Extract just the warning text (strip emoji/score prefix for cleaner prompt)
   const warnings = suggestionLines.map((line, i) => {
-    const clean = line.replace(/^[⚠️💡]\s*\[.*?\]:\s*/, '');
+    const clean = line.replace(/^.*?\]:\s*/, '');
     return `${i + 1}. ${clean}`;
   });
 
