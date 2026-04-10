@@ -127,6 +127,7 @@ if [[ "$1" == "--docker" ]]; then
       mkdir -p "$HOME/.experience"
       cp "$SRC_DIR/experience-core.js" "$HOME/.experience/" 2>/dev/null
       cp "$SRC_DIR/stop-extractor.js" "$HOME/.experience/" 2>/dev/null
+      cp "$SRC_DIR/interceptor-post.js" "$HOME/.experience/" 2>/dev/null
 
       # Write config pointing to Docker services
       cat > "$HOME/.experience/config.json" <<DOCKERCFG
@@ -863,7 +864,12 @@ function findCurrentSession() {
 main().catch(() => {}).finally(() => process.exit(0));
 HOOKEOF
 
-chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js"
+# Copy interceptor-post.js (PostToolUse feedback hook)
+if [ -f "$SRC_DIR/interceptor-post.js" ]; then
+  cp "$SRC_DIR/interceptor-post.js" "$INSTALL_DIR/interceptor-post.js"
+fi
+
+chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js" "$INSTALL_DIR/interceptor-post.js" 2>/dev/null
 
 # Atomic config write — only when NOT keeping config
 if [ "$KEEP_CONFIG" = "false" ]; then
@@ -1056,8 +1062,7 @@ for COLL in experience-principles experience-behavioral experience-selfqa; do
       if ! eval "curl -s -m 10 -X PUT $QDRANT_AUTH_HEADER '$QDRANT_URL/collections/$COLL' \
         -H 'Content-Type: application/json' \
         -d '{\"vectors\":{\"size\":${EMBED_DIM},\"distance\":\"Cosine\"}}'" >/dev/null 2>&1; then
-        echo "  [FAIL] Could not recreate $COLL (dim=$EMBED_DIM)"
-        exit 1
+        echo "  [WARN] Could not recreate $COLL (dim=$EMBED_DIM) — FileStore fallback will be used"
       fi
       echo "  $COLL recreated (dim=$EMBED_DIM)"
     else
@@ -1067,9 +1072,8 @@ for COLL in experience-principles experience-behavioral experience-selfqa; do
     if ! eval "curl -s -m 10 -X PUT $QDRANT_AUTH_HEADER '$QDRANT_URL/collections/$COLL' \
       -H 'Content-Type: application/json' \
       -d '{\"vectors\":{\"size\":${EMBED_DIM},\"distance\":\"Cosine\"}}'" >/dev/null 2>&1; then
-      echo "  [FAIL] Could not create collection $COLL"
-      echo "  Fix:   Check Qdrant is accessible at $QDRANT_URL"
-      exit 1
+      echo "  [WARN] Could not create collection $COLL — FileStore fallback will be used"
+      echo "  Fix:   Start Qdrant at $QDRANT_URL, then re-run setup.sh"
     fi
     echo "  $COLL created (dim=$EMBED_DIM)"
   fi
