@@ -1,0 +1,89 @@
+# Experience Engine — Docker Quick Start
+#
+# Usage:
+#   docker compose up -d          # start everything
+#   docker compose logs -f        # watch logs
+#   docker compose down           # stop
+#
+# What you get:
+#   - Qdrant vector database (port 6333)
+#   - Ollama with nomic-embed-text + qwen2.5:3b (port 11434)
+#   - Experience Engine API (port 8082)
+#
+# Prerequisites: Docker + Docker Compose
+# That's it. No Node.js, no API keys, no config files needed.
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/version || exit 1"]
+      interval: 10s
+      timeout: 3s
+      start_period: 15s
+
+  # Pull required models after Ollama starts
+  ollama-init:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Pulling embedding model..."
+        ollama pull nomic-embed-text
+        echo "Pulling brain model..."
+        ollama pull qwen2.5:3b
+        echo "Models ready."
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+
+  experience-engine:
+    build: .
+    ports:
+      - "8082:8082"
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    environment:
+      - EXPERIENCE_QDRANT_URL=http://qdrant:6333
+      - EXPERIENCE_OLLAMA_URL=http://ollama:11434
+      - EXPERIENCE_EMBED_PROVIDER=ollama
+      - EXPERIENCE_BRAIN_PROVIDER=ollama
+      - EXPERIENCE_EMBED_MODEL=nomic-embed-text
+      - EXPERIENCE_BRAIN_MODEL=qwen2.5:3b
+    volumes:
+      - experience_data:/root/.experience
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8082/health').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+
+volumes:
+  qdrant_data:
+  ollama_data:
+  experience_data:

@@ -60,6 +60,37 @@ Experience Engine is different:
 
 ## Quick Start
 
+### Option A: Docker (recommended — one command)
+
+Prerequisites: Docker + Docker Compose. Nothing else.
+
+```bash
+git clone https://github.com/muonroi/experience-engine.git
+cd experience-engine
+docker compose up -d
+```
+
+This starts everything:
+- **Qdrant** vector database (port 6333)
+- **Ollama** with embedding + brain models auto-pulled (port 11434)
+- **Experience Engine API** (port 8082)
+
+```bash
+# Verify
+curl http://localhost:8082/health
+# {"status":"ok","qdrant":{"status":"ok"},"fileStore":{"status":"ok"}}
+
+# Stop
+docker compose down
+
+# Logs
+docker compose logs -f experience-engine
+```
+
+100% local. Zero API keys. Zero config files. Just Docker.
+
+### Option B: Manual setup (more control)
+
 ```bash
 git clone https://github.com/muonroi/experience-engine.git
 cd experience-engine
