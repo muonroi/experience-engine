@@ -497,7 +497,11 @@ async function interceptWithMeta(toolName, toolInput, signal) {
   }
 
   // Track suggestions: session dedup + ignore detection (NOISE-04, P4)
-  const surfacedMeta = surfaced.map(p => ({ collection: p._collection, id: p.id }));
+  const surfacedMeta = surfaced.map(p => {
+    let solution = null;
+    try { solution = JSON.parse(p.payload?.json || '{}').solution || null; } catch {}
+    return { collection: p._collection, id: p.id, solution };
+  });
   if (surfacedMeta.length > 0) {
     const { flagged, filtered } = trackSuggestions(surfacedMeta);
     // P4: Remove already-shown suggestions from output
