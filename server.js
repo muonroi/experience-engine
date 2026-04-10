@@ -193,8 +193,32 @@ async function handleFeedback(req, res) {
   if (!body.pointId) return error(res, 'pointId is required');
   if (!body.collection) return error(res, 'collection is required');
   if (typeof body.followed !== 'boolean') return error(res, 'followed (boolean) is required');
-  await recordFeedback(body.collection, body.pointId, body.followed);
-  json(res, { ok: true });
+
+  let pointId = body.pointId;
+  // Support short ID prefix (8 chars) — resolve to full UUID via Qdrant scroll
+  if (pointId.length < 36) {
+    try {
+      const scrollRes = await fetch(`${QDRANT_BASE}/collections/${body.collection}/points/scroll`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {}) },
+        body: JSON.stringify({ limit: 100, with_payload: false }),
+        signal: AbortSignal.timeout(5000),
+      });
+      if (scrollRes.ok) {
+        const points = (await scrollRes.json()).result?.points || [];
+        const match = points.find(p => String(p.id).startsWith(pointId));
+        if (match) pointId = match.id;
+        else return error(res, `No point found matching prefix "${pointId}" in ${body.collection}`, 404);
+      } else {
+        return error(res, 'Failed to resolve short ID — Qdrant unavailable', 503);
+      }
+    } catch {
+      return error(res, 'Failed to resolve short ID — provide full UUID', 400);
+    }
+  }
+
+  await recordFeedback(body.collection, pointId, body.followed);
+  json(res, { ok: true, resolvedId: pointId });
 }
 
 function handleUser(req, res) {

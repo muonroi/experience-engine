@@ -1215,6 +1215,10 @@ function formatPoints(points) {
     if (exp.why) {
       line += `\n   Why: ${exp.why}`;
     }
+    // v2: append point ID so agent can call POST /api/feedback when ignoring
+    const pid = String(point.id).slice(0, 8);
+    const coll = point._collection || 'experience-behavioral';
+    line += `\n   [id:${pid} col:${coll}]`;
     lines.push(line);
   }
   return lines;
