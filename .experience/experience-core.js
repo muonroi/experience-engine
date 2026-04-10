@@ -1719,12 +1719,12 @@ Task: "{TASK}"`;
 const COMPLEXITY_KEYWORDS = {
   premium: [
     'race condition', 'deadlock', 'concurrency', 'distributed', 'security audit',
-    'migration', 'breaking change', 'multi-file', 'multi-service', 'architecture',
+    'breaking change', 'multi-file', 'multi-service', 'architecture',
     'performance regression', 'memory leak', 'heap', 'profil', 'benchmark',
   ],
   fast: [
-    'rename', 'typo', 'format', 'delete unused', 'update import', 'simple config',
-    'read file', 'list file', 'add comment', 'fix typo', 'update version',
+    'rename ', 'fix typo', 'typo in ', 'delete unused', 'update import',
+    'simple config', 'add comment', 'update version', 'format code',
   ],
 };
 
@@ -1742,9 +1742,11 @@ function preFilterComplexity(taskText, context) {
     if (lower.includes(kw)) return 'premium';
   }
 
-  // Fast signals in task text
-  for (const kw of COMPLEXITY_KEYWORDS.fast) {
-    if (lower.includes(kw)) return 'fast';
+  // Fast signals — only for short descriptions (long tasks are never trivial)
+  if (lower.length < 80) {
+    for (const kw of COMPLEXITY_KEYWORDS.fast) {
+      if (lower.includes(kw)) return 'fast';
+    }
   }
 
   // Context files: many files → complexity signal
