@@ -141,13 +141,20 @@ function incrementIgnoreCountData(data) {
   return data;
 }
 
-async function incrementIgnoreCount(collection, pointId) {
+/**
+ * Shared read-modify-write helper for FileStore and Qdrant.
+ * Fetches the point payload, calls updateFn(data) to mutate in-place, then writes back.
+ * @param {string} collection - Collection name
+ * @param {string} pointId    - Point UUID
+ * @param {Function} updateFn - Mutates data object in-place (e.g. applyHitUpdate, incrementIgnoreCountData)
+ */
+async function updatePointPayload(collection, pointId, updateFn) {
   if (!(await checkQdrant())) {
     const entries = fileStoreRead(collection);
     const entry = entries.find(e => e.id === pointId);
     if (entry && entry.payload?.json) {
       const data = JSON.parse(entry.payload.json);
-      incrementIgnoreCountData(data);
+      updateFn(data);
       entry.payload.json = JSON.stringify(data);
       fileStoreWrite(collection, entries);
     }
@@ -162,7 +169,7 @@ async function incrementIgnoreCount(collection, pointId) {
     const point = (await res.json()).result;
     if (!point?.payload?.json) return;
     const data = JSON.parse(point.payload.json);
-    incrementIgnoreCountData(data);
+    updateFn(data);
     await fetch(`${QDRANT_BASE}/collections/${collection}/points/payload`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
@@ -170,6 +177,10 @@ async function incrementIgnoreCount(collection, pointId) {
       signal: AbortSignal.timeout(5000),
     });
   } catch { /* silent */ }
+}
+
+async function incrementIgnoreCount(collection, pointId) {
+  await updatePointPayload(collection, pointId, incrementIgnoreCountData);
 }
 
 // --- Qdrant availability (per D-14) ---
@@ -1176,106 +1187,13 @@ function applyHitUpdate(data) {
 }
 
 async function recordHit(collection, pointId) {
-  if (!(await checkQdrant())) {
-    // FileStore: update hitCount in-place
-    const entries = fileStoreRead(collection);
-    const entry = entries.find(e => e.id === pointId);
-    if (entry && entry.payload?.json) {
-      const data = JSON.parse(entry.payload.json);
-      applyHitUpdate(data);
-      entry.payload.json = JSON.stringify(data);
-      fileStoreWrite(collection, entries);
-    }
-    return;
-  }
-  try {
-    // Qdrant: scroll to get current payload, increment, update
-    const res = await fetch(`${QDRANT_BASE}/collections/${collection}/points/${pointId}`, {
-      headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return;
-    const point = (await res.json()).result;
-    if (!point?.payload?.json) return;
-    const data = JSON.parse(point.payload.json);
-    applyHitUpdate(data);
-    await fetch(`${QDRANT_BASE}/collections/${collection}/points/payload`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-      body: JSON.stringify({ points: [pointId], payload: { json: JSON.stringify(data) } }),
-      signal: AbortSignal.timeout(5000),
-    });
-  } catch { /* silent */ }
+  await updatePointPayload(collection, pointId, applyHitUpdate);
 }
 
 // --- recordFeedback: explicit agent feedback on surfaced suggestions ---
 
 async function recordFeedback(collection, pointId, followed) {
-  if (followed === true) {
-    // Same logic as recordHit: increment hitCount, reset ignoreCount, append confirmedAt
-    if (!(await checkQdrant())) {
-      const entries = fileStoreRead(collection);
-      const entry = entries.find(e => e.id === pointId);
-      if (entry && entry.payload?.json) {
-        const data = JSON.parse(entry.payload.json);
-        applyHitUpdate(data);
-        entry.payload.json = JSON.stringify(data);
-        fileStoreWrite(collection, entries);
-      }
-    } else {
-      try {
-        const res = await fetch(`${QDRANT_BASE}/collections/${collection}/points/${pointId}`, {
-          headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-          signal: AbortSignal.timeout(5000),
-        });
-        if (res.ok) {
-          const point = (await res.json()).result;
-          if (point?.payload?.json) {
-            const data = JSON.parse(point.payload.json);
-            applyHitUpdate(data);
-            await fetch(`${QDRANT_BASE}/collections/${collection}/points/payload`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-              body: JSON.stringify({ points: [pointId], payload: { json: JSON.stringify(data) } }),
-              signal: AbortSignal.timeout(5000),
-            });
-          }
-        }
-      } catch { /* silent */ }
-    }
-  } else {
-    // followed === false: only increment ignoreCount (do NOT reset it unlike recordHit)
-    if (!(await checkQdrant())) {
-      const entries = fileStoreRead(collection);
-      const entry = entries.find(e => e.id === pointId);
-      if (entry && entry.payload?.json) {
-        const data = JSON.parse(entry.payload.json);
-        incrementIgnoreCountData(data);
-        entry.payload.json = JSON.stringify(data);
-        fileStoreWrite(collection, entries);
-      }
-    } else {
-      try {
-        const res = await fetch(`${QDRANT_BASE}/collections/${collection}/points/${pointId}`, {
-          headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-          signal: AbortSignal.timeout(5000),
-        });
-        if (res.ok) {
-          const point = (await res.json()).result;
-          if (point?.payload?.json) {
-            const data = JSON.parse(point.payload.json);
-            incrementIgnoreCountData(data);
-            await fetch(`${QDRANT_BASE}/collections/${collection}/points/payload`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-              body: JSON.stringify({ points: [pointId], payload: { json: JSON.stringify(data) } }),
-              signal: AbortSignal.timeout(5000),
-            });
-          }
-        }
-      } catch { /* silent */ }
-    }
-  }
+  await updatePointPayload(collection, pointId, followed ? applyHitUpdate : incrementIgnoreCountData);
   activityLog({ op: 'feedback', collection, pointId: pointId.slice(0, 8), followed });
 }
 
@@ -1706,4 +1624,4 @@ migrateQdrantUserTags().catch(() => {});
 
 // --- Exports ---
 
-module.exports = { intercept, interceptWithMeta, recordFeedback, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa, null), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter };
+module.exports = { intercept, interceptWithMeta, recordFeedback, extractFromSession, recordHit, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa, null), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter };
