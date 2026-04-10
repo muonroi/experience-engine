@@ -191,10 +191,8 @@ async function handleTimeline(req, res, url) {
   const allResults = [];
   for (const coll of collections) {
     try {
-      const fs = require('node:fs');
-      const pathMod = require('node:path');
-      const storeDir = pathMod.join(os.homedir(), '.experience', 'store');
-      const filePath = pathMod.join(storeDir, `${coll}.json`);
+      const storeDir = path.join(os.homedir(), '.experience', 'store');
+      const filePath = path.join(storeDir, `${coll}.json`);
       const entries = (() => { try { return JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch { return []; } })();
       for (const entry of entries) {
         if (!entry.vector || entry.vector.length !== vector.length) continue;
@@ -266,8 +264,12 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-// Never crash on unhandled rejections (match experience-core.js philosophy)
-process.on('unhandledRejection', () => {});
+// Log unhandled rejections instead of crashing — but never swallow silently
+process.on('unhandledRejection', (reason) => {
+  const msg = reason instanceof Error ? reason.stack || reason.message : String(reason);
+  try { require('node:fs').appendFileSync(require('node:path').join(require('node:os').homedir(), '.experience', 'server-errors.log'), `[${new Date().toISOString()}] UnhandledRejection: ${msg}\n`); } catch {}
+  console.error(`[Experience Engine] UnhandledRejection: ${msg}`);
+});
 
 // Only start when run directly (not when required for testing)
 if (require.main === module) {
