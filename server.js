@@ -15,6 +15,8 @@
  *   POST /api/principles/share      — Export a principle
  *   POST /api/principles/import     — Import a principle
  *   GET  /api/user                  — Current user identity
+ *   POST /api/route-model           — Intelligent model tier routing
+ *   POST /api/route-feedback        — Record agent outcome for routing learning
  *
  * Config: ~/.experience/config.json (server.port, server.authToken)
  * Start: node server.js
@@ -29,7 +31,7 @@ const os = require('node:os');
 
 const { intercept, extractFromSession, evolve, getEdgesForId, getEdgesOfType,
         getEmbeddingRaw, searchCollection, sharePrinciple, importPrinciple,
-        EXP_USER, recordFeedback } = require('./.experience/experience-core');
+        EXP_USER, recordFeedback, routeModel, routeFeedback } = require('./.experience/experience-core');
 const { parseSince, loadEvents, filterEvents, computeStats, loadTop5 } = require('./tools/exp-stats');
 
 // --- Config ---
@@ -246,6 +248,33 @@ async function handleTimeline(req, res, url) {
   json(res, { topic, timeline, count: timeline.length });
 }
 
+const VALID_OUTCOMES = new Set(['success', 'fail', 'retry', 'cancelled']);
+const KNOWN_RUNTIMES = new Set(['claude', 'gemini', 'codex', 'opencode']);
+
+async function handleRouteModel(req, res) {
+  const body = await readBody(req);
+  if (!body.task || typeof body.task !== 'string') return error(res, 'task is required and must be a string');
+  if (body.task.length > 2000) return error(res, 'task must be 2000 characters or less');
+  if (body.runtime !== undefined && body.runtime !== null && !KNOWN_RUNTIMES.has(body.runtime)) {
+    return error(res, `runtime must be one of: ${[...KNOWN_RUNTIMES].join(', ')}, or null`);
+  }
+  const result = await routeModel(body.task, body.context || null, body.runtime || null);
+  res.writeHead(200, { 'Content-Type': 'application/json', 'X-Route-Source': result.source || 'default', ...CORS });
+  res.end(JSON.stringify(result));
+}
+
+async function handleRouteFeedback(req, res) {
+  const body = await readBody(req);
+  if (!body.taskHash || typeof body.taskHash !== 'string') return error(res, 'taskHash is required');
+  if (!body.outcome) return error(res, 'outcome is required');
+  if (!VALID_OUTCOMES.has(body.outcome)) {
+    return error(res, `outcome must be one of: ${[...VALID_OUTCOMES].join(', ')}`);
+  }
+  const ok = await routeFeedback(body.taskHash, body.tier || null, body.model || null, body.outcome, body.retryCount || 0, body.duration || null);
+  res.writeHead(200, { 'Content-Type': 'application/json', 'X-Route-Source': 'feedback', ...CORS });
+  res.end(JSON.stringify({ ok }));
+}
+
 // --- Server ---
 
 const server = http.createServer(async (req, res) => {
@@ -276,6 +305,8 @@ const server = http.createServer(async (req, res) => {
       if (p === '/api/principles/share') return await handleShare(req, res);
       if (p === '/api/principles/import') return await handleImport(req, res);
       if (p === '/api/feedback') return await handleFeedback(req, res);
+      if (p === '/api/route-model') return await handleRouteModel(req, res);
+      if (p === '/api/route-feedback') return await handleRouteFeedback(req, res);
     }
 
     error(res, 'Not found', 404);
@@ -299,4 +330,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { server, handleHealth, handleIntercept, handleExtract, handleEvolve, handleStats, handleGraph, handleTimeline, handleShare, handleImport, handleFeedback, handleUser };
+module.exports = { server, handleHealth, handleIntercept, handleExtract, handleEvolve, handleStats, handleGraph, handleTimeline, handleShare, handleImport, handleFeedback, handleUser, handleRouteModel, handleRouteFeedback };

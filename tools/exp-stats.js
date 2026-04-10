@@ -101,7 +101,17 @@ function computeStats(events) {
     archived: 0,
 
     // OBS-04: Per-project
-    projects: {}
+    projects: {},
+
+    // OBS-05: Model Router
+    routeCount: 0,
+    routeByTier: { fast: 0, balanced: 0, premium: 0 },
+    routeBySource: { history: 0, 'history-upgrade': 0, brain: 0, keyword: 0, default: 0 },
+    routeFeedbackCount: 0,
+    routeOutcomes: { success: 0, fail: 0, retry: 0, cancelled: 0 },
+    routeDurations: [],   // raw ms values for avg computation
+    routeSuccessByTier: { fast: 0, balanced: 0, premium: 0 },
+    routeTotalByTier:   { fast: 0, balanced: 0, premium: 0 },
   };
 
   for (const e of events) {
@@ -140,6 +150,22 @@ function computeStats(events) {
       stats.demoted += (e.demoted || 0);
       stats.abstracted += (e.abstracted || 0);
       stats.archived += (e.archived || 0);
+    } else if (e.op === 'route') {
+      stats.routeCount++;
+      const tier = e.tier || 'balanced';
+      if (stats.routeByTier[tier] !== undefined) stats.routeByTier[tier]++;
+      const src = e.source || 'default';
+      if (stats.routeBySource[src] !== undefined) stats.routeBySource[src]++;
+    } else if (e.op === 'route-feedback') {
+      stats.routeFeedbackCount++;
+      const outcome = e.outcome || 'success';
+      if (stats.routeOutcomes[outcome] !== undefined) stats.routeOutcomes[outcome]++;
+      if (typeof e.duration === 'number' && e.duration > 0) stats.routeDurations.push(e.duration);
+      const fbTier = e.tier || 'balanced';
+      if (stats.routeTotalByTier[fbTier] !== undefined) {
+        stats.routeTotalByTier[fbTier]++;
+        if (outcome === 'success') stats.routeSuccessByTier[fbTier]++;
+      }
     }
   }
 
@@ -240,7 +266,7 @@ if (require.main === module) {
   const stats = computeStats(events);
 
   // Check for empty
-  if (stats.totalIntercepts + stats.extractSessions + stats.evolveCount === 0) {
+  if (stats.totalIntercepts + stats.extractSessions + stats.evolveCount + stats.routeCount === 0) {
     console.log(`Experience Engine Stats (${rangeLabel})`);
     console.log('======================================');
     console.log('');
@@ -291,6 +317,35 @@ if (require.main === module) {
     for (let i = 0; i < top5.length; i++) {
       const e = top5[i];
       console.log(`  ${i + 1}. [${e.tier}] "${e.trigger}" (hitCount: ${e.hitCount})`);
+    }
+  }
+
+  // Model Router (OBS-05)
+  if (stats.routeCount > 0) {
+    console.log('');
+    console.log('Model Router');
+    printStat('Routes:', String(stats.routeCount));
+    printStat('By tier:', `fast=${stats.routeByTier.fast} balanced=${stats.routeByTier.balanced} premium=${stats.routeByTier.premium}`);
+    const historyHits = stats.routeBySource.history + stats.routeBySource['history-upgrade'];
+    printStat('By source:', `history=${stats.routeBySource.history} upgrade=${stats.routeBySource['history-upgrade']} keyword=${stats.routeBySource.keyword} brain=${stats.routeBySource.brain} default=${stats.routeBySource.default}`);
+    printStat('History hit rate:', pct(historyHits, stats.routeCount),
+      `(${historyHits}/${stats.routeCount} from cache)`);
+    if (stats.routeFeedbackCount > 0) {
+      printStat('Feedback:', String(stats.routeFeedbackCount),
+        `(success=${stats.routeOutcomes.success} fail=${stats.routeOutcomes.fail} retry=${stats.routeOutcomes.retry} cancelled=${stats.routeOutcomes.cancelled})`);
+      // Accuracy by tier
+      const tiers = ['fast', 'balanced', 'premium'];
+      const accuracyParts = tiers
+        .filter(t => stats.routeTotalByTier[t] > 0)
+        .map(t => `${t}=${pct(stats.routeSuccessByTier[t], stats.routeTotalByTier[t])}`);
+      if (accuracyParts.length > 0) {
+        printStat('Accuracy by tier:', accuracyParts.join(' '));
+      }
+      // Avg duration
+      if (stats.routeDurations.length > 0) {
+        const avgMs = Math.round(stats.routeDurations.reduce((a, b) => a + b, 0) / stats.routeDurations.length);
+        printStat('Avg duration:', `${avgMs}ms`, `(${stats.routeDurations.length} timed completions)`);
+      }
     }
   }
 
