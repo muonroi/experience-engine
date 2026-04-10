@@ -47,6 +47,16 @@ const EMBED_DIM       = _cfg.embedDim      || 768;
 const MIN_CONFIDENCE  = _cfg.minConfidence  || 0.42;
 const HIGH_CONFIDENCE = _cfg.highConfidence || 0.60;
 
+// --- Model Router config ---
+const ROUTER_HISTORY_THRESHOLD = _cfg.routerHistoryThreshold || 0.80;
+const ROUTER_DEFAULT_TIER      = _cfg.routerDefaultTier      || 'balanced';
+const MODEL_TIERS = _cfg.modelTiers || {
+  claude:   { fast: 'haiku',           balanced: 'sonnet',        premium: 'opus' },
+  gemini:   { fast: 'gemini-2.0-flash', balanced: 'gemini-2.5-pro', premium: 'gemini-2.5-pro' },
+  codex:    { fast: 'codex-mini',      balanced: 'o3',            premium: 'o3' },
+  opencode: { fast: 'haiku',           balanced: 'sonnet',        premium: 'opus' },
+};
+
 const OLLAMA_EMBED_URL = `${OLLAMA_BASE}/api/embed`;
 const OLLAMA_GENERATE_URL = `${OLLAMA_BASE}/api/generate`;
 
@@ -56,6 +66,7 @@ const COLLECTIONS = [
   { name: 'experience-selfqa',     topK: 2, budgetChars: 1000 },
 ];
 
+const ROUTES_COLLECTION = 'experience-routes';
 const SELFQA_COLLECTION = 'experience-selfqa';
 const EDGE_COLLECTION = 'experience-edges';
 const DEDUP_THRESHOLD = 0.85;
@@ -540,7 +551,8 @@ async function extractFromSession(transcript, projectPath) {
       const qa = await extractQA(mistake);
       if (!qa || !qa.trigger || !qa.solution) continue;
       if (await isDuplicate(qa)) continue;
-      await storeExperience(qa, domain);
+      const projectSlug = extractProjectSlug(projectPath);
+      await storeExperience(qa, domain, projectSlug);
       stored++;
     } catch { /* skip */ }
   }
@@ -929,14 +941,14 @@ function buildStorePayload(id, qa, domain, projectSlug) {
   };
 }
 
-async function storeExperience(qa, domain) {
+async function storeExperience(qa, domain, projectSlug) {
   const text = `${qa.trigger} ${qa.question} ${qa.solution}`;
   const vector = await getEmbedding(text);
   if (!vector) return;
 
   const id = crypto.randomUUID();
   const payload = {
-    json: JSON.stringify(buildStorePayload(id, qa, domain)),
+    json: JSON.stringify(buildStorePayload(id, qa, domain, projectSlug)),
     user: EXP_USER,
   };
 
@@ -1113,7 +1125,7 @@ function computeEffectiveScore(point, data, queryDomain, queryProjectSlug) {
   // P0: Project-aware penalty — cross-project suggestions heavily penalized
   let projectPenalty = 0;
   if (queryProjectSlug && data._projectSlug) {
-    if (queryProjectSlug !== data._projectSlug) projectPenalty = 0.50;
+    if (queryProjectSlug !== data._projectSlug) projectPenalty = 0.70;
   }
   // Phase 108: temporal boost/penalty from confirmedAt trace
   let temporalAdj = 0;
@@ -1644,6 +1656,377 @@ async function migrateQdrantUserTags() {
 // Fire once on load (non-blocking)
 migrateQdrantUserTags().catch(() => {});
 
+// --- Model Router (route-model spec) ---
+
+const CLASSIFY_PROMPT = `Classify this coding task complexity. Reply ONLY one word: fast, balanced, or premium.
+
+fast = trivial, mechanical, single action (rename, format, read file, delete unused, fix typo, update import, simple config change)
+balanced = moderate, requires understanding (implement feature, write tests, refactor single file, add endpoint, update logic)
+premium = complex, requires deep reasoning (multi-file architecture, race condition, security audit, system design, complex debug, breaking migration)
+
+Task: "{TASK}"`;
+
+// Keywords that hint at complexity level — used as a cheap pre-filter before brain call.
+// If files context contains these extensions/patterns, we can short-circuit.
+const COMPLEXITY_KEYWORDS = {
+  premium: [
+    'race condition', 'deadlock', 'concurrency', 'distributed', 'security audit',
+    'migration', 'breaking change', 'multi-file', 'multi-service', 'architecture',
+    'performance regression', 'memory leak', 'heap', 'profil', 'benchmark',
+  ],
+  fast: [
+    'rename', 'typo', 'format', 'delete unused', 'update import', 'simple config',
+    'read file', 'list file', 'add comment', 'fix typo', 'update version',
+  ],
+};
+
+/**
+ * Cheap keyword pre-filter — returns tier hint without any API call.
+ * Checks task text + context.files extensions for complexity signals.
+ * Returns 'fast' | 'balanced' | 'premium' | null (null = inconclusive, call brain).
+ */
+function preFilterComplexity(taskText, context) {
+  const lower = taskText.toLowerCase();
+  const files = (context?.files || []).map(f => String(f).toLowerCase());
+
+  // Premium signals in task text
+  for (const kw of COMPLEXITY_KEYWORDS.premium) {
+    if (lower.includes(kw)) return 'premium';
+  }
+
+  // Fast signals in task text
+  for (const kw of COMPLEXITY_KEYWORDS.fast) {
+    if (lower.includes(kw)) return 'fast';
+  }
+
+  // Context files: many files → complexity signal
+  if (files.length >= 5) return 'premium';
+
+  // Context files: TypeScript/Go/Rust architecture files hint at complexity
+  const architectureFiles = files.filter(f =>
+    f.includes('service') || f.includes('middleware') || f.includes('gateway') ||
+    f.includes('migration') || f.includes('schema') || f.includes('interface')
+  );
+  if (architectureFiles.length >= 2) return 'premium';
+
+  return null; // inconclusive — let brain decide
+}
+
+/**
+ * Emit a structured routing decision line to stdout for GSD/user visibility.
+ * Format: [Model Router] -> {tier} ({model}) — {reason} [{source}]
+ */
+function printRouteDecision(tier, model, reason, source) {
+  const modelPart = model ? ` (${model})` : '';
+  process.stdout.write(`[Model Router] -> ${tier}${modelPart} — ${reason} [${source}]\n`);
+}
+
+// Bootstrap routes collection once on module load (fire-and-forget, like migrateQdrantUserTags)
+let _routesCollectionReady = false;
+async function ensureRoutesCollection() {
+  if (_routesCollectionReady) return;
+  if (!(await checkQdrant())) { _routesCollectionReady = true; return; } // FileStore needs no setup
+  try {
+    const check = await fetch(`${QDRANT_BASE}/collections/${ROUTES_COLLECTION}`, {
+      headers: { 'api-key': QDRANT_API_KEY }, signal: AbortSignal.timeout(3000),
+    });
+    if (check.ok) { _routesCollectionReady = true; return; }
+    await fetch(`${QDRANT_BASE}/collections/${ROUTES_COLLECTION}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+      body: JSON.stringify({ vectors: { size: EMBED_DIM, distance: 'Cosine' } }),
+      signal: AbortSignal.timeout(5000),
+    });
+    _routesCollectionReady = true;
+  } catch { _routesCollectionReady = true; /* fall through to FileStore */ }
+}
+
+// Fire once on module load — removes per-call overhead from routeModel()
+ensureRoutesCollection().catch(() => {});
+
+/**
+ * Call brain API for plain-text classification response.
+ * Deliberately separate from callBrainWithFallback() which expects JSON.
+ * Supports siliconflow (OpenAI-compatible) and ollama providers.
+ * @param {string} prompt
+ * @param {number} [timeoutMs=10000]
+ * @returns {Promise<string|null>} raw text response or null on failure
+ */
+async function classifyViaBrain(prompt, timeoutMs = 10000) {
+  const key = BRAIN_KEY || '';
+
+  // Provider: siliconflow or any OpenAI-compatible endpoint
+  if (BRAIN_PROVIDER === 'siliconflow' || BRAIN_ENDPOINT) {
+    if (!key) return null;
+    const endpoint = BRAIN_ENDPOINT || 'https://api.siliconflow.com/v1/chat/completions';
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+        body: JSON.stringify({
+          model: BRAIN_MODEL || 'Qwen/Qwen2.5-7B-Instruct',
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 10,
+          temperature: 0.1,
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!res.ok) return null;
+      return (await res.json()).choices?.[0]?.message?.content?.trim() || null;
+    } catch { return null; }
+  }
+
+  // Provider: ollama (generate endpoint, plain text)
+  if (BRAIN_PROVIDER === 'ollama') {
+    try {
+      const res = await fetch(`${OLLAMA_BASE}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: BRAIN_MODEL || 'qwen2.5:3b',
+          prompt,
+          stream: false,
+          options: { temperature: 0.1, num_predict: 10 },
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!res.ok) return null;
+      return (await res.json()).response?.trim() || null;
+    } catch { return null; }
+  }
+
+  return null;
+}
+
+/**
+ * Normalize brain classification response to a valid tier.
+ * Handles: multi-word responses, "medium" alias, casing.
+ * Returns 'fast' | 'balanced' | 'premium' | null (null = unrecognized).
+ */
+function normalizeTierResponse(raw) {
+  if (!raw) return null;
+  const word = raw.trim().toLowerCase().split(/\s+/)[0];
+  if (word === 'fast') return 'fast';
+  if (word === 'balanced' || word === 'medium') return 'balanced';
+  if (word === 'premium' || word === 'complex' || word === 'hard') return 'premium';
+  return null;
+}
+
+function resolveTierModel(tier, runtime) {
+  if (!runtime) return null;
+  const runtimeTiers = MODEL_TIERS[runtime];
+  if (!runtimeTiers) return null;
+  return runtimeTiers[tier] || runtimeTiers.balanced || null;
+}
+
+/**
+ * Store a new route decision to both FileStore and Qdrant (dual-write).
+ * Non-blocking — errors are swallowed so routing always returns quickly.
+ */
+async function storeRouteDecision(taskText, taskHash, tier, model, runtime, context, vector) {
+  const id = require('crypto').randomUUID();
+  const routeData = {
+    id, taskHash, taskSummary: taskText.slice(0, 200), tier, model, runtime: runtime || null,
+    source: 'brain', outcome: null, retryCount: 0, duration: null,
+    domain: context?.domain || null, projectSlug: context?.phase || null,
+    createdAt: new Date().toISOString(), feedbackAt: null,
+  };
+
+  // Dual-write: FileStore always, Qdrant when available
+  try { fileStoreUpsert(ROUTES_COLLECTION, id, vector, { json: JSON.stringify(routeData), user: EXP_USER }); } catch { /* non-blocking */ }
+  if (await checkQdrant()) {
+    try {
+      await fetch(`${QDRANT_BASE}/collections/${ROUTES_COLLECTION}/points`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+        body: JSON.stringify({ points: [{ id, vector, payload: { json: JSON.stringify(routeData), user: EXP_USER } }] }),
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch { /* non-blocking */ }
+  }
+}
+
+/**
+ * Route a task to the optimal model tier.
+ *
+ * Layer 0: Keyword pre-filter (free, ~0ms) — catches obvious cases
+ * Layer 1: History check (semantic search, ~50ms) — reuse/upgrade past decisions
+ * Layer 2: Brain classify (LLM call, ~200ms) — only when layers 0+1 miss
+ * Fallback: ROUTER_DEFAULT_TIER
+ *
+ * @param {string} task - Task description (any language)
+ * @param {object|null} context - { files, domain, phase } optional context
+ * @param {string|null} runtime - 'claude' | 'gemini' | 'codex' | 'opencode' | null
+ * @returns {Promise<{tier, model, confidence, source, reason, taskHash}>}
+ */
+async function routeModel(task, context, runtime) {
+  const taskText = (task || '').slice(0, 500);
+  if (!taskText) {
+    const tier = ROUTER_DEFAULT_TIER;
+    const model = resolveTierModel(tier, runtime);
+    printRouteDecision(tier, model, 'empty task', 'default');
+    activityLog({ op: 'route', task: '', tier, model, source: 'default', confidence: 0 });
+    return { tier, model, confidence: 0, source: 'default', reason: 'empty task', taskHash: null };
+  }
+
+  const taskHash = require('crypto').createHash('sha256').update(taskText).digest('hex').slice(0, 16);
+
+  // Layer 0: Keyword pre-filter (no API call)
+  const preFilterTier = preFilterComplexity(taskText, context);
+  if (preFilterTier) {
+    const model = resolveTierModel(preFilterTier, runtime);
+    const reason = `${preFilterTier} complexity detected`;
+    printRouteDecision(preFilterTier, model, reason, 'keyword');
+    activityLog({ op: 'route', task: taskText.slice(0, 100), tier: preFilterTier, model, source: 'keyword', confidence: 0.70 });
+
+    // Store for future history (async, non-blocking)
+    getEmbedding(taskText).then(vector => {
+      if (vector) storeRouteDecision(taskText, taskHash, preFilterTier, model, runtime, context, vector);
+    }).catch(() => {});
+
+    return { tier: preFilterTier, model, confidence: 0.70, source: 'keyword', reason, taskHash };
+  }
+
+  // Layer 1: History check (semantic search)
+  try {
+    const vector = await getEmbedding(taskText);
+    if (vector) {
+      const hits = await searchCollection(ROUTES_COLLECTION, vector, 3);
+      const bestHit = hits.find(h => (h.score || 0) >= ROUTER_HISTORY_THRESHOLD);
+      if (bestHit) {
+        const data = (() => { try { return JSON.parse(bestHit.payload?.json || '{}'); } catch { return {}; } })();
+        if (data.outcome) {
+          let tier = data.tier || ROUTER_DEFAULT_TIER;
+          let source = 'history';
+          const tiers = ['fast', 'balanced', 'premium'];
+          const isNegative = data.outcome === 'fail' || data.outcome === 'cancelled' || (data.retryCount || 0) >= 2;
+          if (isNegative) {
+            const idx = tiers.indexOf(tier);
+            if (idx < tiers.length - 1) tier = tiers[idx + 1];
+            source = 'history-upgrade';
+          }
+          const model = resolveTierModel(tier, runtime);
+          const reason = source === 'history-upgrade'
+            ? `similar task ${data.outcome === 'cancelled' ? 'was cancelled' : 'failed'} on ${data.tier || 'lower tier'}`
+            : 'similar task succeeded before';
+          const result = { tier, model, confidence: bestHit.score, source, reason, taskHash };
+          printRouteDecision(tier, model, reason, source);
+          activityLog({ op: 'route', task: taskText.slice(0, 100), tier, model, source, confidence: bestHit.score });
+          return result;
+        }
+      }
+    }
+  } catch { /* Layer 1 failure — proceed to Layer 2 */ }
+
+  // Layer 2: Brain classify (plain text — separate from callBrainWithFallback which expects JSON)
+  try {
+    const prompt = CLASSIFY_PROMPT.replace('{TASK}', taskText.slice(0, 300));
+    const brainResult = await classifyViaBrain(prompt);
+    if (brainResult) {
+      const normalizedTier = normalizeTierResponse(brainResult);
+      const tier = normalizedTier || ROUTER_DEFAULT_TIER;
+      const model = resolveTierModel(tier, runtime);
+      const confidence = normalizedTier ? 0.75 : 0.50;
+      const reason = `${tier} complexity task`;
+      const result = { tier, model, confidence, source: 'brain', reason, taskHash };
+      printRouteDecision(tier, model, reason, 'brain');
+      activityLog({ op: 'route', task: taskText.slice(0, 100), tier, model, source: 'brain', confidence });
+
+      // Dual-write: store route decision for future history
+      try {
+        const vector = await getEmbedding(taskText);
+        if (vector) await storeRouteDecision(taskText, taskHash, tier, model, runtime, context, vector);
+      } catch { /* non-blocking */ }
+
+      return result;
+    }
+  } catch { /* Layer 2 failure — fall through to default */ }
+
+  // Fallback: safe default
+  const model = resolveTierModel(ROUTER_DEFAULT_TIER, runtime);
+  printRouteDecision(ROUTER_DEFAULT_TIER, model, 'classification unavailable', 'default');
+  activityLog({ op: 'route', task: taskText.slice(0, 100), tier: ROUTER_DEFAULT_TIER, model, source: 'default', confidence: 0 });
+  return { tier: ROUTER_DEFAULT_TIER, model, confidence: 0, source: 'default', reason: 'fallback — classification unavailable', taskHash };
+}
+
+/**
+ * Record agent outcome for a past routing decision.
+ * Dual-writes update to both FileStore and Qdrant.
+ * ESC/interrupt → outcome='cancelled' → treated as negative → tier upgrade next time.
+ *
+ * @param {string} taskHash - Hash from routeModel response
+ * @param {string|null} tier - Tier used (for orphan records when taskHash not found)
+ * @param {string|null} model - Model used
+ * @param {string} outcome - 'success' | 'fail' | 'retry' | 'cancelled'
+ * @param {number} [retryCount=0]
+ * @param {number|null} [duration=null] - Duration in ms
+ * @returns {Promise<boolean>} true if record was found and updated
+ */
+async function routeFeedback(taskHash, tier, model, outcome, retryCount, duration) {
+  if (!taskHash || !outcome) return false;
+
+  const validOutcomes = ['success', 'fail', 'retry', 'cancelled'];
+  const normalizedOutcome = validOutcomes.includes(outcome) ? outcome : 'success';
+
+  const applyUpdate = (data) => {
+    data.outcome = normalizedOutcome;
+    data.retryCount = retryCount || 0;
+    data.duration = duration || null;
+    data.feedbackAt = new Date().toISOString();
+    if (tier) data.tier = tier;
+    if (model) data.model = model;
+  };
+
+  let found = false;
+
+  // FileStore: scan and update
+  try {
+    const entries = fileStoreRead(ROUTES_COLLECTION);
+    for (const entry of entries) {
+      const data = (() => { try { return JSON.parse(entry.payload?.json || '{}'); } catch { return {}; } })();
+      if (data.taskHash === taskHash) {
+        applyUpdate(data);
+        entry.payload.json = JSON.stringify(data);
+        fileStoreWrite(ROUTES_COLLECTION, entries);
+        found = true;
+        break;
+      }
+    }
+  } catch { /* FileStore scan failed — continue to Qdrant */ }
+
+  // Qdrant: scroll and update (always try, not just when FileStore misses)
+  if (await checkQdrant()) {
+    try {
+      const scrollRes = await fetch(`${QDRANT_BASE}/collections/${ROUTES_COLLECTION}/points/scroll`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+        body: JSON.stringify({ limit: 100, with_payload: true, filter: { must: [QDRANT_USER_FILTER] } }),
+        signal: AbortSignal.timeout(5000),
+      });
+      if (scrollRes.ok) {
+        const points = (await scrollRes.json()).result?.points || [];
+        for (const point of points) {
+          const data = (() => { try { return JSON.parse(point.payload?.json || '{}'); } catch { return {}; } })();
+          if (data.taskHash === taskHash) {
+            applyUpdate(data);
+            await fetch(`${QDRANT_BASE}/collections/${ROUTES_COLLECTION}/points/payload`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+              body: JSON.stringify({ points: [point.id], payload: { json: JSON.stringify(data), user: EXP_USER } }),
+              signal: AbortSignal.timeout(5000),
+            });
+            found = true;
+            break;
+          }
+        }
+      }
+    } catch { /* Qdrant scroll failed */ }
+  }
+
+  activityLog({ op: 'route-feedback', taskHash, tier, outcome: normalizedOutcome, retryCount: retryCount || 0, duration: duration || null });
+  return found;
+}
+
 // --- Exports ---
 
-module.exports = { intercept, interceptWithMeta, recordFeedback, extractFromSession, recordHit, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa, null), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter };
+module.exports = { intercept, interceptWithMeta, recordFeedback, extractFromSession, recordHit, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter };
