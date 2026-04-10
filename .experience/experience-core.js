@@ -265,11 +265,55 @@ function fileStoreRead(collection) {
   } catch { return []; }
 }
 
+// File-level locking to prevent concurrent hook processes from clobbering data.
+// Uses exclusive open (wx) on a .lock file with a stale timeout of 5s.
+const LOCK_STALE_MS = 5000;
+
+function acquireLock(collection) {
+  const lockPath = fileStorePath(collection) + '.lock';
+  const deadline = Date.now() + LOCK_STALE_MS;
+  while (Date.now() < deadline) {
+    try {
+      // O_WRONLY | O_CREAT | O_EXCL — fails if file already exists
+      const fd = fs.openSync(lockPath, 'wx');
+      fs.writeFileSync(fd, String(process.pid));
+      fs.closeSync(fd);
+      return true;
+    } catch (err) {
+      if (err.code === 'EEXIST') {
+        // Check for stale lock (process died without releasing)
+        try {
+          const stat = fs.statSync(lockPath);
+          if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
+            try { fs.unlinkSync(lockPath); } catch {}
+            continue; // retry after removing stale lock
+          }
+        } catch { /* lock gone between check — retry */ continue; }
+        // Active lock — brief spin wait (1ms)
+        const start = Date.now();
+        while (Date.now() - start < 1) {} // busy-wait 1ms (no sleep in sync context)
+        continue;
+      }
+      return false; // unexpected error — proceed without lock
+    }
+  }
+  return false; // timeout — proceed without lock to avoid blocking hooks
+}
+
+function releaseLock(collection) {
+  try { fs.unlinkSync(fileStorePath(collection) + '.lock'); } catch {}
+}
+
 function fileStoreWrite(collection, entries) {
   fs.mkdirSync(FILESTORE_DIR, { recursive: true });
-  const tmp = fileStorePath(collection) + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(entries, null, 2)); // pretty-printed per specifics
-  fs.renameSync(tmp, fileStorePath(collection)); // atomic per D-16
+  const locked = acquireLock(collection);
+  try {
+    const tmp = fileStorePath(collection) + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(entries, null, 2)); // pretty-printed per specifics
+    fs.renameSync(tmp, fileStorePath(collection)); // atomic per D-16
+  } finally {
+    if (locked) releaseLock(collection);
+  }
 }
 
 function cosineSimilarity(a, b) {
@@ -740,7 +784,7 @@ async function isDuplicate(qa) {
     const res = await fetch(`${QDRANT_BASE}/collections/${SELFQA_COLLECTION}/points/query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-      body: JSON.stringify({ query: vector, limit: 1, with_payload: false }),
+      body: JSON.stringify({ query: vector, limit: 1, with_payload: false, filter: { must: [QDRANT_USER_FILTER] } }),
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return false;
@@ -774,7 +818,8 @@ async function storeExperience(qa, domain) {
 
   const id = crypto.randomUUID();
   const payload = {
-    json: JSON.stringify(buildStorePayload(id, qa, domain))
+    json: JSON.stringify(buildStorePayload(id, qa, domain)),
+    user: EXP_USER,
   };
 
   if (!(await checkQdrant())) {
@@ -903,13 +948,21 @@ async function fetchPointById(collection, pointId) {
   } catch { return null; }
 }
 
+// Qdrant user filter — only return entries owned by current user (or untagged legacy entries)
+const QDRANT_USER_FILTER = {
+  should: [
+    { key: 'user', match: { value: EXP_USER } },
+    { is_empty: { key: 'user' } },  // backward-compat: untagged = accessible by all
+  ],
+};
+
 async function searchCollection(name, vector, topK, signal) {
   if (!(await checkQdrant())) return fileStoreSearch(name, vector, topK);
   try {
     const res = await fetch(`${QDRANT_BASE}/collections/${name}/points/query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-      body: JSON.stringify({ query: vector, limit: topK, with_payload: true }),
+      body: JSON.stringify({ query: vector, limit: topK, with_payload: true, filter: { must: [QDRANT_USER_FILTER] } }),
       signal,
     });
     if (!res.ok) return fileStoreSearch(name, vector, topK);
@@ -1166,34 +1219,11 @@ function createEdge(source, target, type, weight = 1.0, createdBy = 'auto') {
     } catch { return false; }
   });
   if (exists) return null;
-  fileStoreUpsert(EDGE_COLLECTION, edge.id, [], { json: JSON.stringify(edge) });
-  upsertEdgeToQdrant(edge).catch(() => {});
+  // Edges are FileStore-only — no vector search needed, queried by source/target ID.
+  // Removed dummy vector: [0] Qdrant upsert (Risk #4: wasted index space).
+  fileStoreUpsert(EDGE_COLLECTION, edge.id, [], { json: JSON.stringify(edge), user: EXP_USER });
   activityLog({ op: 'edge-create', type, source: source.slice(0, 8), target: target.slice(0, 8) });
   return edge;
-}
-
-async function upsertEdgeToQdrant(edge) {
-  if (!(await checkQdrant())) return;
-  try {
-    const check = await fetch(`${QDRANT_BASE}/collections/${EDGE_COLLECTION}`, {
-      headers: QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {},
-      signal: AbortSignal.timeout(3000),
-    });
-    if (!check.ok) {
-      await fetch(`${QDRANT_BASE}/collections/${EDGE_COLLECTION}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-        body: JSON.stringify({ vectors: { size: 1, distance: 'Cosine' } }),
-        signal: AbortSignal.timeout(5000),
-      });
-    }
-  } catch { return; }
-  await fetch(`${QDRANT_BASE}/collections/${EDGE_COLLECTION}/points`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-    body: JSON.stringify({ points: [{ id: edge.id, vector: [0], payload: { json: JSON.stringify(edge) } }] }),
-    signal: AbortSignal.timeout(5000),
-  }).catch(() => {});
 }
 
 function getEdgesForId(experienceId) {
@@ -1434,12 +1464,12 @@ async function getAllEntries(collection) {
   if (!(await checkQdrant())) {
     return fileStoreRead(collection);
   }
-  // Qdrant: scroll all points
+  // Qdrant: scroll all points (filtered by user namespace)
   const points = [];
   let offset = null;
   do {
     try {
-      const body = { limit: 100, with_payload: true, with_vector: true };
+      const body = { limit: 100, with_payload: true, with_vector: true, filter: { must: [QDRANT_USER_FILTER] } };
       if (offset) body.offset = offset;
       const res = await fetch(`${QDRANT_BASE}/collections/${collection}/points/scroll`, {
         method: 'POST',
@@ -1458,7 +1488,7 @@ async function getAllEntries(collection) {
 }
 
 async function upsertEntry(collection, id, vector, data) {
-  const payload = { json: JSON.stringify(data) };
+  const payload = { json: JSON.stringify(data), user: EXP_USER };
   if (!(await checkQdrant())) {
     fileStoreUpsert(collection, id, vector, payload);
     return;
@@ -1527,6 +1557,48 @@ async function getEmbeddingRaw(text, signal) {
   return getEmbedding(text, signal);
 }
 
+// --- Qdrant multi-user migration: tag untagged entries with EXP_USER ---
+// Runs once per process, best-effort. Tags existing points that lack a `user` field.
+
+async function migrateQdrantUserTags() {
+  // Bypass checkQdrant() cache — migration runs early, cache may not be warm yet.
+  // Direct probe instead.
+  try {
+    const probe = await fetch(`${QDRANT_BASE}/collections`, {
+      headers: QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {},
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!probe.ok) return;
+    // Warm the cache for subsequent calls
+    qdrantAvailable = true;
+  } catch { return; }
+  for (const coll of COLLECTIONS) {
+    try {
+      // Find points without user field
+      const res = await fetch(`${QDRANT_BASE}/collections/${coll.name}/points/scroll`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+        body: JSON.stringify({ limit: 100, with_payload: true, with_vector: false, filter: { must: [{ is_empty: { key: 'user' } }] } }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) continue;
+      const points = (await res.json()).result?.points || [];
+      if (points.length === 0) continue;
+      // Batch-set user field
+      await fetch(`${QDRANT_BASE}/collections/${coll.name}/points/payload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+        body: JSON.stringify({ points: points.map(p => p.id), payload: { user: EXP_USER } }),
+        signal: AbortSignal.timeout(10000),
+      });
+      activityLog({ op: 'migrate-user-tags', collection: coll.name, tagged: points.length });
+    } catch { /* best-effort */ }
+  }
+}
+
+// Fire once on load (non-blocking)
+migrateQdrantUserTags().catch(() => {});
+
 // --- Exports ---
 
-module.exports = { intercept, interceptWithMeta, recordFeedback, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa, null), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback };
+module.exports = { intercept, interceptWithMeta, recordFeedback, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa, null), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback };

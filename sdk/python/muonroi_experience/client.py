@@ -179,3 +179,20 @@ class Client:
             dict with 'imported' (id + principle) and 'success'
         """
         return self._request("POST", "/api/principles/import", shared)
+
+    def feedback(self, collection, point_id, followed):
+        """POST /api/feedback — Record agent feedback on a surfaced suggestion.
+
+        Args:
+            collection: Collection name (e.g., 'experience-behavioral')
+            point_id: UUID of the experience point
+            followed: True if agent followed the suggestion, False if ignored
+
+        Returns:
+            dict with 'ok' (bool)
+        """
+        return self._request("POST", "/api/feedback", {
+            "collection": collection,
+            "pointId": point_id,
+            "followed": followed,
+        })
