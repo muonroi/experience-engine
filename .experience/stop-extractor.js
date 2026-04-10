@@ -30,8 +30,11 @@ async function main() {
   const transcript = newLines.map(l => {
     try {
       const e = JSON.parse(l);
-      const c = e.content || e.message || '';
-      return typeof c === 'string' ? c.slice(0, 300) : '';
+      const c = e.message?.content;
+      if (!c) return '';
+      if (typeof c === 'string') return c.slice(0, 300);
+      if (Array.isArray(c)) return c.map(b => b.text || '').filter(Boolean).join(' ').slice(0, 300);
+      return '';
     } catch { return ''; }
   }).filter(Boolean).join('\n');
 
