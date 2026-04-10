@@ -3,15 +3,23 @@
 /**
  * interceptor-post.js — PostToolUse hook for Experience Engine feedback loop
  *
- * Reads last-suggestions state written by the PreToolUse hook, then heuristically
- * detects whether the agent followed or ignored each surfaced hint by comparing the
- * tool output/new content against key terms from the suggestion's solution text.
+ * Strategy B: Outcome-based feedback (complemented by Strategy A: agent self-report via POST /api/feedback).
  *
- * Calls recordFeedback(collection, pointId, followed) for each surfaced point.
- * Total budget: <500ms. Non-blocking — exits cleanly on any error.
+ * Instead of guessing whether the agent "followed" a hint via keyword matching (unreliable),
+ * we observe the OUTCOME of the tool call after a hint was surfaced:
  *
- * Register in ~/.claude/settings.json as a PostToolUse hook:
- *   { "hooks": { "PostToolUse": [{ "command": "node ~/.experience/interceptor-post.js" }] } }
+ *   - Tool ERRORED right after hint was shown → hint was relevant, agent likely ignored it
+ *     → record followed=false (boost hint confidence)
+ *   - Tool SUCCEEDED → neutral, can't determine causation
+ *     → record followed=true (mild positive signal — hint didn't hurt)
+ *   - Agent explicitly told user "ignoring this hint" → Strategy A covers this
+ *     (agent calls POST /api/feedback directly)
+ *
+ * This is conservative: we only penalize on clear negative signal (error after hint),
+ * and give mild positive on success. Strategy A (agent self-report) provides the precise signal.
+ *
+ * Register in ~/.claude/settings.json:
+ *   PostToolUse: [{ matcher: "Edit|Write|Bash", hooks: [{ command: "node ~/.experience/interceptor-post.js" }] }]
  */
 
 const fs   = require('fs');
@@ -22,7 +30,6 @@ const STATE_FILE = path.join(os.homedir(), '.experience', 'tmp', 'last-suggestio
 const DEBUG_LOG  = process.env.EXPERIENCE_HOOK_DEBUG_LOG
   || path.join(os.homedir(), '.codex', 'log', 'experience-hook-debug.jsonl');
 
-// Stale threshold: 10 seconds (typical tool call is 3-5s)
 const STALE_MS = 10_000;
 
 function debugLog(event) {
@@ -32,56 +39,31 @@ function debugLog(event) {
   } catch {}
 }
 
-/** Extract meaningful keywords from a solution string for heuristic matching. */
-function extractKeyTerms(solution) {
-  if (!solution) return [];
-  // Remove common filler words, keep substantive tokens ≥4 chars
-  const stop = new Set(['this', 'that', 'with', 'when', 'from', 'into', 'over', 'then', 'will', 'also', 'have', 'been', 'your', 'they', 'does', 'not', 'use', 'the', 'and', 'for', 'are', 'all']);
-  return solution
-    .toLowerCase()
-    .replace(/[^a-z0-9\s_/-]/g, ' ')
-    .split(/\s+/)
-    .filter(t => t.length >= 4 && !stop.has(t))
-    .slice(0, 6); // top 6 terms
-}
-
 /**
- * Heuristic: did the agent follow the suggestion?
- * Returns true/false/null (null = inconclusive, skip).
+ * Outcome-based feedback: observe tool result, not content.
+ *
+ * @param {object} toolOutput - PostToolUse output/result
+ * @returns {'error'|'success'|null} - error = hint was relevant and ignored, success = neutral positive, null = can't determine
  */
-function didFollow(suggestion, toolName, toolInput, toolOutput) {
-  const solution = suggestion.solution || '';
-  if (!solution) return null;
-
+function classifyOutcome(toolName, toolInput, toolOutput) {
   const tool = (toolName || '').toLowerCase();
   const isMutatingTool = /edit|write|bash|shell|replace|execute_command/i.test(tool);
   if (!isMutatingTool) return null;
 
-  // If tool errored, can't determine
-  if (toolOutput?.error || toolOutput?.is_error) return null;
+  // Check for error signals in tool output
+  const hasError = !!(
+    toolOutput?.error ||
+    toolOutput?.is_error ||
+    (typeof toolOutput === 'string' && /^error:/i.test(toolOutput)) ||
+    (toolOutput?.output && /error|Error|ERROR|FAIL|fatal|exception/i.test(String(toolOutput.output).slice(0, 500)))
+  );
 
-  const keyTerms = extractKeyTerms(solution);
-  if (keyTerms.length === 0) return null;
+  // For Bash: also check exit code
+  const exitCode = toolOutput?.exit_code ?? toolOutput?.exitCode ?? null;
+  if (exitCode !== null && exitCode !== 0) return 'error';
 
-  // Gather content to check: new_string (Edit), content (Write), output (Bash)
-  const contentToCheck = [
-    toolInput?.new_string || '',
-    toolInput?.content    || '',
-    toolInput?.command    || '',
-    typeof toolOutput === 'string' ? toolOutput : '',
-    toolOutput?.output   || toolOutput?.stdout || '',
-  ].join('\n').toLowerCase();
-
-  if (!contentToCheck.trim()) return null;
-
-  // Count how many key terms appear in the written content
-  const matchCount = keyTerms.filter(t => contentToCheck.includes(t)).length;
-  const matchRatio = matchCount / keyTerms.length;
-
-  // >50% match → likely followed; <20% match → likely ignored
-  if (matchRatio > 0.5) return true;
-  if (matchRatio < 0.2) return false;
-  return null; // inconclusive
+  if (hasError) return 'error';
+  return 'success';
 }
 
 const t = setTimeout(() => {
@@ -130,6 +112,14 @@ process.stdin.on('end', async () => {
     const toolOutput = data.tool_response || data.output || data.result || {};
     debugLog({ stage: 'parsed', tool: toolName, surfacedCount: surfacedIds.length });
 
+    // Classify outcome
+    const outcome = classifyOutcome(toolName, toolInput, toolOutput);
+    if (outcome === null) {
+      debugLog({ stage: 'unclassifiable_outcome' });
+      try { fs.unlinkSync(STATE_FILE); } catch {}
+      process.exit(0);
+    }
+
     // Load recordFeedback from experience-core
     const { recordFeedback } = require(path.join(os.homedir(), '.experience', 'experience-core.js'));
     if (typeof recordFeedback !== 'function') {
@@ -137,17 +127,16 @@ process.stdin.on('end', async () => {
       process.exit(0);
     }
 
-    // Process each surfaced suggestion
+    // Record feedback for each surfaced suggestion based on outcome:
+    // - error → followed=false (hint was relevant, agent ignored it → boost hint)
+    // - success → followed=true (mild positive — hint didn't cause problems)
+    const followed = outcome === 'success';
     const feedbackPromises = [];
     for (const suggestion of surfacedIds) {
-      const followed = didFollow(suggestion, toolName, toolInput, toolOutput);
-      if (followed === null) {
-        debugLog({ stage: 'inconclusive', id: suggestion.id });
-        continue;
-      }
-      debugLog({ stage: 'record_feedback', id: suggestion.id, collection: suggestion.collection, followed });
+      if (!suggestion.collection || !suggestion.id) continue;
+      debugLog({ stage: 'record_feedback', id: suggestion.id, collection: suggestion.collection, outcome, followed });
       feedbackPromises.push(
-        recordFeedback(suggestion.collection, suggestion.id, followed ? 'followed' : 'ignored').catch(err => {
+        recordFeedback(suggestion.collection, suggestion.id, followed).catch(err => {
           debugLog({ stage: 'feedback_error', id: suggestion.id, error: err?.message });
         })
       );
@@ -159,9 +148,9 @@ process.stdin.on('end', async () => {
       new Promise(resolve => setTimeout(resolve, 400)),
     ]);
 
-    // Clean up state file after processing
+    // Clean up state file
     try { fs.unlinkSync(STATE_FILE); } catch {}
-    debugLog({ stage: 'done', processed: surfacedIds.length });
+    debugLog({ stage: 'done', outcome, processed: surfacedIds.length });
 
   } catch (error) {
     debugLog({ stage: 'error', message: error?.message || String(error) });
