@@ -6,3 +6,4 @@ Thumbs.db
 # User config (contains API keys — never commit)
 config.json
 .stop-marker.json
+/sdk/python/muonroi_experience/__pycache__
