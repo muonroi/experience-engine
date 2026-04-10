@@ -1159,9 +1159,11 @@ function computeEffectiveScore(point, data, queryDomain, queryProjectSlug) {
   const domainPenalty = (queryDomain && data.domain && queryDomain !== data.domain) ? 0.20
     : (queryDomain && !data.domain) ? 0.05 : 0;
   // P0: Project-aware penalty — cross-project suggestions heavily penalized
+  // v2: bypass penalty when scope.lang='all' (universal behavioral rules should surface everywhere)
   let projectPenalty = 0;
   if (queryProjectSlug && data._projectSlug) {
-    if (queryProjectSlug !== data._projectSlug) projectPenalty = 0.70;
+    const scopeLang = data.scope?.lang;
+    if (queryProjectSlug !== data._projectSlug && scopeLang !== 'all') projectPenalty = 0.70;
   }
   // Phase 108: temporal boost/penalty from confirmedAt trace
   let temporalAdj = 0;
@@ -2047,6 +2049,7 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
       });
       if (scrollRes.ok) {
         const points = (await scrollRes.json()).result?.points || [];
+        if (points.length === 100) activityLog({ op: 'route-feedback-warn', msg: 'scroll hit 100 limit, may miss entries' });
         for (const point of points) {
           const data = (() => { try { return JSON.parse(point.payload?.json || '{}'); } catch { return {}; } })();
           if (data.taskHash === taskHash) {

@@ -22,8 +22,8 @@ const STATE_FILE = path.join(os.homedir(), '.experience', 'tmp', 'last-suggestio
 const DEBUG_LOG  = process.env.EXPERIENCE_HOOK_DEBUG_LOG
   || path.join(os.homedir(), '.codex', 'log', 'experience-hook-debug.jsonl');
 
-// Stale threshold: 30 seconds
-const STALE_MS = 30_000;
+// Stale threshold: 10 seconds (typical tool call is 3-5s)
+const STALE_MS = 10_000;
 
 function debugLog(event) {
   try {
