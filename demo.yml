@@ -1,0 +1,72 @@
+# Terminalizer recording — render with: terminalizer render demo.yml -o demo.gif
+config:
+  command: null
+  cwd: null
+  env:
+    recording: true
+  cols: 90
+  rows: 30
+  repeat: 0
+  quality: 100
+  frameDelay: auto
+  maxIdleTime: 2000
+  frameBox:
+    type: floating
+    title: Experience Engine
+    style:
+      boxShadow: none
+      margin: 0px
+  watermark:
+    imagePath: null
+  theme:
+    background: "#1e1e2e"
+    foreground: "#cdd6f4"
+    cursor: "#f5e0dc"
+    black: "#45475a"
+    red: "#f38ba8"
+    green: "#a6e3a1"
+    yellow: "#f9e2af"
+    blue: "#89b4fa"
+    magenta: "#cba6f7"
+    cyan: "#94e2d5"
+    white: "#bac2de"
+
+records:
+  - delay: 500
+    content: "\r\n\u001b[1;36m# Experience Engine — AI agents that learn from mistakes\u001b[0m\r\n"
+  - delay: 800
+    content: "\u001b[32m$\u001b[0m node server.js &\r\n"
+  - delay: 1000
+    content: "Experience Engine API running on http://localhost:8082\r\nHealth: http://localhost:8082/health\r\n"
+  - delay: 1500
+    content: "\r\n\u001b[1;33m--- Health Check ---\u001b[0m\r\n"
+  - delay: 500
+    content: "\u001b[32m$\u001b[0m curl -s localhost:8082/health | jq .\r\n"
+  - delay: 800
+    content: "{\r\n  \u001b[34m\"status\"\u001b[0m: \u001b[32m\"ok\"\u001b[0m,\r\n  \u001b[34m\"qdrant\"\u001b[0m: { \u001b[34m\"status\"\u001b[0m: \u001b[32m\"ok\"\u001b[0m },\r\n  \u001b[34m\"fileStore\"\u001b[0m: { \u001b[34m\"status\"\u001b[0m: \u001b[32m\"ok\"\u001b[0m },\r\n  \u001b[34m\"uptime\"\u001b[0m: \u001b[33m12.4\u001b[0m\r\n}\r\n"
+  - delay: 2000
+    content: "\r\n\u001b[1;33m--- Agent about to write src/Startup.cs ---\u001b[0m\r\n"
+  - delay: 500
+    content: "\u001b[32m$\u001b[0m curl -s localhost:8082/api/intercept \\\r\n  -d '{\"toolName\":\"Write\",\"toolInput\":{\"file_path\":\"src/Startup.cs\"}}' | jq .\r\n"
+  - delay: 1200
+    content: "{\r\n  \u001b[34m\"suggestions\"\u001b[0m: \u001b[32m\"⚠️ [Experience - High Confidence (0.85)]: Stateful objects must be scoped, never singleton\"\u001b[0m,\r\n  \u001b[34m\"hasSuggestions\"\u001b[0m: \u001b[33mtrue\u001b[0m\r\n}\r\n"
+  - delay: 2500
+    content: "\r\n\u001b[1;31m  ^ Agent AVOIDED the mistake. No 15-min debug session.\u001b[0m\r\n"
+  - delay: 2000
+    content: "\r\n\u001b[1;33m--- Evolution: cluster → abstract → principles ---\u001b[0m\r\n"
+  - delay: 500
+    content: "\u001b[32m$\u001b[0m curl -s -X POST localhost:8082/api/evolve | jq .\r\n"
+  - delay: 1000
+    content: "{\r\n  \u001b[34m\"promoted\"\u001b[0m: \u001b[33m2\u001b[0m,\r\n  \u001b[34m\"abstracted\"\u001b[0m: \u001b[33m1\u001b[0m,\r\n  \u001b[34m\"demoted\"\u001b[0m: \u001b[33m0\u001b[0m,\r\n  \u001b[34m\"archived\"\u001b[0m: \u001b[33m3\u001b[0m,\r\n  \u001b[34m\"success\"\u001b[0m: \u001b[33mtrue\u001b[0m\r\n}\r\n"
+  - delay: 1500
+    content: "\r\n\u001b[1;32m  3 specific entries → 1 general principle\u001b[0m\r\n  \u001b[1;32m  Memory shrinks. Capability grows.\u001b[0m\r\n"
+  - delay: 2000
+    content: "\r\n\u001b[1;33m--- Stats ---\u001b[0m\r\n"
+  - delay: 500
+    content: "\u001b[32m$\u001b[0m node tools/exp-stats.js --since 30d\r\n"
+  - delay: 800
+    content: "\r\n  Suggestions fired:  47\r\n  Hit rate:           68%\r\n  Mistakes avoided:   12\r\n  Principles:          5\r\n  Learning velocity:  +3 entries/week\r\n"
+  - delay: 2500
+    content: "\r\n\u001b[1;36m  Zero dependencies. Works offline. MIT license.\u001b[0m\r\n  \u001b[1;36m  github.com/muonroi/experience-engine\u001b[0m\r\n"
+  - delay: 3000
+    content: ""
