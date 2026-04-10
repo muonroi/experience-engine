@@ -1375,6 +1375,15 @@ if [ "$HEALTH_FAIL" -eq 0 ]; then
   echo " Works in ANY project — no per-project setup needed."
   echo " Reconfigure: run setup.sh again and choose [2] Reconfigure."
   echo ""
+  echo " ── Experience Hook Awareness ──"
+  echo ""
+  echo " Add this to your CLAUDE.md / GEMINI.md / agent instructions:"
+  echo ""
+  echo "   ## Experience Engine Hooks"
+  echo "   PreToolUse hooks inject experience-based warnings before Edit/Write/Bash."
+  echo "   Follow high-confidence warnings. If a warning is wrong or noisy,"
+  echo "   tell the user immediately — noise degrades ALL agents."
+  echo ""
 else
   echo "  $HEALTH_FAIL check(s) failed. Fix the issues above, then re-run setup.sh."
 fi
