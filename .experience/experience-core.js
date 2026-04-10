@@ -521,11 +521,13 @@ function detectMistakes(transcript) {
 
 // --- Brain fallback chain (Wave 1) ---
 const BRAIN_FNS = {
-  ollama:   brainOllama,
-  openai:   brainOpenAI,
-  gemini:   brainGemini,
-  claude:   brainClaude,
-  deepseek: brainDeepSeek,
+  ollama:      brainOllama,
+  openai:      brainOpenAI,
+  gemini:      brainGemini,
+  claude:      brainClaude,
+  deepseek:    brainDeepSeek,
+  siliconflow: brainOpenAI,   // OpenAI-compatible API
+  custom:      brainOpenAI,   // OpenAI-compatible API
 };
 
 // Fallback config: primary provider → fallback provider
