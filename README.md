@@ -15,7 +15,7 @@
     <img alt="Works Offline" src="https://img.shields.io/badge/works-offline-blue">
     <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-yellow">
     <img alt="Node.js 20+" src="https://img.shields.io/badge/node-20%2B-green">
-    <img alt="Tests" src="https://img.shields.io/badge/tests-49%20passing-brightgreen">
+    <img alt="Tests" src="https://img.shields.io/badge/tests-119%20passing-brightgreen">
   </p>
 </p>
 
@@ -121,11 +121,13 @@ bash .experience/setup.sh --vps     # VPS Qdrant via SSH tunnel
 YOU write code with any AI agent
   │
   ├─ BEFORE every Edit/Write/Bash
-  │   └─ Hook queries brain: "Have I seen this mistake before?"
+  │   └─ Layer 1: Read-only skip — ls, git log, cat etc. bypass instantly (0ms, $0)
+  │   └─ Layer 2: Semantic search — "Have I seen this mistake before?"
   │   └─ Detects language from file being edited (.ts → TypeScript, .cs → C#)
   │   └─ Ranks results by quality: hit count, recency, confidence, domain match
   │   └─ Follows 1-hop graph edges to surface related experiences
-  │   └─ If match → injects warning: "⚠️ Last time this caused X"
+  │   └─ Layer 3: Brain relevance filter — asks LLM "is this warning relevant HERE?"
+  │   └─ If relevant → injects warning: "⚠️ Last time this caused X"
   │
   └─ AFTER every session
       └─ Extracts lessons from mistakes (retry loops, user corrections, test failures)
@@ -222,6 +224,7 @@ node server.js
 | `GET` | `/api/user` | Current user identity |
 | `POST` | `/api/principles/share` | Export principle as portable JSON |
 | `POST` | `/api/principles/import` | Import shared principle |
+| `POST` | `/api/feedback` | Report if suggestion was followed/ignored |
 
 Zero dependencies — uses Node.js built-in `http` module. CORS enabled for browser extensions.
 
@@ -310,9 +313,23 @@ Don't wait months for organic learning. Seed from existing rules:
 node tools/experience-bulk-seed.js --memory-dir ~/.claude/projects/*/memory
 ```
 
-## Anti-Noise Scoring
+## Anti-Noise: Hybrid 3-Layer Filter
 
-Not all experiences are equal. The engine ranks by:
+Noise kills value. The engine uses three layers to ensure only relevant warnings surface:
+
+**Layer 1 — Read-only skip (regex, 0ms, $0)**
+
+Commands that never mutate code are skipped entirely — no embedding, no search, no cost:
+
+```
+ls, cat, head, tail, wc, find, grep, diff, tree, stat, ...
+git log, git status, git diff, git show, git branch, ...
+docker ps, docker logs, docker inspect, npm list, ...
+```
+
+Chained commands (`&&`, `||`, `;`) skip only if ALL parts are read-only.
+
+**Layer 2 — Quality scoring (semantic search + rerank)**
 
 - **Hit frequency** — confirmed experiences rank higher
 - **Recency** — recently confirmed > stale
@@ -321,6 +338,26 @@ Not all experiences are equal. The engine ranks by:
 - **Domain match** — `.ts` file → TypeScript experiences rank higher
 - **Temporal decay** — no confirmation in 60+ days → penalty
 - **Superseded penalty** — replaced knowledge ranks lower
+- **Project penalty** — cross-project suggestions penalized -0.30
+- **Session dedup** — same warning never shown twice per session
+- **Session budget** — max 8 unique warnings per session
+
+**Layer 3 — Brain relevance filter (LLM, ~1 token output, fail-open)**
+
+After scoring produces suggestions, the brain checks: *"Is this warning relevant to THIS specific action?"*
+
+```
+Input:  ACTION: Edit Startup.cs — services.AddSingleton<DbContext>()
+        1. Stateful objects must be scoped, never singleton
+        2. Always use IMLog, never ILogger
+        3. Never modify ePort consumer code
+
+Output: 1        (only warning #1 is relevant to this action)
+```
+
+Cost: ~200 input tokens + 1 output token per call. $0 with Ollama, ~$0.00004 with SiliconFlow.
+Fail-open: if brain is unavailable or slow (>3s), all suggestions pass through.
+Configurable: set `brainFilter: false` in `~/.experience/config.json` to disable.
 
 ## Supported Providers
 
@@ -338,22 +375,24 @@ Not all experiences are equal. The engine ranks by:
 
 ```
 .experience/
-  experience-core.js    — brain (1236 LOC, zero deps)
+  experience-core.js    — engine (1709 LOC, zero deps)
   stop-extractor.js     — session extraction + evolution trigger
   setup.sh              — guided setup wizard
 
-server.js               — REST API (270 LOC, zero deps)
+server.js               — REST API (282 LOC, zero deps)
 
 sdk/
   python/               — Python SDK (pip install muonroi-experience)
 
 tools/
   exp-stats.js          — observability CLI
+  exp-demote.js         — interactive demote/delete CLI
+  exp-gates.js          — v3.0 gate status checker
   experience-bulk-seed.js — bootstrap from existing rules
-  test-server.js        — 49 integration tests
+  test-server.js        — 49 API integration tests
   test-activity-log.js  — activity logging tests
-  test-scoring.js       — anti-noise scoring tests
-  test-context.js       — context-aware query tests
+  test-scoring.js       — 41 anti-noise scoring tests
+  test-context.js       — 29 context-aware query tests
   test-exp-stats.js     — observability CLI tests
 ```
 
