@@ -62,35 +62,73 @@ const DEDUP_THRESHOLD = 0.85;
 const RELATES_TO_THRESHOLD = 0.70;
 const QUERY_MAX_CHARS = 500;
 
-// --- Ignore tracking: consecutive suggestion detection (NOISE-04) ---
-const _suggestionHistory = []; // Array of { id, collection, suggestedAt }
-const MAX_SUGGESTION_HISTORY = 50;
+// --- Session-persistent tracking (file-based, survives process restarts) ---
+// Each hook invocation is a NEW process, so in-memory arrays are useless.
+// Use a temp file keyed by PPID (parent process = the agent session).
 
+const SESSION_TRACK_DIR = require('path').join(require('os').tmpdir(), 'experience-session');
+const MAX_SESSION_UNIQUE = 8; // P2: max unique experiences surfaced per session
+
+function getSessionTrackFile() {
+  try { fs.mkdirSync(SESSION_TRACK_DIR, { recursive: true }); } catch {}
+  // Use PPID to group by agent session; fallback to daily bucket
+  const sessionKey = process.ppid || 'default';
+  return pathMod.join(SESSION_TRACK_DIR, `session-${sessionKey}.json`);
+}
+
+function readSessionTrack() {
+  try {
+    const raw = fs.readFileSync(getSessionTrackFile(), 'utf8');
+    const data = JSON.parse(raw);
+    // Expire after 2 hours (session likely ended)
+    if (Date.now() - (data.startedAt || 0) > 2 * 60 * 60 * 1000) return { startedAt: Date.now(), seen: {}, counts: {} };
+    return data;
+  } catch {
+    return { startedAt: Date.now(), seen: {}, counts: {} };
+  }
+}
+
+function writeSessionTrack(track) {
+  try { fs.writeFileSync(getSessionTrackFile(), JSON.stringify(track)); } catch {}
+}
+
+/**
+ * Track surfaced suggestions in persistent session file.
+ * Returns: { filtered: ids to skip (already shown), flagged: ids with 3+ repeats }
+ */
 function trackSuggestions(surfacedPoints) {
+  const track = readSessionTrack();
   const flagged = [];
+  const filtered = [];
+
   for (const sp of surfacedPoints) {
-    _suggestionHistory.push({ id: sp.id, collection: sp.collection, suggestedAt: Date.now() });
-  }
-  // Trim to max size
-  while (_suggestionHistory.length > MAX_SUGGESTION_HISTORY) {
-    _suggestionHistory.shift();
-  }
-  // Check each surfaced point for 3+ consecutive appearances at the tail
-  for (const sp of surfacedPoints) {
-    let consecutive = 0;
-    // Walk backwards from end of history
-    for (let i = _suggestionHistory.length - 1; i >= 0; i--) {
-      if (_suggestionHistory[i].id === sp.id) {
-        consecutive++;
-      } else {
-        break; // streak broken
-      }
+    const key = sp.id;
+    track.counts[key] = (track.counts[key] || 0) + 1;
+
+    // NOISE-04: flag for ignore-count increment after 3+ repeats
+    if (track.counts[key] >= 3) {
+      flagged.push({ id: sp.id, collection: sp.collection, consecutive: track.counts[key] });
     }
-    if (consecutive >= 3) {
-      flagged.push({ id: sp.id, collection: sp.collection, consecutive });
+
+    // P4: Dedup — skip if already shown in this session
+    if (track.seen[key]) {
+      filtered.push(sp);
+      continue;
     }
+    track.seen[key] = Date.now();
   }
-  return { flagged };
+
+  writeSessionTrack(track);
+  return { flagged, filtered };
+}
+
+/**
+ * P2: Check if session budget is exhausted (max unique experiences).
+ * Returns number of unique experiences already shown.
+ */
+function sessionUniqueCount() {
+  const track = readSessionTrack();
+  return Object.keys(track.seen).length;
 }
 
 function incrementIgnoreCountData(data) {
@@ -191,6 +229,32 @@ function extractProjectPath(toolInput) {
   return raw.replace(/\\/g, '/');
 }
 
+/**
+ * Extract a project slug from a file path for project-aware filtering.
+ * Detects common patterns: /sources/{org}/{project}/, /repos/{project}/, etc.
+ * Returns lowercase slug or null.
+ */
+function extractProjectSlug(filePath) {
+  if (!filePath) return null;
+  const normalized = filePath.replace(/\\/g, '/');
+  // Match: /sources/{org}/{project}/ or /repos/{project}/ or /projects/{project}/
+  const patterns = [
+    /\/sources\/[^/]+\/([^/]+)/i,
+    /\/repos\/([^/]+)/i,
+    /\/projects\/([^/]+)/i,
+    /\/workspace\/([^/]+)/i,
+    /\/home\/[^/]+\/([^/]+)/i,
+  ];
+  for (const pat of patterns) {
+    const m = normalized.match(pat);
+    if (m) return m[1].toLowerCase();
+  }
+  // Fallback: use first 2 meaningful path segments
+  const parts = normalized.split('/').filter(p => p && p !== '.' && p !== '..');
+  if (parts.length >= 2) return parts.slice(0, 2).join('/').toLowerCase();
+  return null;
+}
+
 function fileStorePath(collection) {
   return pathMod.join(FILESTORE_DIR, `${collection}.json`);
 }
@@ -241,9 +305,18 @@ function fileStoreUpsert(collection, id, vector, payload) {
 // --- Intercept: query experience before tool call ---
 
 async function interceptWithMeta(toolName, toolInput, signal) {
+  // P2: Session budget cap — stop surfacing after N unique experiences
+  const uniquesSoFar = sessionUniqueCount();
+  if (uniquesSoFar >= MAX_SESSION_UNIQUE) {
+    activityLog({ op: 'intercept', query: '(budget-capped)', scores: [], result: null, project: extractProjectPath(toolInput) });
+    return { suggestions: null, surfacedIds: [] };
+  }
+
   const query = buildQuery(toolName, toolInput);
   const filePath = toolInput?.file_path || toolInput?.path || '';
   const queryDomain = detectContext(filePath);
+  // P0: Extract project slug for cross-project penalty
+  const queryProjectSlug = extractProjectSlug(filePath);
   const vector = await getEmbedding(query, signal);
   if (!vector) return null;
 
@@ -254,9 +327,9 @@ async function interceptWithMeta(toolName, toolInput, signal) {
   ]);
 
   // Rerank by quality score before formatting (Phase 103, 104)
-  const r0 = rerankByQuality(t0, queryDomain);
-  const r1 = rerankByQuality(t1, queryDomain);
-  const r2 = rerankByQuality(t2, queryDomain);
+  const r0 = rerankByQuality(t0, queryDomain, queryProjectSlug);
+  const r1 = rerankByQuality(t1, queryDomain, queryProjectSlug);
+  const r2 = rerankByQuality(t2, queryDomain, queryProjectSlug);
 
   const lines = [
     ...applyBudget(formatPoints(r0), COLLECTIONS[0].budgetChars),
@@ -304,10 +377,27 @@ async function interceptWithMeta(toolName, toolInput, signal) {
     Promise.all(surfaced.map(p => recordHit(p._collection, p.id))).catch(() => {});
   }
 
-  // Track suggestions for ignore detection (NOISE-04)
+  // Track suggestions: session dedup + ignore detection (NOISE-04, P4)
   const surfacedMeta = surfaced.map(p => ({ collection: p._collection, id: p.id }));
   if (surfacedMeta.length > 0) {
-    const { flagged } = trackSuggestions(surfacedMeta);
+    const { flagged, filtered } = trackSuggestions(surfacedMeta);
+    // P4: Remove already-shown suggestions from output
+    if (filtered.length > 0) {
+      const filteredIds = new Set(filtered.map(f => f.id));
+      // Remove lines corresponding to filtered points
+      for (let i = lines.length - 1; i >= 0; i--) {
+        // Match by checking if any filtered point's solution is in the line
+        for (const fp of filtered) {
+          try {
+            const exp = JSON.parse(surfaced.find(s => s.id === fp.id)?.payload?.json || '{}');
+            if (exp.solution && lines[i]?.includes(exp.solution)) {
+              lines.splice(i, 1);
+              break;
+            }
+          } catch {}
+        }
+      }
+    }
     if (flagged.length > 0) {
       Promise.all(flagged.map(f => incrementIgnoreCount(f.collection, f.id))).catch(() => {});
     }
@@ -661,7 +751,7 @@ async function isDuplicate(qa) {
 
 // --- Store ---
 
-function buildStorePayload(id, qa, domain) {
+function buildStorePayload(id, qa, domain, projectSlug) {
   // Wave 2: Tag natural language for cross-lingual matching
   const naturalLang = detectNaturalLang(`${qa.trigger} ${qa.solution}`);
   return {
@@ -671,6 +761,7 @@ function buildStorePayload(id, qa, domain) {
     lastHitAt: null, ignoreCount: 0,
     confirmedAt: [],  // Phase 108: temporal trace
     domain: domain || null,
+    _projectSlug: projectSlug || null, // P0: project-aware filtering
     naturalLang,
     createdAt: new Date().toISOString(), createdFrom: 'session-extractor',
   };
@@ -835,7 +926,7 @@ function computeEffectiveConfidence(data) {
   return base * ageFactor;
 }
 
-function computeEffectiveScore(point, data, queryDomain) {
+function computeEffectiveScore(point, data, queryDomain, queryProjectSlug) {
   const cosine = point.score || 0;
   const hitBoost = Math.log2(1 + (data.hitCount || 0)) * 0.08;
   const daysSinceHit = data.lastHitAt
@@ -845,8 +936,14 @@ function computeEffectiveScore(point, data, queryDomain) {
     ? Math.min(0.15, (daysSinceHit - 30) / 335 * 0.15)
     : 0;
   const ignorePenalty = Math.min(0.30, (data.ignoreCount || 0) * 0.05);
-  const domainPenalty = (queryDomain && data.domain && queryDomain !== data.domain) ? 0.08
-    : (queryDomain && !data.domain) ? 0.03 : 0;
+  // P3: Heavier domain penalty (was 0.08/0.03, now 0.20/0.05)
+  const domainPenalty = (queryDomain && data.domain && queryDomain !== data.domain) ? 0.20
+    : (queryDomain && !data.domain) ? 0.05 : 0;
+  // P0: Project-aware penalty — cross-project suggestions heavily penalized
+  let projectPenalty = 0;
+  if (queryProjectSlug && data._projectSlug) {
+    if (queryProjectSlug !== data._projectSlug) projectPenalty = 0.30;
+  }
   // Phase 108: temporal boost/penalty from confirmedAt trace
   let temporalAdj = 0;
   const confirmed = Array.isArray(data.confirmedAt) ? data.confirmedAt : [];
@@ -860,16 +957,16 @@ function computeEffectiveScore(point, data, queryDomain) {
   const supersededPenalty = data.superseded ? 0.15 : 0;
   // Wave 3: Confidence weighting — low-confidence entries rank lower
   const confWeight = computeEffectiveConfidence(data);
-  const rawScore = cosine + hitBoost - recencyPenalty - ignorePenalty - domainPenalty + temporalAdj - supersededPenalty;
+  const rawScore = cosine + hitBoost - recencyPenalty - ignorePenalty - domainPenalty - projectPenalty + temporalAdj - supersededPenalty;
   return rawScore * (0.6 + 0.4 * confWeight); // scale: 0.6 floor to avoid zeroing out
 }
 
-function rerankByQuality(points, queryDomain) {
+function rerankByQuality(points, queryDomain, queryProjectSlug) {
   return points
     .map(p => {
       let data = {};
       try { data = JSON.parse(p.payload?.json || '{}'); } catch { /* default */ }
-      return { ...p, _effectiveScore: computeEffectiveScore(p, data, queryDomain) };
+      return { ...p, _effectiveScore: computeEffectiveScore(p, data, queryDomain, queryProjectSlug) };
     })
     .sort((a, b) => b._effectiveScore - a._effectiveScore);
 }
@@ -1432,4 +1529,4 @@ async function getEmbeddingRaw(text, signal) {
 
 // --- Exports ---
 
-module.exports = { intercept, interceptWithMeta, recordFeedback, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa, null), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _suggestionHistory, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback };
+module.exports = { intercept, interceptWithMeta, recordFeedback, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa, null), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback };
