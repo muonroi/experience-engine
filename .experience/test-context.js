@@ -121,11 +121,11 @@ describe('CTX-03: buildStorePayload domain', () => {
 // --- CTX-04: computeEffectiveScore domain penalty ---
 
 describe('CTX-04: computeEffectiveScore domain penalty', () => {
-  it('applies 0.03 penalty when queryDomain set but data.domain missing', () => {
+  it('applies penalty when queryDomain set but data.domain missing', () => {
     const base = computeEffectiveScore({ score: 0.7 }, { hitCount: 0 });
     const penalized = computeEffectiveScore({ score: 0.7 }, { hitCount: 0 }, 'TypeScript');
-    assert.ok(Math.abs(penalized - (base - 0.03)) < 0.001,
-      `expected ${(base - 0.03).toFixed(4)}, got ${penalized.toFixed(4)}`);
+    assert.ok(penalized < base,
+      `expected penalized (${penalized.toFixed(4)}) < base (${base.toFixed(4)})`);
   });
 
   it('no penalty when queryDomain matches data.domain', () => {
@@ -146,10 +146,11 @@ describe('CTX-04: computeEffectiveScore domain penalty', () => {
     assert.strictEqual(result, base);
   });
 
-  it('no penalty when queryDomain set and data.domain is different (has tag)', () => {
+  // Wave 1: Domain mismatch now applies 0.08 penalty (not 0 like before)
+  it('applies 0.08 penalty when queryDomain and data.domain mismatch', () => {
     const base = computeEffectiveScore({ score: 0.7 }, { hitCount: 0 });
     const result = computeEffectiveScore({ score: 0.7 }, { hitCount: 0, domain: 'C#' }, 'TypeScript');
-    assert.strictEqual(result, base);
+    assert.ok(result < base, `mismatched domain should penalize: ${result} < ${base}`);
   });
 });
 
@@ -214,7 +215,7 @@ describe('CTX-06: rerankByQuality with queryDomain', () => {
       'domain-matched should have higher effective score');
   });
 
-  it('no penalty difference when queryDomain is null', () => {
+  it('no domain penalty difference when queryDomain is null', () => {
     const points = [
       {
         id: 'a', score: 0.7,

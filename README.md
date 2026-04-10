@@ -366,11 +366,50 @@ tools/
 - Engine is open source — you pay for convenience, not capability
 - No "enterprise clone" mode — profiles belong to individuals, not companies
 
+## Platform Notes
+
+### Codex CLI on Windows
+
+Codex CLI **disables hooks on Windows** ([docs](https://developers.openai.com/codex/hooks)). The workaround is to run Codex from WSL:
+
+```bash
+# 1. Open WSL Ubuntu
+wsl -d Ubuntu
+
+# 2. Run setup (Node.js 20+ required in WSL)
+cd /mnt/c/path/to/experience-engine
+bash .experience/setup.sh
+
+# 3. If your Qdrant runs via SSH tunnel on Windows, the tunnel
+#    won't be accessible from WSL. Setup will detect this and
+#    start a tunnel inside WSL automatically.
+
+# 4. Run Codex from WSL
+cd /mnt/c/your/project && codex
+```
+
+`setup.sh` handles all WSL-specific wiring automatically:
+- Detects WSL environment
+- Creates `~/.codex/hooks.json` (not `config.json` — Codex uses separate hooks file)
+- Enables hooks via `~/.codex/config.toml` (`codex_hooks = true`)
+- Starts SSH tunnel inside WSL if needed (Windows tunnel not reachable from WSL2)
+- Symlinks `~/.experience` to Windows files so all agents share the same brain
+
+### Agent Hook Comparison
+
+| Agent | Windows | macOS/Linux | WSL | Hook visibility |
+|-------|---------|-------------|-----|-----------------|
+| Claude Code | Hooks work | Hooks work | N/A | Visible in output |
+| Gemini CLI | Hooks work | Hooks work | N/A | Silent (injected into context) |
+| Codex CLI | **Hooks disabled** | Hooks work | **Hooks work** | Silent (injected into context) |
+| OpenCode | Hooks work | Hooks work | N/A | Silent (injected into context) |
+
 ## Requirements
 
 - Node.js 20+
 - One of: Docker, Qdrant Cloud (free), or VPS with Qdrant
 - One of: Ollama (free), or API key for any supported provider
+- **Codex CLI on Windows:** WSL with Ubuntu (hooks disabled on native Windows)
 
 ## License
 
