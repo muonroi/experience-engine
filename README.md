@@ -16,6 +16,7 @@
     <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-yellow">
     <img alt="Node.js 20+" src="https://img.shields.io/badge/node-20%2B-green">
     <img alt="Tests" src="https://img.shields.io/badge/tests-187%20passing-brightgreen">
+    <img alt="E2E" src="https://img.shields.io/badge/E2E-12%2F12%20verified-brightgreen">
   </p>
 </p>
 
@@ -433,7 +434,10 @@ tools/
   test-scoring.js       — 41 anti-noise scoring tests
   test-context.js       — 29 context-aware query tests
   test-exp-stats.js     — observability CLI tests
+  test-model-router.js  — 44 model router tests (9 suites)
 ```
+
+**E2E verified: 2026-04-10 — 12/12 tests pass (T1-T12 including Qdrant feedback, PostToolUse outcome hook, session dedup + budget cap, exp-stats route metrics)**
 
 ## Philosophy
 
