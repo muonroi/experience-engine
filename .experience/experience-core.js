@@ -240,7 +240,7 @@ function fileStoreUpsert(collection, id, vector, payload) {
 
 // --- Intercept: query experience before tool call ---
 
-async function intercept(toolName, toolInput, signal) {
+async function interceptWithMeta(toolName, toolInput, signal) {
   const query = buildQuery(toolName, toolInput);
   const filePath = toolInput?.file_path || toolInput?.path || '';
   const queryDomain = detectContext(filePath);
@@ -315,7 +315,14 @@ async function intercept(toolName, toolInput, signal) {
 
   activityLog({ op: 'intercept', query: query.slice(0, 120), scores: [...r0, ...r1, ...r2].map(p => p._effectiveScore ?? p.score).sort((a, b) => b - a).slice(0, 3), result: lines.length > 0 ? 'suggestion' : null, project: extractProjectPath(toolInput) });
 
-  return lines.length > 0 ? lines.join('\n---\n') : null;
+  return { suggestions: lines.length > 0 ? lines.join('\n---\n') : null, surfacedIds: surfacedMeta };
+}
+
+// --- intercept: backward-compatible wrapper returning string|null ---
+
+async function intercept(toolName, toolInput, signal) {
+  const result = await interceptWithMeta(toolName, toolInput, signal);
+  return result ? result.suggestions : null;
 }
 
 // --- Extract: detect mistakes and store lessons ---
@@ -944,6 +951,77 @@ async function recordHit(collection, pointId) {
   } catch { /* silent */ }
 }
 
+// --- recordFeedback: explicit agent feedback on surfaced suggestions ---
+
+async function recordFeedback(collection, pointId, followed) {
+  if (followed === true) {
+    // Same logic as recordHit: increment hitCount, reset ignoreCount, append confirmedAt
+    if (!(await checkQdrant())) {
+      const entries = fileStoreRead(collection);
+      const entry = entries.find(e => e.id === pointId);
+      if (entry && entry.payload?.json) {
+        const data = JSON.parse(entry.payload.json);
+        applyHitUpdate(data);
+        entry.payload.json = JSON.stringify(data);
+        fileStoreWrite(collection, entries);
+      }
+    } else {
+      try {
+        const res = await fetch(`${QDRANT_BASE}/collections/${collection}/points/${pointId}`, {
+          headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+          signal: AbortSignal.timeout(5000),
+        });
+        if (res.ok) {
+          const point = (await res.json()).result;
+          if (point?.payload?.json) {
+            const data = JSON.parse(point.payload.json);
+            applyHitUpdate(data);
+            await fetch(`${QDRANT_BASE}/collections/${collection}/points/payload`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+              body: JSON.stringify({ points: [pointId], payload: { json: JSON.stringify(data) } }),
+              signal: AbortSignal.timeout(5000),
+            });
+          }
+        }
+      } catch { /* silent */ }
+    }
+  } else {
+    // followed === false: only increment ignoreCount (do NOT reset it unlike recordHit)
+    if (!(await checkQdrant())) {
+      const entries = fileStoreRead(collection);
+      const entry = entries.find(e => e.id === pointId);
+      if (entry && entry.payload?.json) {
+        const data = JSON.parse(entry.payload.json);
+        incrementIgnoreCountData(data);
+        entry.payload.json = JSON.stringify(data);
+        fileStoreWrite(collection, entries);
+      }
+    } else {
+      try {
+        const res = await fetch(`${QDRANT_BASE}/collections/${collection}/points/${pointId}`, {
+          headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+          signal: AbortSignal.timeout(5000),
+        });
+        if (res.ok) {
+          const point = (await res.json()).result;
+          if (point?.payload?.json) {
+            const data = JSON.parse(point.payload.json);
+            incrementIgnoreCountData(data);
+            await fetch(`${QDRANT_BASE}/collections/${collection}/points/payload`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+              body: JSON.stringify({ points: [pointId], payload: { json: JSON.stringify(data) } }),
+              signal: AbortSignal.timeout(5000),
+            });
+          }
+        }
+      } catch { /* silent */ }
+    }
+  }
+  activityLog({ op: 'feedback', collection, pointId: pointId.slice(0, 8), followed });
+}
+
 // --- syncToQdrant: migrate FileStore data to Qdrant (per D-17) ---
 
 async function syncToQdrant() {
@@ -1335,4 +1413,4 @@ async function getEmbeddingRaw(text, signal) {
 
 // --- Exports ---
 
-module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa, null), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _suggestionHistory, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback };
+module.exports = { intercept, interceptWithMeta, recordFeedback, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa, null), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _suggestionHistory, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback };
