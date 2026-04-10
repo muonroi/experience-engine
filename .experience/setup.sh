@@ -30,7 +30,8 @@ Usage: bash setup.sh [OPTIONS]
 
 Options:
   --help, -h     Show this help message
-  --local        Shortcut: local Docker Qdrant + Ollama
+  --docker       Docker Compose quick start (recommended — one command)
+  --local        Shortcut: local Docker Qdrant + Ollama (manual Node.js setup)
   --vps          Shortcut: VPS Qdrant via SSH tunnel
 
 Non-interactive mode (CI/scripts):
@@ -59,6 +60,100 @@ Non-interactive mode (CI/scripts):
 Reconfigure:
   Run setup.sh again and choose [2] Reconfigure.
 HELP
+  exit 0
+fi
+
+# ── Step 0.5: --docker flag ─────────────────────────────────────────────────
+if [[ "$1" == "--docker" ]]; then
+  echo ""
+  echo "  Docker Compose Quick Start"
+  echo "  ─────────────────────────────"
+  echo ""
+
+  # Check Docker
+  if ! command -v docker &>/dev/null; then
+    echo "  [FAIL] Docker not found. Install from https://docker.com"
+    exit 1
+  fi
+  if ! docker info &>/dev/null; then
+    echo "  [FAIL] Docker daemon not running. Start Docker Desktop first."
+    exit 1
+  fi
+
+  # Find docker-compose.yml relative to this script
+  COMPOSE_FILE="$SRC_DIR/../docker-compose.yml"
+  if [ ! -f "$COMPOSE_FILE" ]; then
+    # Try repo root
+    COMPOSE_FILE="$(cd "$SRC_DIR/.." && pwd)/docker-compose.yml"
+  fi
+  if [ ! -f "$COMPOSE_FILE" ]; then
+    echo "  [FAIL] docker-compose.yml not found."
+    echo "  Run from the experience-engine repo root:"
+    echo "    docker compose up -d"
+    exit 1
+  fi
+
+  COMPOSE_DIR="$(dirname "$COMPOSE_FILE")"
+  echo "  Starting Qdrant + Ollama + Experience Engine..."
+  echo ""
+  cd "$COMPOSE_DIR" && docker compose up -d
+  RESULT=$?
+
+  if [ $RESULT -eq 0 ]; then
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo " ✓ Experience Engine running!"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "  API:     http://localhost:8082"
+    echo "  Health:  http://localhost:8082/health"
+    echo "  Qdrant:  http://localhost:6333/dashboard"
+    echo ""
+    echo "  Test:    curl http://localhost:8082/health"
+    echo "  Logs:    docker compose logs -f"
+    echo "  Stop:    docker compose down"
+    echo ""
+    echo "  Note: Ollama is pulling models in background (~2GB)."
+    echo "  Intercept may return empty results until models are ready."
+    echo "  Check: docker compose logs ollama-init"
+    echo ""
+
+    # Wire agent hooks to point to Docker API
+    echo "  Wire agent hooks? (hooks call localhost:8082 instead of local brain)"
+    echo ""
+    read -p "  Wire Claude Code hooks? [Y/n] " WIRE_CLAUDE
+    if [[ "$WIRE_CLAUDE" != "n" && "$WIRE_CLAUDE" != "N" ]]; then
+      # Copy hook files to ~/.experience/ so hooks can find them
+      mkdir -p "$HOME/.experience"
+      cp "$SRC_DIR/experience-core.js" "$HOME/.experience/" 2>/dev/null
+      cp "$SRC_DIR/stop-extractor.js" "$HOME/.experience/" 2>/dev/null
+
+      # Write config pointing to Docker services
+      cat > "$HOME/.experience/config.json" <<DOCKERCFG
+{
+  "qdrantUrl": "http://localhost:6333",
+  "ollamaUrl": "http://localhost:11434",
+  "embedProvider": "ollama",
+  "brainProvider": "ollama",
+  "embedModel": "nomic-embed-text",
+  "brainModel": "qwen2.5:3b",
+  "minConfidence": 0.42,
+  "highConfidence": 0.60
+}
+DOCKERCFG
+      echo "  ✓ Config written to ~/.experience/config.json"
+      echo "  ✓ Hooks installed to ~/.experience/"
+      echo ""
+      echo "  Add to your Claude Code settings.json (hooks section):"
+      echo '    "PreToolUse": [{"matcher":"Edit|Write|Bash","hooks":[{"type":"command","command":"node ~/.experience/experience-core.js","timeout":3}]}]'
+      echo ""
+    fi
+  else
+    echo ""
+    echo "  [FAIL] Docker Compose failed. Check: docker compose logs"
+    exit 1
+  fi
+
   exit 0
 fi
 

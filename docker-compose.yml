@@ -22,10 +22,11 @@ services:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1"]
-      interval: 10s
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333' 2>/dev/null || exit 1"]
+      interval: 5s
       timeout: 3s
       start_period: 10s
+      retries: 10
 
   ollama:
     image: ollama/ollama:latest
@@ -35,10 +36,11 @@ services:
       - ollama_data:/root/.ollama
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/version || exit 1"]
-      interval: 10s
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/11434' 2>/dev/null || exit 1"]
+      interval: 5s
       timeout: 3s
-      start_period: 15s
+      start_period: 20s
+      retries: 10
 
   # Pull required models after Ollama starts
   ollama-init:
