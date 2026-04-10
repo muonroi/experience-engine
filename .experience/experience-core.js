@@ -1271,6 +1271,23 @@ async function evolve(trigger) {
     }
   }
 
+  // Step 4b: TTL cleanup for bulk-seeded T1 entries (60-day expiry if no organic confirmation)
+  const SIXTY_DAYS = 60 * 24 * 60 * 60 * 1000;
+  const t1All = await getAllEntries('experience-behavioral');
+  for (const entry of t1All) {
+    const data = parsePayload(entry);
+    if (!data || data.createdFrom !== 'bulk-seed') continue;
+    const age = now - new Date(data.createdAt || 0).getTime();
+    if (age <= SIXTY_DAYS) continue;
+    // No organic confirmations = confirmedAt is empty or missing
+    const hasOrganic = Array.isArray(data.confirmedAt) && data.confirmedAt.length > 0;
+    if (!hasOrganic) {
+      await deleteEntry('experience-behavioral', entry.id);
+      results.archived++;
+      activityLog({ op: 'evolve-seed-ttl', id: entry.id.slice(0, 8), age: Math.round(age / (24 * 60 * 60 * 1000)) });
+    }
+  }
+
   activityLog({ op: 'evolve', ...results, trigger: trigger || 'auto' });
 
   return results;
