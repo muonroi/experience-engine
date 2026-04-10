@@ -1124,16 +1124,19 @@ else
 fi
 
 INTERCEPTOR_PATH="$INSTALL_DIR/interceptor.js"
+INTERCEPTOR_POST_PATH="$INSTALL_DIR/interceptor-post.js"
 STOP_PATH="$INSTALL_DIR/stop-extractor.js"
 
 # Convert to forward slashes for Node.js on Windows
 INTERCEPTOR_FWD=$(echo "$INTERCEPTOR_PATH" | sed 's|\\|/|g' | sed 's|^/\([a-zA-Z]\)/|\1:/|')
+INTERCEPTOR_POST_FWD=$(echo "$INTERCEPTOR_POST_PATH" | sed 's|\\|/|g' | sed 's|^/\([a-zA-Z]\)/|\1:/|')
 STOP_FWD=$(echo "$STOP_PATH" | sed 's|\\|/|g' | sed 's|^/\([a-zA-Z]\)/|\1:/|')
 
-EXP_SELECTED_AGENTS="$SELECTED_AGENTS" EXP_INTERCEPTOR="$INTERCEPTOR_FWD" EXP_STOP="$STOP_FWD" node << 'JSEOF'
+EXP_SELECTED_AGENTS="$SELECTED_AGENTS" EXP_INTERCEPTOR="$INTERCEPTOR_FWD" EXP_INTERCEPTOR_POST="$INTERCEPTOR_POST_FWD" EXP_STOP="$STOP_FWD" node << 'JSEOF'
 const fs = require('fs'), path = require('path'), os = require('os');
 const home = os.homedir();
 const interceptor = process.env.EXP_INTERCEPTOR;
+const interceptorPost = process.env.EXP_INTERCEPTOR_POST;
 const stop = process.env.EXP_STOP;
 const selected = (process.env.EXP_SELECTED_AGENTS || '').split(',').map(s => s.trim().toLowerCase());
 
@@ -1147,6 +1150,10 @@ const AGENTS = [
       cfg.hooks.PreToolUse = cfg.hooks.PreToolUse || [];
       if (!cfg.hooks.PreToolUse.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor')))) {
         cfg.hooks.PreToolUse.unshift({ matcher: 'Edit|Write|Bash', hooks: [{ type:'command', command:`node "${interceptor}"`, timeout:5 }] });
+      }
+      cfg.hooks.PostToolUse = cfg.hooks.PostToolUse || [];
+      if (!cfg.hooks.PostToolUse.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor-post')))) {
+        cfg.hooks.PostToolUse.push({ matcher: 'Edit|Write|Bash', hooks: [{ type:'command', command:`node "${interceptorPost}"`, timeout:5 }] });
       }
       cfg.hooks.Stop = cfg.hooks.Stop || [];
       if (!cfg.hooks.Stop.some(h => (h.hooks||[]).some(e => e.command?.includes('stop-extractor')))) {
@@ -1241,6 +1248,58 @@ for (const agent of AGENTS) {
   }
 }
 JSEOF
+
+# ── Auto-inject Experience Engine instruction block into agent MD files ──
+echo ""
+echo "  Injecting Experience Engine instructions into agent config files..."
+
+EXP_INSTRUCTION_BLOCK='<!-- experience-engine:start -->
+## Experience Engine Hooks
+
+PreToolUse hooks inject experience-based warnings (`⚠️ [Experience]` / `💡 [Suggestion]`) before Edit/Write/Bash calls. Each warning includes a `Why:` line and ends with `[id:xxxx col:name]`.
+
+- **Follow** high-confidence warnings — they reflect confirmed patterns.
+- **If a warning is wrong or noisy** — tell the user immediately. Noise degrades ALL agents.
+- **When you IGNORE a hint**, report it: `curl -s -X POST http://localhost:8082/api/feedback -H "Content-Type: application/json" -d '\''{"pointId":"xxxx","collection":"col-name","followed":false}'\''` (use the short ID from `[id:xxxx]`).
+- Do NOT silently ignore repeated bad suggestions — feedback is critical for the engine to learn.
+<!-- experience-engine:end -->'
+
+# Inject into each MD file if the block doesn't already exist
+for MD_FILE in \
+  "$HOME/.claude/CLAUDE.md" \
+  "$HOME/.gemini/GEMINI.md" \
+  "$HOME/.codex/AGENTS.md" \
+  "$HOME/.config/opencode/AGENTS.md"; do
+
+  # Only inject if the parent directory exists (agent is installed)
+  MD_DIR=$(dirname "$MD_FILE")
+  if [ ! -d "$MD_DIR" ]; then
+    continue
+  fi
+
+  # Create file if it doesn't exist
+  if [ ! -f "$MD_FILE" ]; then
+    echo "$EXP_INSTRUCTION_BLOCK" > "$MD_FILE"
+    echo "  Created: $MD_FILE"
+    continue
+  fi
+
+  # Skip if already injected
+  if grep -q 'experience-engine:start' "$MD_FILE" 2>/dev/null; then
+    # Replace existing block with updated version
+    TMPFILE=$(mktemp)
+    awk '/<!-- experience-engine:start -->/{skip=1} /<!-- experience-engine:end -->/{skip=0; next} !skip' "$MD_FILE" > "$TMPFILE"
+    echo "$EXP_INSTRUCTION_BLOCK" >> "$TMPFILE"
+    mv "$TMPFILE" "$MD_FILE"
+    echo "  Updated: $MD_FILE"
+    continue
+  fi
+
+  # Append to existing file
+  echo "" >> "$MD_FILE"
+  echo "$EXP_INSTRUCTION_BLOCK" >> "$MD_FILE"
+  echo "  Injected: $MD_FILE"
+done
 
 # ── Step C execution: optional seed ───────────────────────────────────────
 if [ "$DO_SEED" = "true" ] && [ -n "$SEED_DIR" ]; then
@@ -1377,12 +1436,10 @@ if [ "$HEALTH_FAIL" -eq 0 ]; then
   echo ""
   echo " ── Experience Hook Awareness ──"
   echo ""
-  echo " Add this to your CLAUDE.md / GEMINI.md / agent instructions:"
+  echo " Agent instruction blocks auto-injected into:"
+  echo "   CLAUDE.md, GEMINI.md, AGENTS.md (where present)"
   echo ""
-  echo "   ## Experience Engine Hooks"
-  echo "   PreToolUse hooks inject experience-based warnings before Edit/Write/Bash."
-  echo "   Follow high-confidence warnings. If a warning is wrong or noisy,"
-  echo "   tell the user immediately — noise degrades ALL agents."
+  echo " Hooks installed: PreToolUse (intercept) + PostToolUse (feedback) + Stop (extract)"
   echo ""
 else
   echo "  $HEALTH_FAIL check(s) failed. Fix the issues above, then re-run setup.sh."
