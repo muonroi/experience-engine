@@ -353,7 +353,25 @@ function fileStoreUpsert(collection, id, vector, payload) {
 
 // --- Intercept: query experience before tool call ---
 
+// P5: Read-only command detection — fast-path skip, no embedding/search cost
+const READ_ONLY_CMD = /^(ls|dir|cat|head|tail|wc|file|stat|find|tree|which|where|echo|printf|pwd|whoami|hostname|date|uptime|type|less|more|sort|uniq|tee|realpath|basename|dirname|env|printenv|id|groups|df|du|free|top|htop|lsof|ps|pgrep|mount|uname)\b|^git\s+(log|status|diff|show|branch|tag|remote|stash\s+list|describe|rev-parse|config\s+--get|shortlog|blame|reflog|ls-files|ls-tree|name-rev|cherry)\b|^(grep|rg|ag|ack)\b|^diff\b|^(npm|yarn|pnpm)\s+(list|ls|info|view|outdated|audit|why)\b|^(dotnet)\s+(--list-sdks|--list-runtimes|--info)\b|^(docker|podman)\s+(ps|images|inspect|logs|stats|top|port|volume\s+ls|network\s+ls)\b/;
+
+function isReadOnlyCommand(toolName, toolInput) {
+  const tool = (toolName || '').toLowerCase();
+  if (tool !== 'bash' && tool !== 'shell' && tool !== 'execute_command') return false;
+  const cmd = (toolInput?.command || toolInput?.cmd || '').trim();
+  // Multi-command chains: only skip if ALL parts are read-only
+  // Split on && and || and ; — if any part is NOT read-only, treat whole thing as mutating
+  const parts = cmd.split(/\s*(?:&&|\|\||;)\s*/);
+  return parts.every(p => READ_ONLY_CMD.test(p.trim()));
+}
+
 async function interceptWithMeta(toolName, toolInput, signal) {
+  // P5: Skip read-only commands — no code mutation = no risk = no warning needed
+  if (isReadOnlyCommand(toolName, toolInput)) {
+    return { suggestions: null, surfacedIds: [] };
+  }
+
   // P2: Session budget cap — stop surfacing after N unique experiences
   const uniquesSoFar = sessionUniqueCount();
   if (uniquesSoFar >= MAX_SESSION_UNIQUE) {
@@ -450,6 +468,19 @@ async function interceptWithMeta(toolName, toolInput, signal) {
     if (flagged.length > 0) {
       Promise.all(flagged.map(f => incrementIgnoreCount(f.collection, f.id))).catch(() => {});
     }
+  }
+
+  // P6: Brain relevance filter — ask brain if remaining suggestions are relevant to THIS action
+  if (lines.length > 0 && _cfg.brainFilter !== false) {
+    try {
+      const kept = await brainRelevanceFilter(query, lines, signal);
+      if (kept !== null) {
+        const removed = lines.length - kept.length;
+        lines.length = 0;
+        lines.push(...kept);
+        if (removed > 0) activityLog({ op: 'brain-filter', removed, kept: kept.length });
+      }
+    } catch { /* never block intercept on brain filter failure */ }
   }
 
   activityLog({ op: 'intercept', query: query.slice(0, 120), scores: [...r0, ...r1, ...r2].map(p => p._effectiveScore ?? p.score).sort((a, b) => b - a).slice(0, 3), result: lines.length > 0 ? 'suggestion' : null, project: extractProjectPath(toolInput) });
@@ -686,6 +717,75 @@ async function callBrainWithFallback(prompt) {
     activityLog({ op: 'brain-failure', provider: BRAIN_FALLBACK, phase: 'fallback' });
   }
   return null;
+}
+
+// P6: Brain relevance filter — lightweight brain call to check if suggestions match the action
+// Input: the action query + numbered warnings. Output: which numbers are relevant.
+// Timeout: 3s (tight — fail-open if brain is slow). Cost: ~80 tokens input, ~5 tokens output.
+async function brainRelevanceFilter(actionQuery, suggestionLines, signal) {
+  if (!suggestionLines || suggestionLines.length === 0) return null;
+
+  // Extract just the warning text (strip emoji/score prefix for cleaner prompt)
+  const warnings = suggestionLines.map((line, i) => {
+    const clean = line.replace(/^[⚠️💡]\s*\[.*?\]:\s*/, '');
+    return `${i + 1}. ${clean}`;
+  });
+
+  const prompt = `You are a relevance filter. An AI coding agent is about to perform this action:
+
+ACTION: ${actionQuery.slice(0, 300)}
+
+These warnings were retrieved from past experience:
+${warnings.join('\n')}
+
+Which warnings could help prevent a mistake in THIS SPECIFIC action?
+Rules:
+- A warning is relevant ONLY if the action could actually trigger the mistake the warning describes
+- Generic advice that doesn't match the specific action is NOT relevant
+- "ls", "git log", "cat" commands reading files NEVER need warnings about code patterns
+
+Reply with ONLY the relevant warning numbers separated by commas (e.g. "1,3"), or "none" if none are relevant.`;
+
+  // Use a dedicated fast brain call with short timeout
+  try {
+    const brainFn = BRAIN_FNS[BRAIN_PROVIDER] || BRAIN_FNS.ollama;
+    let response;
+
+    // Direct call with tight timeout — bypass callBrainWithFallback to avoid JSON parsing
+    if (BRAIN_PROVIDER === 'ollama') {
+      const res = await fetch(OLLAMA_GENERATE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: BRAIN_MODEL, prompt, stream: false, options: { temperature: 0.1, num_predict: 20 } }),
+        signal: signal || AbortSignal.timeout(3000),
+      });
+      if (!res.ok) return null;
+      response = (await res.json()).response || '';
+    } else {
+      // OpenAI-compatible / Gemini / Claude — use chat endpoint
+      const endpoint = BRAIN_ENDPOINT || 'https://api.openai.com/v1/chat/completions';
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${BRAIN_KEY}` },
+        body: JSON.stringify({ model: BRAIN_MODEL, messages: [{ role: 'user', content: prompt }], temperature: 0.1, max_tokens: 20 }),
+        signal: signal || AbortSignal.timeout(3000),
+      });
+      if (!res.ok) return null;
+      response = (await res.json()).choices?.[0]?.message?.content || '';
+    }
+
+    const text = response.trim().toLowerCase();
+    if (text === 'none' || text === '0' || text === '') return [];
+
+    // Parse comma-separated numbers
+    const nums = text.match(/\d+/g);
+    if (!nums) return null; // unparseable — fail-open
+    const validIndices = nums.map(n => parseInt(n, 10) - 1).filter(i => i >= 0 && i < suggestionLines.length);
+    if (validIndices.length === 0) return [];
+    return validIndices.map(i => suggestionLines[i]);
+  } catch {
+    return null; // timeout or error — fail-open, show all suggestions
+  }
 }
 
 async function extractQA(mistake) {
@@ -1606,4 +1706,4 @@ migrateQdrantUserTags().catch(() => {});
 
 // --- Exports ---
 
-module.exports = { intercept, interceptWithMeta, recordFeedback, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa, null), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback };
+module.exports = { intercept, interceptWithMeta, recordFeedback, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa, null), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter };
