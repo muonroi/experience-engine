@@ -961,11 +961,57 @@ EOF
       echo "  Auto-start: macOS LaunchAgent"
       ;;
     Linux*)
-      SERVICE="$HOME/.config/systemd/user/experience-engine-tunnel.service"
-      mkdir -p "$(dirname "$SERVICE")"
-      printf "[Unit]\nDescription=Experience Engine Tunnel\nAfter=network.target\n[Service]\nExecStart=%s\nRestart=always\n[Install]\nWantedBy=default.target\n" "$TUNNEL_SSH" > "$SERVICE"
-      systemctl --user daemon-reload && systemctl --user enable --now experience-engine-tunnel.service 2>/dev/null
-      echo "  Auto-start: systemd service"
+      # Detect WSL: Windows SSH tunnel on localhost is NOT reachable from WSL2
+      IS_WSL=false
+      if grep -qi microsoft /proc/version 2>/dev/null; then
+        IS_WSL=true
+      fi
+
+      if [ "$IS_WSL" = "true" ]; then
+        # WSL: Copy SSH key with correct permissions if needed
+        WIN_KEY=$(echo "$TUNNEL_SSH" | grep -oP '(?<=-i )\S+')
+        if [ -n "$WIN_KEY" ] && [[ "$WIN_KEY" == /mnt/* ]]; then
+          WSL_KEY="$HOME/.ssh/$(basename "$WIN_KEY")"
+          if [ ! -f "$WSL_KEY" ] || [ "$(stat -c %a "$WSL_KEY" 2>/dev/null)" != "600" ]; then
+            mkdir -p "$HOME/.ssh"
+            cp "$WIN_KEY" "$WSL_KEY"
+            chmod 600 "$WSL_KEY"
+            echo "  Copied SSH key to WSL: $WSL_KEY (chmod 600)"
+          fi
+          # Rewrite tunnel command with WSL key path
+          TUNNEL_SSH=$(echo "$TUNNEL_SSH" | sed "s|$WIN_KEY|$WSL_KEY|g")
+        fi
+
+        # WSL: Add tunnel auto-start to .bashrc (idempotent)
+        if ! grep -q "experience-engine-tunnel" "$HOME/.bashrc" 2>/dev/null; then
+          cat >> "$HOME/.bashrc" << BASHEOF
+
+# Experience Engine SSH tunnel auto-start (WSL)
+pgrep -f "ssh.*$(echo "$TUNNEL_SSH" | grep -oP '\d+:localhost:\d+')" >/dev/null 2>&1 || $TUNNEL_SSH 2>/dev/null
+BASHEOF
+          echo "  Auto-start: WSL .bashrc (runs on each shell open)"
+        else
+          echo "  Auto-start: already in .bashrc"
+        fi
+
+        # WSL: Symlink ~/.experience to Windows files (shared brain)
+        WIN_EXP="/mnt/c/Users/$(whoami 2>/dev/null || echo $USER)/.experience"
+        if [ -d "$WIN_EXP" ] && [ ! -L "$HOME/.experience" ]; then
+          if [ -d "$HOME/.experience" ] && [ ! -L "$HOME/.experience" ]; then
+            echo "  ~/.experience exists as directory — skipping symlink"
+          else
+            ln -sf "$WIN_EXP" "$HOME/.experience"
+            echo "  Symlinked ~/.experience → $WIN_EXP (shared with Windows agents)"
+          fi
+        fi
+      else
+        # Native Linux: systemd service
+        SERVICE="$HOME/.config/systemd/user/experience-engine-tunnel.service"
+        mkdir -p "$(dirname "$SERVICE")"
+        printf "[Unit]\nDescription=Experience Engine Tunnel\nAfter=network.target\n[Service]\nExecStart=%s\nRestart=always\n[Install]\nWantedBy=default.target\n" "$TUNNEL_SSH" > "$SERVICE"
+        systemctl --user daemon-reload && systemctl --user enable --now experience-engine-tunnel.service 2>/dev/null
+        echo "  Auto-start: systemd service"
+      fi
       ;;
   esac
 else
@@ -1127,8 +1173,9 @@ const AGENTS = [
   {
     key: 'codex',
     name: 'Codex CLI',
-    file: path.join(home, '.codex', 'config.json'),
+    file: path.join(home, '.codex', 'hooks.json'),
     patch(cfg) {
+      // Codex CLI uses hooks.json (not config.json) + config.toml to enable hooks
       if (!cfg.hooks) cfg.hooks = {};
       cfg.hooks.PreToolUse = cfg.hooks.PreToolUse || [];
       if (!cfg.hooks.PreToolUse.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor')))) {
@@ -1137,6 +1184,26 @@ const AGENTS = [
       cfg.hooks.Stop = cfg.hooks.Stop || [];
       if (!cfg.hooks.Stop.some(h => (h.hooks||[]).some(e => e.command?.includes('stop-extractor')))) {
         cfg.hooks.Stop.push({ hooks:[{ type:'command', command:`node "${stop}"`, timeout:90 }] });
+      }
+      // Enable hooks feature in config.toml
+      const tomlPath = path.join(home, '.codex', 'config.toml');
+      try {
+        let toml = '';
+        try { toml = fs.readFileSync(tomlPath, 'utf8'); } catch {}
+        if (!toml.includes('codex_hooks')) {
+          toml += (toml && !toml.endsWith('\n') ? '\n' : '') + '[features]\ncodex_hooks = true\n';
+          fs.writeFileSync(tomlPath, toml);
+        }
+      } catch {}
+      // Platform warning: hooks disabled on native Windows
+      const isWindows = process.platform === 'win32';
+      const isWSL = fs.existsSync('/proc/version') && (fs.readFileSync('/proc/version','utf8').toLowerCase().includes('microsoft'));
+      if (isWindows) {
+        console.log('    ⚠ Codex hooks are disabled on native Windows.');
+        console.log('    → Run Codex from WSL instead: wsl -d Ubuntu');
+        console.log('    → Re-run setup.sh inside WSL to wire hooks.');
+      } else if (isWSL) {
+        console.log('    ✓ WSL detected — hooks will work from WSL Codex');
       }
     }
   },
@@ -1307,6 +1374,15 @@ if [ "$HEALTH_FAIL" -eq 0 ]; then
   echo ""
   echo " Works in ANY project — no per-project setup needed."
   echo " Reconfigure: run setup.sh again and choose [2] Reconfigure."
+  echo ""
+  echo " ── Experience Hook Awareness ──"
+  echo ""
+  echo " Add this to your CLAUDE.md / GEMINI.md / agent instructions:"
+  echo ""
+  echo "   ## Experience Engine Hooks"
+  echo "   PreToolUse hooks inject experience-based warnings before Edit/Write/Bash."
+  echo "   Follow high-confidence warnings. If a warning is wrong or noisy,"
+  echo "   tell the user immediately — noise degrades ALL agents."
   echo ""
 else
   echo "  $HEALTH_FAIL check(s) failed. Fix the issues above, then re-run setup.sh."

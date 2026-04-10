@@ -388,6 +388,15 @@ function detectContext(filePath) {
   return LANG_MAP[ext] || null;
 }
 
+// Wave 2: Natural language detection for cross-lingual matching
+function detectNaturalLang(text) {
+  if (!text) return 'en';
+  // Vietnamese detection: Latin diacritics + combining marks + Vietnamese-specific block
+  const viPattern = /[\u00C0-\u00FF\u0100-\u024F\u0300-\u036F\u1EA0-\u1EFF]/g;
+  const viCount = (text.match(viPattern) || []).length;
+  return viCount >= 2 ? 'vi' : 'en';
+}
+
 // --- Query construction ---
 
 function buildQuery(toolName, toolInput) {
@@ -503,17 +512,37 @@ function detectMistakes(transcript) {
 
 // --- Brain extraction ---
 
+// --- Brain fallback chain (Wave 1) ---
+const BRAIN_FNS = {
+  ollama:   brainOllama,
+  openai:   brainOpenAI,
+  gemini:   brainGemini,
+  claude:   brainClaude,
+  deepseek: brainDeepSeek,
+};
+
+// Fallback config: primary provider → fallback provider
+const BRAIN_FALLBACK = _cfg.brainFallback || process.env.EXPERIENCE_BRAIN_FALLBACK || (BRAIN_PROVIDER === 'ollama' ? '' : 'ollama');
+
+async function callBrainWithFallback(prompt) {
+  const primary = BRAIN_FNS[BRAIN_PROVIDER] || BRAIN_FNS.ollama;
+  let result = await primary(prompt);
+  if (result) return result;
+  activityLog({ op: 'brain-failure', provider: BRAIN_PROVIDER, phase: 'primary' });
+  if (BRAIN_FALLBACK && BRAIN_FNS[BRAIN_FALLBACK]) {
+    result = await BRAIN_FNS[BRAIN_FALLBACK](prompt);
+    if (result) {
+      activityLog({ op: 'brain-fallback', provider: BRAIN_FALLBACK });
+      return result;
+    }
+    activityLog({ op: 'brain-failure', provider: BRAIN_FALLBACK, phase: 'fallback' });
+  }
+  return null;
+}
+
 async function extractQA(mistake) {
   const prompt = `Given this session excerpt where something went wrong:\n${mistake.excerpt.slice(0, 1500)}\n\nExtract in JSON (no markdown):\n{"trigger":"one line","question":"one line","reasoning":["step1","step2"],"solution":"one line"}`;
-  const brains = {
-    ollama:   brainOllama,
-    openai:   brainOpenAI,
-    gemini:   brainGemini,
-    claude:   brainClaude,
-    deepseek: brainDeepSeek,
-  };
-  const fn = brains[BRAIN_PROVIDER] || brains.ollama;
-  return fn(prompt);
+  return callBrainWithFallback(prompt);
 }
 
 async function brainOllama(prompt) {
@@ -624,6 +653,8 @@ async function isDuplicate(qa) {
 // --- Store ---
 
 function buildStorePayload(id, qa, domain) {
+  // Wave 2: Tag natural language for cross-lingual matching
+  const naturalLang = detectNaturalLang(`${qa.trigger} ${qa.solution}`);
   return {
     id, trigger: qa.trigger, question: qa.question,
     reasoning: qa.reasoning || [], solution: qa.solution,
@@ -631,6 +662,7 @@ function buildStorePayload(id, qa, domain) {
     lastHitAt: null, ignoreCount: 0,
     confirmedAt: [],  // Phase 108: temporal trace
     domain: domain || null,
+    naturalLang,
     createdAt: new Date().toISOString(), createdFrom: 'session-extractor',
   };
 }
@@ -796,15 +828,16 @@ function computeEffectiveConfidence(data) {
 
 function computeEffectiveScore(point, data, queryDomain) {
   const cosine = point.score || 0;
-  const hitBoost = Math.log2(1 + (data.hitCount || 0)) * 0.05;
+  const hitBoost = Math.log2(1 + (data.hitCount || 0)) * 0.08;
   const daysSinceHit = data.lastHitAt
     ? (Date.now() - new Date(data.lastHitAt).getTime()) / 86400000
     : 0;
   const recencyPenalty = daysSinceHit > 30
     ? Math.min(0.15, (daysSinceHit - 30) / 335 * 0.15)
     : 0;
-  const ignorePenalty = (data.ignoreCount || 0) >= 3 ? 0.10 : 0;
-  const domainPenalty = (queryDomain && !data.domain) ? 0.03 : 0;
+  const ignorePenalty = Math.min(0.30, (data.ignoreCount || 0) * 0.05);
+  const domainPenalty = (queryDomain && data.domain && queryDomain !== data.domain) ? 0.08
+    : (queryDomain && !data.domain) ? 0.03 : 0;
   // Phase 108: temporal boost/penalty from confirmedAt trace
   let temporalAdj = 0;
   const confirmed = Array.isArray(data.confirmedAt) ? data.confirmedAt : [];
@@ -816,7 +849,10 @@ function computeEffectiveScore(point, data, queryDomain) {
   }
   // Phase 108: superseded experience penalty
   const supersededPenalty = data.superseded ? 0.15 : 0;
-  return cosine + hitBoost - recencyPenalty - ignorePenalty - domainPenalty + temporalAdj - supersededPenalty;
+  // Wave 3: Confidence weighting — low-confidence entries rank lower
+  const confWeight = computeEffectiveConfidence(data);
+  const rawScore = cosine + hitBoost - recencyPenalty - ignorePenalty - domainPenalty + temporalAdj - supersededPenalty;
+  return rawScore * (0.6 + 0.4 * confWeight); // scale: 0.6 floor to avoid zeroing out
 }
 
 function rerankByQuality(points, queryDomain) {
@@ -1008,6 +1044,9 @@ async function evolve(trigger) {
   for (const entry of t2Entries) {
     const data = parsePayload(entry);
     if (!data || (data.hitCount || 0) < 3) continue;
+    // Wave 1: Minimum 7-day age before promotion — prevent rapid-fire poisoning
+    const ageMs = Date.now() - new Date(data.createdAt || 0).getTime();
+    if (ageMs < 7 * 24 * 60 * 60 * 1000) continue;
     data.tier = 1;
     data.promotedAt = new Date().toISOString();
     const vector = entry.vector || await getEmbedding(`${data.trigger} ${data.solution}`);
@@ -1015,6 +1054,23 @@ async function evolve(trigger) {
     await upsertEntry('experience-behavioral', entry.id, vector, data);
     await deleteEntry('experience-selfqa', entry.id);
     results.promoted++;
+  }
+
+  // Step 1b: Promote probationary principles T1 -> T0 (Wave 1: principle probation)
+  // Principles created by abstraction start at T1; promote to T0 after 3 confirmed hits
+  const t1PrincipleEntries = await getAllEntries('experience-behavioral');
+  for (const entry of t1PrincipleEntries) {
+    const data = parsePayload(entry);
+    if (!data || data.createdFrom !== 'evolution-abstraction') continue;
+    if ((data.hitCount || 0) >= 3) {
+      data.tier = 0;
+      data.promotedToT0At = new Date().toISOString();
+      const vector = entry.vector || await getEmbedding(`${data.principle || data.solution}`);
+      if (!vector) continue;
+      await upsertEntry('experience-principles', entry.id, vector, data);
+      await deleteEntry('experience-behavioral', entry.id);
+      results.promoted++;
+    }
   }
 
   // Step 2: Abstract T2 clusters -> T0 (per D-05)
@@ -1028,20 +1084,32 @@ async function evolve(trigger) {
       return d ? `${d.trigger}: ${d.solution}` : '';
     }).filter(Boolean);
 
-    const prompt = `Given these ${summaries.length} related experiences, extract ONE general principle covering all cases. Format as JSON: {"principle":"When [condition], always [action] because [reason]"}\n\n${summaries.join('\n')}`;
+    // Wave 3: Structured conditions[] — principle carries preconditions for constraint checking
+    const prompt = `Given these ${summaries.length} related experiences, extract ONE general principle covering all cases. Format as JSON: {"principle":"When [condition], always [action] because [reason]","conditions":["keyword1","keyword2","keyword3"]}\nConditions = 2-4 keywords that MUST be present for this principle to apply.\n\n${summaries.join('\n')}`;
 
-    const brains = { ollama: brainOllama, openai: brainOpenAI, gemini: brainGemini, claude: brainClaude, deepseek: brainDeepSeek };
-    const fn = brains[BRAIN_PROVIDER] || brains.ollama;
-    const result = await fn(prompt);
+    const result = await callBrainWithFallback(prompt);
     if (!result?.principle) continue;
 
     const vector = await getEmbedding(result.principle);
     if (!vector) continue;
 
+    // Wave 2: Round-trip validation — principle must match ≥60% of source cluster members
+    let matchCount = 0;
+    for (const e of cluster) {
+      if (!e.vector || e.vector.length !== vector.length) continue;
+      if (cosineSimilarity(vector, e.vector) >= 0.65) matchCount++;
+    }
+    if (matchCount / cluster.length < 0.6) {
+      activityLog({ op: 'evolve-reject', reason: 'round-trip-fail', matchRate: matchCount / cluster.length, principle: result.principle.slice(0, 80) });
+      continue;
+    }
+
     const id = crypto.randomUUID();
-    await upsertEntry('experience-principles', id, vector, {
+    // Wave 1: Principle probation — start at T1 (behavioral), promote to T0 after 3 hits
+    await upsertEntry('experience-behavioral', id, vector, {
       id, principle: result.principle, solution: result.principle,
-      tier: 0, confidence: 0.85, hitCount: 0,
+      conditions: Array.isArray(result.conditions) ? result.conditions.slice(0, 4) : [],
+      tier: 1, confidence: Math.min(0.80, 0.50 + (cluster.length / 10) * 0.30), hitCount: 0,
       createdAt: new Date().toISOString(), createdFrom: 'evolution-abstraction',
       sourceCount: cluster.length,
     });
@@ -1056,6 +1124,28 @@ async function evolve(trigger) {
       await deleteEntry('experience-selfqa', e.id);
     }
     results.abstracted++;
+  }
+
+  // Step 2b: Demote T0 -> T2 on contradiction (Wave 2: principle rollback)
+  const t0Entries = await getAllEntries('experience-principles');
+  for (const entry of t0Entries) {
+    const data = parsePayload(entry);
+    if (!data) continue;
+    const shouldDemote = (data.ignoreCount || 0) >= 5
+      || (data.contradiction && (data.contradictionCount || 1) >= 2);
+    if (shouldDemote) {
+      data.tier = 2;
+      data.confidence = Math.max(0.1, (data.confidence || 0.5) - 0.3);
+      data.demotedFromT0At = new Date().toISOString();
+      data.demoteReason = data.contradiction ? 'contradiction' : 'ignored';
+      createEdge(entry.id, entry.id, 'contradicts', 0.8, 'evolve-t0-demotion');
+      const vector = entry.vector || await getEmbedding(`${data.principle || data.solution}`);
+      if (!vector) continue;
+      await upsertEntry('experience-selfqa', entry.id, vector, data);
+      await deleteEntry('experience-principles', entry.id);
+      results.demoted++;
+      activityLog({ op: 'evolve-t0-demote', id: entry.id.slice(0, 8), reason: data.demoteReason });
+    }
   }
 
   // Step 3: Demote T1 -> T2 (per D-06)
@@ -1115,7 +1205,7 @@ function parsePayload(entry) {
 }
 
 function clusterByCosine(entries, threshold) {
-  // Simple pairwise greedy clustering
+  // Greedy clustering with centroid outlier rejection (Wave 2)
   const used = new Set();
   const clusters = [];
   for (let i = 0; i < entries.length; i++) {
@@ -1129,7 +1219,19 @@ function clusterByCosine(entries, threshold) {
         used.add(j);
       }
     }
-    clusters.push(cluster);
+    // Wave 2: Centroid outlier rejection — compute centroid, reject members < 0.75 vs centroid
+    if (cluster.length >= 3) {
+      const dim = cluster[0].vector.length;
+      const centroid = new Array(dim).fill(0);
+      for (const e of cluster) {
+        for (let d = 0; d < dim; d++) centroid[d] += e.vector[d];
+      }
+      for (let d = 0; d < dim; d++) centroid[d] /= cluster.length;
+      const filtered = cluster.filter(e => cosineSimilarity(e.vector, centroid) >= 0.75);
+      clusters.push(filtered.length >= 3 ? filtered : cluster); // keep original if filtering drops below 3
+    } else {
+      clusters.push(cluster);
+    }
   }
   return clusters;
 }
@@ -1233,4 +1335,4 @@ async function getEmbeddingRaw(text, signal) {
 
 // --- Exports ---
 
-module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa, null), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _suggestionHistory, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain };
+module.exports = { intercept, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa, null), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _suggestionHistory, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback };

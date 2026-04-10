@@ -15,6 +15,7 @@ const {
   _trackSuggestions: trackSuggestions,
   _suggestionHistory: suggestionHistory,
   _incrementIgnoreCountData: incrementIgnoreCountData,
+  _detectNaturalLang: detectNaturalLang,
 } = require('./experience-core.js');
 
 // Helper: create a Qdrant-shaped point
@@ -28,6 +29,7 @@ function daysAgo(n) {
 }
 
 // --- NOISE-01: Hit-count boost ---
+// Wave 1: hitBoost now 0.08 multiplier, all scores scaled by confidence weight
 
 describe('NOISE-01: hitCount boost', () => {
   it('hitCount=10 scores higher than hitCount=0 at same cosine', () => {
@@ -36,16 +38,24 @@ describe('NOISE-01: hitCount boost', () => {
     assert.ok(scoreWith10 > scoreWith0, `expected ${scoreWith10} > ${scoreWith0}`);
   });
 
-  it('hitCount=0 gives zero boost', () => {
+  it('hitCount=0 gives only confidence-weighted base score', () => {
     const result = computeEffectiveScore({ score: 0.7 }, { hitCount: 0 });
-    assert.strictEqual(result, 0.7);
+    // rawScore = 0.7, confWeight = computeEffectiveConfidence({}) = 0.5*0.7 = 0.35
+    // final = 0.7 * (0.6 + 0.4 * 0.35) = 0.7 * 0.74 = 0.518
+    const confWeight = computeEffectiveConfidence({ hitCount: 0 });
+    const expected = 0.7 * (0.6 + 0.4 * confWeight);
+    assert.ok(Math.abs(result - expected) < 0.001,
+      `expected ~${expected.toFixed(4)}, got ${result.toFixed(4)}`);
   });
 
-  it('hitCount=10 gives ~0.17 boost via log2(11)*0.05', () => {
+  it('hitCount=10 boost is significant via log2(11)*0.08', () => {
     const result = computeEffectiveScore({ score: 0.7 }, { hitCount: 10 });
-    const expectedBoost = Math.log2(11) * 0.05;
-    assert.ok(Math.abs(result - (0.7 + expectedBoost)) < 0.001,
-      `expected ~${(0.7 + expectedBoost).toFixed(4)}, got ${result.toFixed(4)}`);
+    const rawBoost = Math.log2(11) * 0.08;
+    const rawScore = 0.7 + rawBoost;
+    const confWeight = computeEffectiveConfidence({ hitCount: 10 });
+    const expected = rawScore * (0.6 + 0.4 * confWeight);
+    assert.ok(Math.abs(result - expected) < 0.001,
+      `expected ~${expected.toFixed(4)}, got ${result.toFixed(4)}`);
   });
 });
 
@@ -70,10 +80,10 @@ describe('NOISE-02: recency decay', () => {
     assert.ok(old < recent, `expected 60-day-old (${old}) < recent (${recent})`);
   });
 
-  it('penalty capped at 0.15 for very old experiences (365+ days)', () => {
+  it('penalty capped at 0.15 raw for very old experiences (365+ days)', () => {
     const score365 = computeEffectiveScore({ score: 0.7 }, { hitCount: 0, lastHitAt: daysAgo(365) });
     const score730 = computeEffectiveScore({ score: 0.7 }, { hitCount: 0, lastHitAt: daysAgo(730) });
-    // Both should have max penalty of 0.15 -> score = 0.55
+    // Both should have same max raw penalty of 0.15, confidence weighting identical
     assert.ok(Math.abs(score365 - score730) < 0.001,
       `expected capped penalty: 365d=${score365.toFixed(4)}, 730d=${score730.toFixed(4)}`);
   });
@@ -115,24 +125,30 @@ describe('NOISE-03: confidence aging', () => {
 
 // --- NOISE-04: Ignore penalty ---
 
-describe('NOISE-04: ignore penalty', () => {
-  it('no penalty when ignoreCount < 3', () => {
+// Wave 1: Graduated ignore penalty — min(0.30, count * 0.05)
+describe('NOISE-04: graduated ignore penalty', () => {
+  it('no penalty when ignoreCount is 0', () => {
     const score0 = computeEffectiveScore({ score: 0.7 }, { ignoreCount: 0 });
-    const score2 = computeEffectiveScore({ score: 0.7 }, { ignoreCount: 2 });
-    assert.strictEqual(score0, score2);
+    const scoreNone = computeEffectiveScore({ score: 0.7 }, {});
+    assert.strictEqual(score0, scoreNone);
   });
 
-  it('applies 0.10 penalty when ignoreCount >= 3', () => {
+  it('ignoreCount=1 applies 0.05 raw penalty', () => {
     const scoreClean = computeEffectiveScore({ score: 0.7 }, { ignoreCount: 0 });
-    const scoreIgnored = computeEffectiveScore({ score: 0.7 }, { ignoreCount: 3 });
-    assert.ok(Math.abs(scoreClean - scoreIgnored - 0.10) < 0.001,
-      `expected 0.10 penalty, got ${(scoreClean - scoreIgnored).toFixed(4)}`);
+    const score1 = computeEffectiveScore({ score: 0.7 }, { ignoreCount: 1 });
+    assert.ok(score1 < scoreClean, 'ignore=1 should penalize');
   });
 
-  it('penalty same for ignoreCount=3 and ignoreCount=10', () => {
+  it('ignoreCount=3 applies more penalty than ignoreCount=1', () => {
+    const score1 = computeEffectiveScore({ score: 0.7 }, { ignoreCount: 1 });
     const score3 = computeEffectiveScore({ score: 0.7 }, { ignoreCount: 3 });
+    assert.ok(score3 < score1, `expected ${score3} < ${score1}`);
+  });
+
+  it('penalty capped at 0.30 raw for ignoreCount=6 and ignoreCount=10', () => {
+    const score6 = computeEffectiveScore({ score: 0.7 }, { ignoreCount: 6 });
     const score10 = computeEffectiveScore({ score: 0.7 }, { ignoreCount: 10 });
-    assert.strictEqual(score3, score10);
+    assert.strictEqual(score6, score10, 'penalty should cap at ignoreCount=6');
   });
 });
 
@@ -310,5 +326,64 @@ describe('incrementIgnoreCountData', () => {
     const data = {};
     incrementIgnoreCountData(data);
     assert.strictEqual(data.ignoreCount, 1);
+  });
+});
+
+// --- Wave 2: Natural language detection ---
+
+describe('Wave 2: detectNaturalLang', () => {
+  it('returns "vi" for Vietnamese text', () => {
+    assert.strictEqual(detectNaturalLang('Không nên dùng singleton cho DbContext'), 'vi');
+  });
+
+  it('returns "en" for English text', () => {
+    assert.strictEqual(detectNaturalLang('Do not use singleton for DbContext'), 'en');
+  });
+
+  it('returns "en" for empty string', () => {
+    assert.strictEqual(detectNaturalLang(''), 'en');
+  });
+
+  it('returns "en" for null', () => {
+    assert.strictEqual(detectNaturalLang(null), 'en');
+  });
+
+  it('returns "vi" for mixed text with enough Vietnamese chars', () => {
+    assert.strictEqual(detectNaturalLang('Lỗi khi dùng ILogger thay vì IMLog'), 'vi');
+  });
+});
+
+// --- Wave 2: storeExperience includes naturalLang ---
+
+describe('Wave 2: storeExperiencePayload naturalLang', () => {
+  it('includes naturalLang field', () => {
+    const payload = storeExperiencePayload({
+      trigger: 'test trigger', question: 'q', solution: 'test solution',
+    });
+    assert.ok('naturalLang' in payload, 'payload should have naturalLang field');
+    assert.strictEqual(payload.naturalLang, 'en');
+  });
+
+  it('detects Vietnamese in trigger/solution', () => {
+    const payload = storeExperiencePayload({
+      trigger: 'Khi gặp lỗi singleton', question: 'q', solution: 'Dùng scoped thay vì singleton',
+    });
+    assert.strictEqual(payload.naturalLang, 'vi');
+  });
+});
+
+// --- Wave 3: Confidence weighting in scoring ---
+
+describe('Wave 3: confidence weighting', () => {
+  it('high-confidence entry scores higher than low-confidence at same cosine', () => {
+    const highConf = computeEffectiveScore({ score: 0.7 }, { hitCount: 5, confidence: 0.9 });
+    const lowConf = computeEffectiveScore({ score: 0.7 }, { hitCount: 5, confidence: 0.3 });
+    assert.ok(highConf > lowConf, `expected ${highConf} > ${lowConf}`);
+  });
+
+  it('score never drops below 60% of raw score (floor)', () => {
+    // Worst case: confidence=0, hitCount=0 → confWeight=0, scale=0.6
+    const result = computeEffectiveScore({ score: 0.7 }, { hitCount: 0, confidence: 0 });
+    assert.ok(result >= 0.7 * 0.6 * 0.99, `expected >= ${0.7 * 0.6}, got ${result}`);
   });
 });
