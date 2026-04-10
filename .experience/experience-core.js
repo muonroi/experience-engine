@@ -64,15 +64,20 @@ const QUERY_MAX_CHARS = 500;
 
 // --- Session-persistent tracking (file-based, survives process restarts) ---
 // Each hook invocation is a NEW process, so in-memory arrays are useless.
-// Use a temp file keyed by PPID (parent process = the agent session).
+// Key by date + CWD hash — PPID is unreliable on Windows (changes every hook call).
 
 const SESSION_TRACK_DIR = require('path').join(require('os').tmpdir(), 'experience-session');
 const MAX_SESSION_UNIQUE = 8; // P2: max unique experiences surfaced per session
 
 function getSessionTrackFile() {
   try { fs.mkdirSync(SESSION_TRACK_DIR, { recursive: true }); } catch {}
-  // Use PPID to group by agent session; fallback to daily bucket
-  const sessionKey = process.ppid || 'default';
+  // Stable session key: YYYYMMDD + CWD hash (same day + same project = same session)
+  // This groups all hook calls from the same agent workspace into one tracking file.
+  const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const cwd = process.cwd() || '';
+  let hash = 0;
+  for (let i = 0; i < cwd.length; i++) { hash = ((hash << 5) - hash + cwd.charCodeAt(i)) | 0; }
+  const sessionKey = `${today}-${(hash >>> 0).toString(36)}`;
   return pathMod.join(SESSION_TRACK_DIR, `session-${sessionKey}.json`);
 }
 
