@@ -18,7 +18,7 @@ SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo " Experience Engine v3.2 — Setup Wizard"
+echo " Experience Engine v1.0 — Setup Wizard"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo " Install dir: $INSTALL_DIR"
 echo ""
