@@ -13,7 +13,7 @@ const {
   _storeExperiencePayload: storeExperiencePayload,
   _recordHitUpdatesFields: recordHitUpdatesFields,
   _trackSuggestions: trackSuggestions,
-  _suggestionHistory: suggestionHistory,
+  _sessionUniqueCount: sessionUniqueCount,
   _incrementIgnoreCountData: incrementIgnoreCountData,
   _detectNaturalLang: detectNaturalLang,
 } = require('./experience-core.js');
@@ -273,45 +273,48 @@ describe('recordHit field updates', () => {
 
 // --- Task 2: Ignore tracking ---
 
-describe('trackSuggestions ignore detection', () => {
-  it('increments ignoreCount when point suggested 3+ consecutive times', () => {
-    // Clear history
-    suggestionHistory.length = 0;
-    const data = { hitCount: 0, ignoreCount: 0 };
-    // Simulate 3 consecutive suggestions of the same point
+describe('trackSuggestions session-persistent tracking', () => {
+  // Clean session track file before each test
+  const fs = require('fs');
+  const trackDir = require('path').join(require('os').tmpdir(), 'experience-session');
+  function cleanTrack() {
+    try {
+      const files = fs.readdirSync(trackDir);
+      for (const f of files) { if (f.startsWith('session-')) fs.unlinkSync(require('path').join(trackDir, f)); }
+    } catch {}
+  }
+
+  it('flags point after 3+ total suggestions in session', () => {
+    cleanTrack();
     trackSuggestions([{ collection: 'test-coll', id: 'pt-1' }]);
     trackSuggestions([{ collection: 'test-coll', id: 'pt-1' }]);
     const result = trackSuggestions([{ collection: 'test-coll', id: 'pt-1' }]);
-    // After 3 suggestions, pt-1 should be flagged
-    assert.ok(result.flagged.length > 0, 'should flag point after 3 consecutive suggestions');
+    assert.ok(result.flagged.length > 0, 'should flag point after 3 suggestions');
     assert.strictEqual(result.flagged[0].id, 'pt-1');
   });
 
   it('does NOT flag point suggested fewer than 3 times', () => {
-    suggestionHistory.length = 0;
+    cleanTrack();
     trackSuggestions([{ collection: 'test-coll', id: 'pt-2' }]);
     const result = trackSuggestions([{ collection: 'test-coll', id: 'pt-2' }]);
     assert.strictEqual(result.flagged.length, 0, 'should not flag after only 2 suggestions');
   });
 
-  it('suggestion history is bounded to MAX_SUGGESTION_HISTORY', () => {
-    suggestionHistory.length = 0;
-    // Push 60 entries (exceeds max of 50)
-    for (let i = 0; i < 60; i++) {
-      trackSuggestions([{ collection: 'test-coll', id: `pt-${i}` }]);
-    }
-    assert.ok(suggestionHistory.length <= 50, `history should be bounded, got ${suggestionHistory.length}`);
+  it('filters already-seen points (session dedup)', () => {
+    cleanTrack();
+    const r1 = trackSuggestions([{ collection: 'test-coll', id: 'pt-3' }]);
+    assert.strictEqual(r1.filtered.length, 0, 'first time should not filter');
+    const r2 = trackSuggestions([{ collection: 'test-coll', id: 'pt-3' }]);
+    assert.strictEqual(r2.filtered.length, 1, 'second time should filter as already-seen');
+    assert.strictEqual(r2.filtered[0].id, 'pt-3');
   });
 
-  it('resets consecutive count when different point is suggested', () => {
-    suggestionHistory.length = 0;
-    trackSuggestions([{ collection: 'test-coll', id: 'pt-a' }]);
-    trackSuggestions([{ collection: 'test-coll', id: 'pt-a' }]);
-    trackSuggestions([{ collection: 'test-coll', id: 'pt-b' }]); // different point breaks streak
-    const result = trackSuggestions([{ collection: 'test-coll', id: 'pt-a' }]);
-    // pt-a was suggested 3 times total but not 3 consecutive (pt-b in between)
-    // The last 3 entries are: pt-a, pt-b, pt-a — only 1 consecutive for pt-a
-    assert.strictEqual(result.flagged.length, 0, 'non-consecutive suggestions should not flag');
+  it('tracks unique count across calls', () => {
+    cleanTrack();
+    trackSuggestions([{ collection: 'test-coll', id: 'unique-1' }]);
+    trackSuggestions([{ collection: 'test-coll', id: 'unique-2' }]);
+    trackSuggestions([{ collection: 'test-coll', id: 'unique-1' }]); // repeat
+    assert.strictEqual(sessionUniqueCount(), 2, 'should count 2 unique experiences');
   });
 });
 

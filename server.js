@@ -21,7 +21,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { intercept, extractFromSession, evolve, getEdgesForId, getEmbeddingRaw, sharePrinciple, importPrinciple, EXP_USER } = require('./.experience/experience-core');
+const { intercept, extractFromSession, evolve, getEdgesForId, getEmbeddingRaw, sharePrinciple, importPrinciple, EXP_USER, recordFeedback } = require('./.experience/experience-core');
 const { parseSince, loadEvents, filterEvents, computeStats, loadTop5 } = require('./tools/exp-stats');
 
 // --- Config ---
@@ -165,6 +165,15 @@ async function handleImport(req, res) {
   json(res, { imported: result, success: true });
 }
 
+async function handleFeedback(req, res) {
+  const body = await readBody(req);
+  if (!body.pointId) return error(res, 'pointId is required');
+  if (!body.collection) return error(res, 'collection is required');
+  if (typeof body.followed !== 'boolean') return error(res, 'followed (boolean) is required');
+  await recordFeedback(body.collection, body.pointId, body.followed);
+  json(res, { ok: true });
+}
+
 function handleUser(req, res) {
   json(res, { user: EXP_USER });
 }
@@ -182,10 +191,8 @@ async function handleTimeline(req, res, url) {
   const allResults = [];
   for (const coll of collections) {
     try {
-      const fs = require('node:fs');
-      const pathMod = require('node:path');
-      const storeDir = pathMod.join(os.homedir(), '.experience', 'store');
-      const filePath = pathMod.join(storeDir, `${coll}.json`);
+      const storeDir = path.join(os.homedir(), '.experience', 'store');
+      const filePath = path.join(storeDir, `${coll}.json`);
       const entries = (() => { try { return JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch { return []; } })();
       for (const entry of entries) {
         if (!entry.vector || entry.vector.length !== vector.length) continue;
@@ -249,6 +256,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/timeline' && req.method === 'GET') return await handleTimeline(req, res, url);
     if (p === '/api/principles/share' && req.method === 'POST') return await handleShare(req, res);
     if (p === '/api/principles/import' && req.method === 'POST') return await handleImport(req, res);
+    if (p === '/api/feedback' && req.method === 'POST') return await handleFeedback(req, res);
     if (p === '/api/user' && req.method === 'GET') return handleUser(req, res);
     error(res, 'Not found', 404);
   } catch (err) {
@@ -256,8 +264,12 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-// Never crash on unhandled rejections (match experience-core.js philosophy)
-process.on('unhandledRejection', () => {});
+// Log unhandled rejections instead of crashing — but never swallow silently
+process.on('unhandledRejection', (reason) => {
+  const msg = reason instanceof Error ? reason.stack || reason.message : String(reason);
+  try { require('node:fs').appendFileSync(require('node:path').join(require('node:os').homedir(), '.experience', 'server-errors.log'), `[${new Date().toISOString()}] UnhandledRejection: ${msg}\n`); } catch {}
+  console.error(`[Experience Engine] UnhandledRejection: ${msg}`);
+});
 
 // Only start when run directly (not when required for testing)
 if (require.main === module) {
@@ -267,4 +279,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { server, handleHealth, handleIntercept, handleExtract, handleEvolve, handleStats, handleGraph, handleTimeline, handleShare, handleImport, handleUser };
+module.exports = { server, handleHealth, handleIntercept, handleExtract, handleEvolve, handleStats, handleGraph, handleTimeline, handleShare, handleImport, handleFeedback, handleUser };
