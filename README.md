@@ -21,6 +21,10 @@
 
 ---
 
+<p align="center">
+  <img src="demo.svg" alt="Experience Engine Demo" width="800">
+</p>
+
 Memory stores what you know. **Experience changes how you act.**
 
 ```
