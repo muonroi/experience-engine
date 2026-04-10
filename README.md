@@ -15,7 +15,7 @@
     <img alt="Works Offline" src="https://img.shields.io/badge/works-offline-blue">
     <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-yellow">
     <img alt="Node.js 20+" src="https://img.shields.io/badge/node-20%2B-green">
-    <img alt="Tests" src="https://img.shields.io/badge/tests-119%20passing-brightgreen">
+    <img alt="Tests" src="https://img.shields.io/badge/tests-187%20passing-brightgreen">
   </p>
 </p>
 
@@ -225,6 +225,8 @@ node server.js
 | `POST` | `/api/principles/share` | Export principle as portable JSON |
 | `POST` | `/api/principles/import` | Import shared principle |
 | `POST` | `/api/feedback` | Report if suggestion was followed/ignored |
+| `POST` | `/api/route-model` | Intelligent model tier routing |
+| `POST` | `/api/route-feedback` | Record agent outcome for routing learning |
 
 Zero dependencies — uses Node.js built-in `http` module. CORS enabled for browser extensions.
 
@@ -238,9 +240,46 @@ curl -X POST http://localhost:8082/api/intercept \
 
 ```json
 {
-  "suggestions": "⚠️ [Experience - High Confidence (0.85)]: Stateful objects must be scoped, never singleton",
+  "suggestions": "⚠️ [Experience - High Confidence (0.85)]: Stateful objects must be scoped, never singleton\n   Why: Last time this caused state corruption in production\n   [id:a1b2c3d4 col:experience-behavioral]",
   "hasSuggestions": true
 }
+```
+
+### Example: Model Router
+
+Classify task complexity → route to optimal model tier.
+
+```bash
+curl -X POST http://localhost:8082/api/route-model \
+  -H "Content-Type: application/json" \
+  -d '{"task": "debug race condition in auth", "runtime": "claude"}'
+```
+
+```json
+{
+  "tier": "premium",
+  "model": "opus",
+  "confidence": 0.85,
+  "source": "brain",
+  "reason": "premium complexity task"
+}
+```
+
+Three layers, fastest first:
+- **Layer 0 — Keywords** (~0ms): Detects obvious fast/premium patterns without any API call
+- **Layer 1 — History** (~50ms): Semantic search of past routing decisions. Reuses successful routes, upgrades failed ones
+- **Layer 2 — Brain** (~200ms): LLM classification via SiliconFlow Qwen2.5-7B. Only called when Layer 0+1 miss
+
+Supports: `claude` (haiku/sonnet/opus), `gemini` (flash/pro), `codex` (mini/o3), `opencode`. Returns tier only when `runtime` is null.
+
+### Example: Feedback
+
+Report whether the agent followed or ignored a surfaced hint. Supports short ID prefix (8 chars).
+
+```bash
+curl -X POST http://localhost:8082/api/feedback \
+  -H "Content-Type: application/json" \
+  -d '{"pointId": "a1b2c3d4", "collection": "experience-behavioral", "followed": false}'
 ```
 
 ## Python SDK
