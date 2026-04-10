@@ -1301,6 +1301,121 @@ for MD_FILE in \
   echo "  Injected: $MD_FILE"
 done
 
+# ── GSD Integration: patch Model Router into GSD framework ───────────────
+GSD_DIR="$HOME/.claude/get-shit-done"
+GSD_CORE="$GSD_DIR/bin/lib/core.cjs"
+GSD_CONFIG="$GSD_DIR/bin/lib/config.cjs"
+GSD_TOOLS="$GSD_DIR/bin/gsd-tools.cjs"
+
+if [ -d "$GSD_DIR" ] && [ -f "$GSD_CORE" ]; then
+  echo ""
+  echo "◆ [5.5/6] GSD framework detected — patching Model Router integration..."
+
+  # Patch 1: Add resolveModelWithRouter to core.cjs (if not already patched)
+  if ! grep -q 'resolveModelWithRouter' "$GSD_CORE" 2>/dev/null; then
+    EXP_PORT=8082
+    node -e "
+const fs = require('fs');
+const corePath = '$GSD_CORE'.replace(/\\\\/g, '/');
+let core = fs.readFileSync(corePath, 'utf8');
+
+// Add resolveModelWithRouter after resolveModelInternal
+const marker = 'return alias;\\n}';
+const lastIdx = core.lastIndexOf('return alias;\\n}');
+// Find the closing brace of resolveModelInternal
+const funcEnd = core.indexOf('\\n}', core.indexOf('function resolveModelInternal'));
+if (funcEnd < 0) { console.log('  Skip: cannot find resolveModelInternal end'); process.exit(0); }
+
+const insertPos = funcEnd + 2;
+const routerFn = \`
+
+/**
+ * Async model resolution via Experience Engine Model Router.
+ * Falls back to resolveModelInternal() when router is unavailable.
+ */
+async function resolveModelWithRouter(cwd, agentType, taskDescription, runtime) {
+  runtime = runtime || 'claude';
+  const config = loadConfig(cwd);
+  const override = config.model_overrides?.[agentType];
+  if (override) return { model: override, tier: null, source: 'override' };
+  const routerEnabled = config.workflow?.model_router !== false;
+  const profile = String(config.model_profile || 'balanced').toLowerCase();
+  if (!routerEnabled || !['balanced','adaptive','inherit'].includes(profile) || !taskDescription) {
+    return { model: resolveModelInternal(cwd, agentType), tier: null, source: 'profile' };
+  }
+  try {
+    const res = await fetch('http://localhost:${EXP_PORT}/api/route-model', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: taskDescription, runtime, context: { agent: agentType } }),
+      signal: AbortSignal.timeout(3000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const model = data.model || resolveModelInternal(cwd, agentType);
+      const resolved = config.resolve_model_ids ? (MODEL_ALIAS_MAP[model] || model) : model;
+      return { model: resolved, tier: data.tier, source: data.source || 'router' };
+    }
+  } catch {}
+  return { model: resolveModelInternal(cwd, agentType), tier: null, source: 'profile-fallback' };
+}\`;
+
+core = core.slice(0, insertPos) + routerFn + core.slice(insertPos);
+
+// Add to exports
+core = core.replace('resolveModelInternal,', 'resolveModelInternal,\\n  resolveModelWithRouter,');
+
+fs.writeFileSync(corePath, core);
+console.log('  Patched: core.cjs (resolveModelWithRouter)');
+"
+  else
+    echo "  core.cjs: already patched"
+  fi
+
+  # Patch 2: Add workflow.model_router default to config.cjs
+  if ! grep -q 'model_router' "$GSD_CONFIG" 2>/dev/null; then
+    sed -i "s/code_review_depth: 'standard',/code_review_depth: 'standard',\n      model_router: true,/" "$GSD_CONFIG"
+    echo "  Patched: config.cjs (model_router default)"
+  else
+    echo "  config.cjs: already patched"
+  fi
+
+  # Patch 3: Add route-model command to gsd-tools.cjs
+  if ! grep -q 'route-model' "$GSD_TOOLS" 2>/dev/null; then
+    node -e "
+const fs = require('fs');
+const toolsPath = '$GSD_TOOLS'.replace(/\\\\/g, '/');
+let tools = fs.readFileSync(toolsPath, 'utf8');
+
+const insertAfter = \"case 'resolve-model': {\\n      commands.cmdResolveModel(cwd, args[1], raw);\\n      break;\\n    }\";
+const routeCmd = \`
+
+    case 'route-model': {
+      const agentType = args[1];
+      const taskDesc = args.slice(2).filter(a => !a.startsWith('--')).join(' ');
+      const runtimeIdx = args.indexOf('--runtime');
+      const runtime = runtimeIdx >= 0 ? args[runtimeIdx + 1] : 'claude';
+      if (!agentType) { core.output({ error: 'agent-type required' }, raw); break; }
+      core.resolveModelWithRouter(cwd, agentType, taskDesc || '', runtime)
+        .then(result => core.output(result, raw, result.model))
+        .catch(e => core.output({ model: 'sonnet', tier: null, source: 'error', error: e.message }, raw, 'sonnet'));
+      break;
+    }\`;
+
+tools = tools.replace(insertAfter, insertAfter + routeCmd);
+fs.writeFileSync(toolsPath, tools);
+console.log('  Patched: gsd-tools.cjs (route-model command)');
+"
+  else
+    echo "  gsd-tools.cjs: already patched"
+  fi
+
+  echo "  GSD integration complete — run: gsd-tools route-model gsd-executor \"your task\""
+else
+  echo ""
+  echo "  GSD framework not found at $GSD_DIR — skipping Model Router integration"
+  echo "  Install GSD first, then re-run setup.sh to patch"
+fi
+
 # ── Step C execution: optional seed ───────────────────────────────────────
 if [ "$DO_SEED" = "true" ] && [ -n "$SEED_DIR" ]; then
   echo ""
