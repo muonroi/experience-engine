@@ -484,7 +484,7 @@ async function interceptWithMeta(toolName, toolInput, signal) {
   // P6: Brain relevance filter — ask brain if remaining suggestions are relevant to THIS action
   if (lines.length > 0 && _cfg.brainFilter !== false) {
     try {
-      const kept = await brainRelevanceFilter(query, lines, signal);
+      const kept = await brainRelevanceFilter(query, lines, signal, queryProjectSlug);
       if (kept !== null) {
         const removed = lines.length - kept.length;
         lines.length = 0;
@@ -733,7 +733,7 @@ async function callBrainWithFallback(prompt) {
 // P6: Brain relevance filter — lightweight brain call to check if suggestions match the action
 // Input: the action query + numbered warnings. Output: which numbers are relevant.
 // Timeout: 3s (tight — fail-open if brain is slow). Cost: ~80 tokens input, ~5 tokens output.
-async function brainRelevanceFilter(actionQuery, suggestionLines, signal) {
+async function brainRelevanceFilter(actionQuery, suggestionLines, signal, projectSlug) {
   if (!suggestionLines || suggestionLines.length === 0) return null;
 
   // Extract just the warning text (strip emoji/score prefix for cleaner prompt)
@@ -742,9 +742,10 @@ async function brainRelevanceFilter(actionQuery, suggestionLines, signal) {
     return `${i + 1}. ${clean}`;
   });
 
+  const projectCtx = projectSlug ? `\nPROJECT: ${projectSlug} — warnings about OTHER projects are NOT relevant.` : '';
   const prompt = `You are a relevance filter. An AI coding agent is about to perform this action:
 
-ACTION: ${actionQuery.slice(0, 300)}
+ACTION: ${actionQuery.slice(0, 300)}${projectCtx}
 
 These warnings were retrieved from past experience:
 ${warnings.join('\n')}
@@ -753,6 +754,7 @@ Which warnings could help prevent a mistake in THIS SPECIFIC action?
 Rules:
 - A warning is relevant ONLY if the action could actually trigger the mistake the warning describes
 - Generic advice that doesn't match the specific action is NOT relevant
+- Warnings about a DIFFERENT project/codebase than the current one are NOT relevant
 - "ls", "git log", "cat" commands reading files NEVER need warnings about code patterns
 
 Reply with ONLY the relevant warning numbers separated by commas (e.g. "1,3"), or "none" if none are relevant.`;
@@ -1111,7 +1113,7 @@ function computeEffectiveScore(point, data, queryDomain, queryProjectSlug) {
   // P0: Project-aware penalty — cross-project suggestions heavily penalized
   let projectPenalty = 0;
   if (queryProjectSlug && data._projectSlug) {
-    if (queryProjectSlug !== data._projectSlug) projectPenalty = 0.30;
+    if (queryProjectSlug !== data._projectSlug) projectPenalty = 0.50;
   }
   // Phase 108: temporal boost/penalty from confirmedAt trace
   let temporalAdj = 0;
@@ -1437,6 +1439,26 @@ async function evolve(trigger) {
       await deleteEntry('experience-behavioral', entry.id);
       results.archived++;
       activityLog({ op: 'evolve-seed-ttl', id: entry.id.slice(0, 8), age: Math.round(age / (24 * 60 * 60 * 1000)) });
+    }
+  }
+
+  // Step 4c: Auto-cleanup noise entries — high ignore + low hit ratio = junk
+  // Targets: entries ignored often but rarely followed, across ALL tiers
+  const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+  for (const collCfg of [{ name: 'experience-behavioral' }, { name: 'experience-selfqa' }]) {
+    const entries = await getAllEntries(collCfg.name);
+    for (const entry of entries) {
+      const data = parsePayload(entry);
+      if (!data) continue;
+      const ignores = data.ignoreCount || 0;
+      const hits = data.hitCount || 0;
+      const age = now - new Date(data.createdAt || 0).getTime();
+      // Noise criteria: ignoreCount >= 5 AND hit-to-ignore ratio < 0.2 AND age > 30 days
+      if (ignores >= 5 && (hits / Math.max(1, ignores)) < 0.2 && age > THIRTY_DAYS) {
+        await deleteEntry(collCfg.name, entry.id);
+        results.archived++;
+        activityLog({ op: 'evolve-noise-cleanup', id: entry.id.slice(0, 8), ignores, hits, age: Math.round(age / (24 * 60 * 60 * 1000)) });
+      }
     }
   }
 
