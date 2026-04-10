@@ -415,10 +415,40 @@ async function interceptWithMeta(toolName, toolInput, signal) {
     searchCollection(COLLECTIONS[2].name, vector, COLLECTIONS[2].topK, signal),
   ]);
 
+  // v2: Hard scope filter — binary gate before rerank. If scope.lang set and current
+  // file's language doesn't match → eliminate entirely (not a penalty, full exclusion).
+  // Legacy entries without scope pass through unchanged.
+  function applyScopeFilter(points) {
+    if (!filePath) return points; // no file context — can't filter
+    const fileExt = filePath.replace(/\\/g, '/').split('.').pop()?.toLowerCase() || '';
+    // Normalize file extension to a language family for matching
+    const JS_FAMILY = new Set(['ts', 'tsx', 'js', 'jsx']);
+    const CSS_FAMILY = new Set(['css', 'scss', 'less', 'sass']);
+    const CS_FAMILY  = new Set(['cs', 'fs']);
+    function fileMatchesLang(scopeLang) {
+      if (!scopeLang || scopeLang === 'all') return true;
+      const sl = scopeLang.toLowerCase();
+      if (sl === 'c#')         return CS_FAMILY.has(fileExt);
+      if (sl === 'javascript') return JS_FAMILY.has(fileExt);
+      if (sl === 'typescript') return JS_FAMILY.has(fileExt);
+      if (sl === 'css')        return CSS_FAMILY.has(fileExt);
+      // Generic: compare lowercase scope.lang against detected context
+      const detected = (detectContext(filePath) || '').toLowerCase();
+      return detected === sl || detected.startsWith(sl);
+    }
+    return points.filter(p => {
+      try {
+        const exp = JSON.parse(p.payload?.json || '{}');
+        if (!exp.scope?.lang) return true; // legacy — always surface
+        return fileMatchesLang(exp.scope.lang);
+      } catch { return true; }
+    });
+  }
+
   // Rerank by quality score before formatting (Phase 103, 104)
-  const r0 = rerankByQuality(t0, queryDomain, queryProjectSlug);
-  const r1 = rerankByQuality(t1, queryDomain, queryProjectSlug);
-  const r2 = rerankByQuality(t2, queryDomain, queryProjectSlug);
+  const r0 = rerankByQuality(applyScopeFilter(t0), queryDomain, queryProjectSlug);
+  const r1 = rerankByQuality(applyScopeFilter(t1), queryDomain, queryProjectSlug);
+  const r2 = rerankByQuality(applyScopeFilter(t2), queryDomain, queryProjectSlug);
 
   const lines = [
     ...applyBudget(formatPoints(r0), COLLECTIONS[0].budgetChars),
@@ -814,7 +844,7 @@ Reply with ONLY the relevant warning numbers separated by commas (e.g. "1,3"), o
 }
 
 async function extractQA(mistake) {
-  const prompt = `Given this session excerpt where something went wrong:\n${mistake.excerpt.slice(0, 1500)}\n\nExtract in JSON (no markdown):\n{"trigger":"one line","question":"one line","reasoning":["step1","step2"],"solution":"one line"}`;
+  const prompt = `Given this session excerpt where something went wrong:\n${mistake.excerpt.slice(0, 1500)}\n\nExtract in JSON (no markdown):\n{"trigger":"when this fires","question":"one line","reasoning":["step1","step2"],"solution":"what to do","why":"root cause or incident that created this rule","scope":{"lang":"C#|JavaScript|all","repos":[],"filePattern":"*.cs"}}`;
   return callBrainWithFallback(prompt);
 }
 
@@ -931,6 +961,8 @@ function buildStorePayload(id, qa, domain, projectSlug) {
   return {
     id, trigger: qa.trigger, question: qa.question,
     reasoning: qa.reasoning || [], solution: qa.solution,
+    why: qa.why || null,    // v2: root cause / incident motivation
+    scope: qa.scope || null, // v2: {lang, repos, filePattern} — hard filter gate
     confidence: 0.5, hitCount: 0, tier: 2,
     lastHitAt: null, ignoreCount: 0,
     confirmedAt: [],  // Phase 108: temporal trace
@@ -1167,11 +1199,17 @@ function formatPoints(points) {
     if (effConf < MIN_CONFIDENCE) continue;
     // Use _effectiveScore (from rerankByQuality) for display, fallback to raw score
     const displayScore = point._effectiveScore ?? point.score ?? 0;
+    let line;
     if (displayScore >= HIGH_CONFIDENCE) {
-      lines.push(`⚠️ [Experience - High Confidence (${displayScore.toFixed(2)})]: ${exp.solution}`);
+      line = `⚠️ [Experience - High Confidence (${displayScore.toFixed(2)})]: ${exp.solution}`;
     } else {
-      lines.push(`💡 [Suggestion (${displayScore.toFixed(2)})]: ${exp.solution}`);
+      line = `💡 [Suggestion (${displayScore.toFixed(2)})]: ${exp.solution}`;
     }
+    // v2: append why when present so agent understands the motivation
+    if (exp.why) {
+      line += `\n   Why: ${exp.why}`;
+    }
+    lines.push(line);
   }
   return lines;
 }
