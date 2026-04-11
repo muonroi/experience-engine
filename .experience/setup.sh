@@ -64,6 +64,8 @@ Non-interactive mode (CI/scripts):
     EXP_BRAIN_ENDPOINT   custom brain endpoint URL (for siliconflow/custom)
     EXP_BRAIN_PROXY      Optional proxy URL for brain API calls (firewall bypass)
                          Example: EXP_BRAIN_PROXY=http://your-vps:8082/api/brain
+    EXP_TUNNEL_SSH       SSH tunnel command for VPS Qdrant (optional)
+                         Example: EXP_TUNNEL_SSH="ssh -i ~/.ssh/key -f -N -L 6333:localhost:6333 user@host"
     EXP_OLLAMA_URL       Ollama URL (default: http://localhost:11434)
     EXP_AGENTS           comma-separated agent list (default: all)
                          values: claude,gemini,codex,opencode
@@ -374,7 +376,7 @@ if [ "$NI_MODE" = "true" ]; then
   BRAIN_ENDPOINT="${EXP_BRAIN_ENDPOINT:-}"
   BRAIN_PROXY_URL="${EXP_BRAIN_PROXY:-}"
   OLLAMA_URL="${EXP_OLLAMA_URL:-http://localhost:11434}"
-  TUNNEL_SSH=""
+  TUNNEL_SSH="${EXP_TUNNEL_SSH:-}"
   KEEP_CONFIG=false
   # Allow caller to bypass dimension probe by setting EXP_EMBED_DIM
   [ -n "${EXP_EMBED_DIM:-}" ] && EMBED_DIM="${EXP_EMBED_DIM}"
@@ -1562,6 +1564,7 @@ try {
     'HC_embedProvider='+(c.embedProvider||''),
     'HC_brainProvider='+(c.brainProvider||''),
     'HC_embedDim='+     (c.embedDim||768),
+    'HC_tunnelSsh='+    (c.tunnelSsh||''),
   ];
   process.stdout.write(fields.join('\n')+'\n');
 } catch(e) {
@@ -1611,7 +1614,18 @@ if [ "$QDRANT_CHECK" = "200" ]; then
   HEALTH_PASS=$((HEALTH_PASS+1))
 else
   echo "FAIL (HTTP $QDRANT_CHECK)"
-  echo "    Fix: Check Qdrant is running at ${_QU}"
+  if [ -n "$HC_tunnelSsh" ]; then
+    echo "    Tunnel configured: $HC_tunnelSsh"
+    echo "    Fix: Start the SSH tunnel first, then re-run setup.sh"
+    echo "         $HC_tunnelSsh"
+  elif [[ "$_QU" == *localhost* ]] || [[ "$_QU" == *127.0.0.1* ]]; then
+    echo "    Fix: Qdrant not reachable at ${_QU}"
+    echo "         If Qdrant is on a remote VPS, you may need an SSH tunnel:"
+    echo "         ssh -i ~/.ssh/KEY -f -N -L 6333:localhost:6333 user@vps-host"
+    echo "         Or re-run setup.sh and choose option [3] VPS via SSH"
+  else
+    echo "    Fix: Check Qdrant is running at ${_QU}"
+  fi
   HEALTH_FAIL=$((HEALTH_FAIL+1))
 fi
 
