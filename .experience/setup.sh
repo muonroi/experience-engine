@@ -355,6 +355,8 @@ if [ "$NI_MODE" = "true" ]; then
   OLLAMA_URL="${EXP_OLLAMA_URL:-http://localhost:11434}"
   TUNNEL_SSH=""
   KEEP_CONFIG=false
+  # Allow caller to bypass dimension probe by setting EXP_EMBED_DIM
+  [ -n "${EXP_EMBED_DIM:-}" ] && EMBED_DIM="${EXP_EMBED_DIM}"
 fi
 
 # ── NI mode dimension probe (must run before config write) ───────────────
