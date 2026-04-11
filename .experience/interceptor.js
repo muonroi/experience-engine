@@ -74,6 +74,7 @@ process.stdin.on('end', async () => {
       // Detect CLI from tool name pattern or env vars
       const isGemini = !!(process.env.GEMINI_SESSION_ID || process.env.GEMINI_PROJECT_DIR)
         || /^(run_shell_command|write_file|edit_file|replace_in_file)$/.test(tool);
+      const isCodex = !isGemini && !!(process.env.CODEX_SESSION_ID);
 
       // Build output text: experience suggestions + optional route advisory
       let outputText = result || '';
@@ -85,8 +86,13 @@ process.stdin.on('end', async () => {
       if (isGemini) {
         // Gemini: plain text stdout → treated as systemMessage
         process.stdout.write(outputText);
+      } else if (isCodex) {
+        // Codex: PreToolUse does NOT support additionalContext (fails open).
+        // Use systemMessage for experience warnings instead.
+        // Ref: https://developers.openai.com/codex/hooks
+        process.stdout.write(JSON.stringify({ systemMessage: outputText }));
       } else {
-        // Claude Code / Codex: structured JSON with additionalContext
+        // Claude Code: structured JSON with additionalContext
         process.stdout.write(JSON.stringify({
           hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', additionalContext: outputText }
         }));
