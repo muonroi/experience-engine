@@ -1405,10 +1405,12 @@ GSD_CORE="$GSD_DIR/bin/lib/core.cjs"
 GSD_CONFIG="$GSD_DIR/bin/lib/config.cjs"
 GSD_TOOLS="$GSD_DIR/bin/gsd-tools.cjs"
 
-# Convert MSYS paths to Windows paths for node.exe (node can't read /c/Users/...)
+# Convert MSYS paths to Windows mixed paths for node.exe
+# Use -m (forward slash) not -w (backslash) — backslashes get mangled
+# in JS strings (\b=backspace, \n=newline, etc.)
 if command -v cygpath &>/dev/null; then
-  _GSD_CORE_WIN=$(cygpath -w "$GSD_CORE")
-  _GSD_TOOLS_WIN=$(cygpath -w "$GSD_TOOLS")
+  _GSD_CORE_WIN=$(cygpath -m "$GSD_CORE")
+  _GSD_TOOLS_WIN=$(cygpath -m "$GSD_TOOLS")
 else
   _GSD_CORE_WIN="$GSD_CORE"
   _GSD_TOOLS_WIN="$GSD_TOOLS"
@@ -1423,7 +1425,7 @@ if [ -d "$GSD_DIR" ] && [ -f "$GSD_CORE" ]; then
     EXP_PORT=8082
     node -e "
 const fs = require('fs');
-const corePath = '$_GSD_CORE_WIN'.replace(/\\\\/g, '/');
+const corePath = '$_GSD_CORE_WIN';
 let core = fs.readFileSync(corePath, 'utf8');
 
 // Add resolveModelWithRouter after resolveModelInternal
@@ -1490,7 +1492,7 @@ console.log('  Patched: core.cjs (resolveModelWithRouter)');
   if ! grep -q 'route-model' "$GSD_TOOLS" 2>/dev/null; then
     node -e "
 const fs = require('fs');
-const toolsPath = '$_GSD_TOOLS_WIN'.replace(/\\\\/g, '/');
+const toolsPath = '$_GSD_TOOLS_WIN';
 let tools = fs.readFileSync(toolsPath, 'utf8');
 
 const insertAfter = \"case 'resolve-model': {\\n      commands.cmdResolveModel(cwd, args[1], raw);\\n      break;\\n    }\";
