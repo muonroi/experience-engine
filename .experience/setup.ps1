@@ -3,6 +3,18 @@
 #
 # Usage:  .\setup.ps1            # or: powershell .experience\setup.ps1
 #         .\setup.ps1 --local    # pass flags through
+#         .\setup.ps1 --vps     # VPS mode with SSH tunnel
+#
+# Supported flags (forwarded to setup.sh):
+#   --help, -h     Show help
+#   --docker       Docker Compose quick start
+#   --local        Local Docker Qdrant + Ollama
+#   --vps          VPS Qdrant via SSH tunnel
+#
+# Supported agents: Claude Code, Gemini CLI, Codex CLI, OpenCode
+# Note: Codex CLI hooks are disabled on native Windows — use WSL instead.
+
+param([Parameter(ValueFromRemainingArguments)]$passArgs)
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $setupSh  = Join-Path $scriptDir "setup.sh"
@@ -48,5 +60,13 @@ if (-not $gitBash) {
 $msysPath = $setupSh -replace '\\','/' -replace '^([A-Za-z]):','/$1'
 $msysPath = $msysPath.Substring(0,1) + $msysPath.Substring(1,1).ToLower() + $msysPath.Substring(2)
 
+# Convert CWD to MSYS path
+$msysCwd = "$(Get-Location)" -replace '\\','/' -replace '^([A-Za-z]):','/$1'
+$msysCwd = $msysCwd.Substring(0,1) + $msysCwd.Substring(1,1).ToLower() + $msysCwd.Substring(2)
+
+# Build args string (properly quoted for bash)
+$argStr = if ($passArgs) { ($passArgs | ForEach-Object { "'$_'" }) -join ' ' } else { '' }
+
 Write-Host "  Using Git Bash: $gitBash" -ForegroundColor DarkGray
-& $gitBash --login -c "cd '$(Get-Location)' && bash '$msysPath' $($args -join ' ')"
+& $gitBash --login -c "cd '$msysCwd' && bash '$msysPath' $argStr"
+exit $LASTEXITCODE

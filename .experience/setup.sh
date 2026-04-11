@@ -1218,7 +1218,7 @@ else
   echo ""
   echo "  [1] Claude Code    ~/.claude/settings.json"
   echo "  [2] Gemini CLI     ~/.gemini/settings.json"
-  echo "  [3] Codex CLI      ~/.codex/config.json"
+  echo "  [3] Codex CLI      ~/.codex/hooks.json"
   echo "  [4] OpenCode       ~/.config/opencode/config.json"
   echo ""
   printf "  Select [a]: "; read -r AGENT_CHOICE
@@ -1305,10 +1305,22 @@ const AGENTS = [
     file: path.join(home, '.codex', 'hooks.json'),
     patch(cfg) {
       // Codex CLI uses hooks.json (not config.json) + config.toml to enable hooks
+      // Spec: PreToolUse/PostToolUse only support Bash tool
+      // Ref: https://developers.openai.com/codex/hooks
       if (!cfg.hooks) cfg.hooks = {};
       cfg.hooks.PreToolUse = cfg.hooks.PreToolUse || [];
       if (!cfg.hooks.PreToolUse.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor')))) {
-        cfg.hooks.PreToolUse.push({ matcher:'.*', hooks:[{ type:'command', command:`node "${interceptor}"`, timeout:5 }] });
+        cfg.hooks.PreToolUse.push({ matcher:'Bash', hooks:[{ type:'command', command:`node "${interceptor}"`, timeout:5 }] });
+      }
+      // Fix: update legacy matcher '.*' → 'Bash' (only tool Codex supports)
+      for (const entry of cfg.hooks.PreToolUse) {
+        if (entry.matcher === '.*' && (entry.hooks||[]).some(e => e.command?.includes('interceptor'))) {
+          entry.matcher = 'Bash';
+        }
+      }
+      cfg.hooks.PostToolUse = cfg.hooks.PostToolUse || [];
+      if (!cfg.hooks.PostToolUse.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor-post')))) {
+        cfg.hooks.PostToolUse.push({ matcher:'Bash', hooks:[{ type:'command', command:`node "${interceptorPost}"`, timeout:5 }] });
       }
       cfg.hooks.Stop = cfg.hooks.Stop || [];
       if (!cfg.hooks.Stop.some(h => (h.hooks||[]).some(e => e.command?.includes('stop-extractor')))) {
