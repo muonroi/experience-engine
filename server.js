@@ -17,6 +17,7 @@
  *   GET  /api/user                  — Current user identity
  *   POST /api/route-model           — Intelligent model tier routing
  *   POST /api/route-feedback        — Record agent outcome for routing learning
+ *   POST /api/brain                 — Proxy brain LLM calls (for clients behind firewall)
  *
  * Config: ~/.experience/config.json (server.port, server.authToken)
  * Start: node server.js
@@ -299,6 +300,23 @@ async function handleRouteFeedback(req, res) {
   res.end(JSON.stringify({ ok }));
 }
 
+// --- Brain Proxy (allows local clients to reach SiliconFlow via VPS) ---
+
+async function handleBrainProxy(req, res) {
+  const body = await readBody(req);
+  if (!body.prompt) return error(res, 'prompt is required');
+  const timeoutMs = body.timeoutMs || 8000;
+  try {
+    const { classifyViaBrain } = require(path.join(os.homedir(), '.experience', 'experience-core.js'));
+    const result = await classifyViaBrain(body.prompt, timeoutMs);
+    res.writeHead(200, { 'Content-Type': 'application/json', ...CORS });
+    res.end(JSON.stringify({ ok: true, result }));
+  } catch (err) {
+    res.writeHead(502, { 'Content-Type': 'application/json', ...CORS });
+    res.end(JSON.stringify({ ok: false, error: err.message || 'brain call failed' }));
+  }
+}
+
 // --- Server ---
 
 const server = http.createServer(async (req, res) => {
@@ -331,6 +349,7 @@ const server = http.createServer(async (req, res) => {
       if (p === '/api/feedback') return await handleFeedback(req, res);
       if (p === '/api/route-model') return await handleRouteModel(req, res);
       if (p === '/api/route-feedback') return await handleRouteFeedback(req, res);
+      if (p === '/api/brain') return await handleBrainProxy(req, res);
     }
 
     error(res, 'Not found', 404);
