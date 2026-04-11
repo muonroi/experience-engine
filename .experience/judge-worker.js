@@ -44,11 +44,12 @@ if (!fs.existsSync(normalised)) process.exit(0);
   const { surfacedIds = [], toolName = '', toolInput = '', toolOutcome = null } = data;
 
   // Load core functions from experience-core.js
-  let classifyViaBrain, recordJudgeFeedback;
+  let classifyViaBrain, recordJudgeFeedback, activityLog;
   try {
     const core = require(path.join(EXP_DIR, 'experience-core.js'));
     classifyViaBrain    = core.classifyViaBrain;
     recordJudgeFeedback = core.recordJudgeFeedback;
+    activityLog         = typeof core._activityLog === 'function' ? core._activityLog : null;
   } catch {
     try { fs.unlinkSync(normalised); } catch {}
     process.exit(0);
@@ -76,7 +77,11 @@ if (!fs.existsSync(normalised)) process.exit(0);
       `- HINT about C# code + ACTION edits .cs file following hint → FOLLOWED\n` +
       `- HINT about C# code + ACTION edits .cs file ignoring hint → IGNORED\n` +
       `- HINT about C# code + ACTION runs "git status" → IRRELEVANT\n` +
-      `- HINT about library code + ACTION edits docs/config/deploy → IRRELEVANT\n\n` +
+      `- HINT about library code + ACTION edits docs/config/deploy → IRRELEVANT\n` +
+      `- HINT about C# code + ACTION edits STATE.md / PLAN.md / README.md → IRRELEVANT\n` +
+      `- HINT about logging code + ACTION runs git commit, deploy script, or edits .yml/.sh → IRRELEVANT\n` +
+      `- HINT about TypeScript code + ACTION writes JSON config or edits docker-compose → IRRELEVANT\n` +
+      `Rule: if the hint's language/framework/pattern has NOTHING to do with what the action modifies → IRRELEVANT\n\n` +
       `Your answer (one word):`;
 
     let verdict = 'UNCLEAR';
@@ -84,15 +89,19 @@ if (!fs.existsSync(normalised)) process.exit(0);
       const raw  = await classifyViaBrain(prompt, 8000);
       const word = (raw || '').trim().toUpperCase().split(/\s+/)[0];
       if (VALID_VERDICTS.has(word)) verdict = word;
-    } catch {
-      // Any exception → UNCLEAR
+    } catch (err) {
+      const reason = err?.name === 'AbortError' ? 'timeout' : 'unreachable';
+      if (activityLog) activityLog({ op: 'judge-brain-error', collection, pointId: id.slice(0, 8), reason, verdict: 'UNCLEAR' });
     }
 
     // Hybrid signal: error outcome + UNCLEAR → IGNORED
     if (verdict === 'UNCLEAR' && toolOutcome === 'error') verdict = 'IGNORED';
 
-    // UNCLEAR → no feedback (neutral)
-    if (verdict === 'UNCLEAR') return;
+    // UNCLEAR → no feedback (neutral), but log for diagnostics
+    if (verdict === 'UNCLEAR') {
+      if (activityLog) activityLog({ op: 'judge-skipped', collection, pointId: id.slice(0, 8), reason: 'unclear' });
+      return;
+    }
 
     try {
       await recordJudgeFeedback(collection, id, verdict);
