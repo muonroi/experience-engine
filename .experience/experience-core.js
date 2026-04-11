@@ -255,6 +255,8 @@ let qdrantAvailable = null; // null = unchecked, true/false = checked
 function getExpUser() {
   return cfgValue('user', 'EXP_USER', 'default');
 }
+// Backward-compat: many call sites reference EXP_USER directly
+const EXP_USER = getExpUser();
 
 const FILESTORE_BASE = pathMod.join(os.homedir(), '.experience', 'store');
 
@@ -1732,11 +1734,11 @@ async function getAllEntries(collection) {
   let offset = null;
   do {
     try {
-      const body = { limit: 100, with_payload: true, with_vector: true, filter: { must: [QDRANT_USER_FILTER] } };
+      const body = { limit: 100, with_payload: true, with_vector: true, filter: { must: [buildQdrantUserFilter()] } };
       if (offset) body.offset = offset;
-      const res = await fetch(`${QDRANT_BASE}/collections/${collection}/points/scroll`, {
+      const res = await fetch(`${getQdrantBase()}/collections/${collection}/points/scroll`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+        headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(10000),
       });
@@ -1751,14 +1753,14 @@ async function getAllEntries(collection) {
 }
 
 async function upsertEntry(collection, id, vector, data) {
-  const payload = { json: JSON.stringify(data), user: EXP_USER };
+  const payload = { json: JSON.stringify(data), user: getExpUser() };
   if (!(await checkQdrant())) {
     fileStoreUpsert(collection, id, vector, payload);
     return;
   }
-  await fetch(`${QDRANT_BASE}/collections/${collection}/points`, {
+  await fetch(`${getQdrantBase()}/collections/${collection}/points`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+    headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
     body: JSON.stringify({ points: [{ id, vector, payload }] }),
     signal: AbortSignal.timeout(5000),
   });
@@ -1770,9 +1772,9 @@ async function deleteEntry(collection, id) {
     fileStoreWrite(collection, entries.filter(e => e.id !== id));
     return;
   }
-  await fetch(`${QDRANT_BASE}/collections/${collection}/points/delete`, {
+  await fetch(`${getQdrantBase()}/collections/${collection}/points/delete`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+    headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
     body: JSON.stringify({ points: [id] }),
     signal: AbortSignal.timeout(5000),
   });
@@ -1792,7 +1794,7 @@ function sharePrinciple(principleId) {
     confidence: data.confidence,
     domain: data.domain || null,
     sharedAt: new Date().toISOString(),
-    sharedBy: EXP_USER,
+    sharedBy: getExpUser(),
   };
 }
 
@@ -2238,4 +2240,4 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
 
 // --- Exports ---
 
-module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _ROUTER_ENABLED: ROUTER_ENABLED };
+module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _isRouterEnabled: isRouterEnabled };
