@@ -44,51 +44,55 @@ if (!fs.existsSync(normalised)) process.exit(0);
   const { surfacedIds = [], toolName = '', toolInput = '', toolOutcome = null } = data;
 
   // Load core functions from experience-core.js
-  let classifyViaBrain, recordFeedback;
+  let classifyViaBrain, recordJudgeFeedback;
   try {
     const core = require(path.join(EXP_DIR, 'experience-core.js'));
-    classifyViaBrain = core.classifyViaBrain;
-    recordFeedback   = core.recordFeedback;
+    classifyViaBrain    = core.classifyViaBrain;
+    recordJudgeFeedback = core.recordJudgeFeedback;
   } catch {
     try { fs.unlinkSync(normalised); } catch {}
     process.exit(0);
   }
 
-  if (typeof classifyViaBrain !== 'function' || typeof recordFeedback !== 'function') {
+  if (typeof classifyViaBrain !== 'function' || typeof recordJudgeFeedback !== 'function') {
     try { fs.unlinkSync(normalised); } catch {}
     process.exit(0);
   }
 
   // Judge each suggestion in parallel — one LLM call per suggestion
+  const VALID_VERDICTS = new Set(['FOLLOWED', 'IGNORED', 'IRRELEVANT', 'UNCLEAR']);
+
   await Promise.allSettled(surfacedIds.map(async ({ collection, id, solution }) => {
     if (!solution || !id || !collection) return;
 
     const prompt =
       `HINT: ${solution}\nTOOL: ${toolName}\nACTION: ${toolInput || ''}\n\n` +
-      `Did the agent follow this hint? Reply with exactly one word: FOLLOWED, IGNORED, or UNCLEAR.`;
+      `Classify: did the agent follow this hint?\n` +
+      `Reply with exactly one word: FOLLOWED, IGNORED, IRRELEVANT, or UNCLEAR.\n` +
+      `- FOLLOWED: agent action aligns with hint\n` +
+      `- IGNORED: hint was relevant but agent did not follow\n` +
+      `- IRRELEVANT: hint does not apply to this tool/file/context\n` +
+      `- UNCLEAR: cannot determine`;
 
-    let result = null;
+    let verdict = 'UNCLEAR';
     try {
-      // classifyViaBrain signature: (prompt, timeoutMs) — no options object
       const raw  = await classifyViaBrain(prompt, 8000);
-      // Parse strictly: take first word only (T-b3s-04)
       const word = (raw || '').trim().toUpperCase().split(/\s+/)[0];
-      if (word === 'FOLLOWED') result = true;
-      else if (word === 'IGNORED') result = false;
-      // UNCLEAR or anything else → result stays null → no feedback recorded
+      if (VALID_VERDICTS.has(word)) verdict = word;
     } catch {
-      // Any exception → treat as UNCLEAR
+      // Any exception → UNCLEAR
     }
 
-    // Hybrid signal (per D-decision): error outcome + UNCLEAR → followed=false
-    if (result === null && toolOutcome === 'error') result = false;
+    // Hybrid signal: error outcome + UNCLEAR → IGNORED
+    if (verdict === 'UNCLEAR' && toolOutcome === 'error') verdict = 'IGNORED';
 
-    if (result !== null) {
-      try {
-        await recordFeedback(collection, id, result);
-      } catch {
-        // Ignore — feedback failure must not crash worker
-      }
+    // UNCLEAR → no feedback (neutral)
+    if (verdict === 'UNCLEAR') return;
+
+    try {
+      await recordJudgeFeedback(collection, id, verdict);
+    } catch {
+      // Ignore — feedback failure must not crash worker
     }
   }));
 

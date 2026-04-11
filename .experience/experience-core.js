@@ -152,6 +152,12 @@ function incrementIgnoreCountData(data) {
   return data;
 }
 
+function incrementIrrelevantData(data) {
+  data.irrelevantCount = (data.irrelevantCount || 0) + 1;
+  data.lastIrrelevantAt = new Date().toISOString();
+  return data;
+}
+
 /**
  * Shared read-modify-write helper for FileStore and Qdrant.
  * Fetches the point payload, calls updateFn(data) to mutate in-place, then writes back.
@@ -1259,6 +1265,18 @@ async function recordFeedback(collection, pointId, followed) {
   activityLog({ op: 'feedback', collection, pointId: pointId.slice(0, 8), followed });
 }
 
+// --- recordJudgeFeedback: LLM judge verdict with IRRELEVANT separation ---
+
+async function recordJudgeFeedback(collection, pointId, verdict) {
+  const updateFn = verdict === 'FOLLOWED' ? applyHitUpdate
+    : verdict === 'IGNORED' ? incrementIgnoreCountData
+    : verdict === 'IRRELEVANT' ? incrementIrrelevantData
+    : null;
+  if (!updateFn) return; // UNCLEAR → no feedback
+  await updatePointPayload(collection, pointId, updateFn);
+  activityLog({ op: 'judge-feedback', collection, pointId: pointId.slice(0, 8), verdict });
+}
+
 // --- syncToQdrant: migrate FileStore data to Qdrant (per D-17) ---
 
 async function syncToQdrant() {
@@ -2080,4 +2098,4 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
 
 // --- Exports ---
 
-module.exports = { intercept, interceptWithMeta, recordFeedback, extractFromSession, recordHit, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter };
+module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, extractFromSession, recordHit, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter };
