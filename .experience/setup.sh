@@ -14,6 +14,28 @@ set +H 2>/dev/null   # disable history expansion — fixes !res.ok in node -e bl
 # Supported agents: Claude Code, Gemini CLI, Codex CLI, OpenCode
 # Prerequisites: Node.js 20+
 
+# ── WSL mismatch detection ─────────────────────────────────────────────────
+# PowerShell's `bash` invokes WSL, not Git Bash. WSL lacks Windows node,
+# paths differ, and install goes to /root/ instead of /c/Users/.
+# Detect: WSL + script on Windows filesystem = wrong shell.
+if grep -qi microsoft /proc/version 2>/dev/null; then
+  _SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)"
+  if [[ "$_SCRIPT_PATH" == /mnt/* ]]; then
+    echo ""
+    echo "  [ERROR] Running in WSL but script is on Windows filesystem."
+    echo ""
+    echo "  PowerShell 'bash' invokes WSL, not Git Bash."
+    echo "  WSL lacks Windows-side Node.js and paths won't work correctly."
+    echo ""
+    echo "  Fix — choose one:"
+    echo "    1. From PowerShell:  & \"\$env:ProgramFiles\\Git\\bin\\bash.exe\" $0 $*"
+    echo "    2. Open Git Bash terminal, then:  bash $0"
+    echo "    3. Install setup.ps1 wrapper (see README)"
+    echo ""
+    exit 1
+  fi
+fi
+
 INSTALL_DIR="$HOME/.experience"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 
