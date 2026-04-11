@@ -67,12 +67,17 @@ if (!fs.existsSync(normalised)) process.exit(0);
 
     const prompt =
       `HINT: ${solution}\nTOOL: ${toolName}\nACTION: ${toolInput || ''}\n\n` +
-      `Classify: did the agent follow this hint?\n` +
-      `Reply with exactly one word: FOLLOWED, IGNORED, IRRELEVANT, or UNCLEAR.\n` +
-      `- FOLLOWED: agent action aligns with hint\n` +
-      `- IGNORED: hint was relevant but agent did not follow\n` +
-      `- IRRELEVANT: hint does not apply to this tool/file/context\n` +
-      `- UNCLEAR: cannot determine`;
+      `Classify this interaction. Reply with exactly one word.\n\n` +
+      `FOLLOWED — the action directly applies what the hint recommends\n` +
+      `IGNORED — the hint IS relevant to this action but the agent did the opposite\n` +
+      `IRRELEVANT — the hint has NOTHING to do with this action (wrong language, wrong tool, unrelated task like git/deploy/docs)\n` +
+      `UNCLEAR — cannot determine\n\n` +
+      `Examples:\n` +
+      `- HINT about C# code + ACTION edits .cs file following hint → FOLLOWED\n` +
+      `- HINT about C# code + ACTION edits .cs file ignoring hint → IGNORED\n` +
+      `- HINT about C# code + ACTION runs "git status" → IRRELEVANT\n` +
+      `- HINT about library code + ACTION edits docs/config/deploy → IRRELEVANT\n\n` +
+      `Your answer (one word):`;
 
     let verdict = 'UNCLEAR';
     try {
