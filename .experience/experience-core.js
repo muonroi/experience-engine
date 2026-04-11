@@ -14,52 +14,100 @@
 
 'use strict';
 
+const fs = require('fs');
+const pathMod = require('path');
+const os = require('os');
+
 // --- Native config loader (D-06) ---
 // Reads ~/.experience/config.json BEFORE any other config.
 // setup.sh writes this file. No injection, no env auto-detect.
-const _cfg = (() => {
+// Singleton loader: one cache per process, but refreshes automatically when the file changes.
+const CONFIG_PATH = pathMod.join(os.homedir(), '.experience', 'config.json');
+const configState = { mtimeMs: null, value: {} };
+
+function readConfigFile() {
   try {
-    return JSON.parse(
-      require('fs').readFileSync(
-        require('path').join(require('os').homedir(), '.experience', 'config.json'),
-        'utf8'
-      )
-    );
-  } catch { return {}; }
-})();
+    return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function loadConfig(force = false) {
+  try {
+    const stat = fs.statSync(CONFIG_PATH);
+    if (!force && configState.mtimeMs === stat.mtimeMs) return configState.value;
+    configState.mtimeMs = stat.mtimeMs;
+    configState.value = readConfigFile();
+    return configState.value;
+  } catch {
+    configState.mtimeMs = null;
+    configState.value = {};
+    return configState.value;
+  }
+}
+
+function getConfig() {
+  return loadConfig(false);
+}
+
+function refreshConfig() {
+  return loadConfig(true);
+}
+
+function cfgValue(key, envKey, fallback) {
+  const cfg = getConfig();
+  return cfg[key] ?? process.env[envKey] ?? fallback;
+}
 
 // --- Config (D-07, D-11) ---
 // Priority: config.json > EXPERIENCE_* env vars > defaults
 // NEVER fall back to ambient env (OPENAI_API_KEY, GEMINI_API_KEY, etc.)
 
-const QDRANT_BASE     = _cfg.qdrantUrl     || process.env.EXPERIENCE_QDRANT_URL     || 'http://localhost:6333';
-const QDRANT_API_KEY  = _cfg.qdrantKey     || process.env.EXPERIENCE_QDRANT_KEY     || '';
-const OLLAMA_BASE     = _cfg.ollamaUrl     || process.env.EXPERIENCE_OLLAMA_URL     || 'http://localhost:11434';
-const EMBED_PROVIDER  = _cfg.embedProvider || process.env.EXPERIENCE_EMBED_PROVIDER || 'ollama';
-const BRAIN_PROVIDER  = _cfg.brainProvider || process.env.EXPERIENCE_BRAIN_PROVIDER || 'ollama';
-const EMBED_MODEL     = _cfg.embedModel    || process.env.EXPERIENCE_EMBED_MODEL    || 'nomic-embed-text';
-const BRAIN_MODEL     = _cfg.brainModel    || process.env.EXPERIENCE_BRAIN_MODEL    || 'qwen2.5:3b';
-const EMBED_ENDPOINT  = _cfg.embedEndpoint || process.env.EXPERIENCE_EMBED_ENDPOINT || '';
-const EMBED_KEY       = _cfg.embedKey      || process.env.EXPERIENCE_EMBED_KEY      || '';
-const BRAIN_ENDPOINT  = _cfg.brainEndpoint || process.env.EXPERIENCE_BRAIN_ENDPOINT || '';
-const BRAIN_KEY       = _cfg.brainKey      || process.env.EXPERIENCE_BRAIN_KEY      || '';
-const EMBED_DIM       = _cfg.embedDim      || 768;
-const MIN_CONFIDENCE  = _cfg.minConfidence  || 0.42;
-const HIGH_CONFIDENCE = _cfg.highConfidence || 0.60;
+function getQdrantBase()     { return cfgValue('qdrantUrl', 'EXPERIENCE_QDRANT_URL', 'http://localhost:6333'); }
+function getQdrantApiKey()   { return cfgValue('qdrantKey', 'EXPERIENCE_QDRANT_KEY', ''); }
+function getOllamaBase()     { return cfgValue('ollamaUrl', 'EXPERIENCE_OLLAMA_URL', 'http://localhost:11434'); }
+function getEmbedProvider()  { return cfgValue('embedProvider', 'EXPERIENCE_EMBED_PROVIDER', 'ollama'); }
+function getBrainProvider()  { return cfgValue('brainProvider', 'EXPERIENCE_BRAIN_PROVIDER', 'ollama'); }
+function getEmbedModel()     { return cfgValue('embedModel', 'EXPERIENCE_EMBED_MODEL', 'nomic-embed-text'); }
+function getBrainModel()     { return cfgValue('brainModel', 'EXPERIENCE_BRAIN_MODEL', 'qwen2.5:3b'); }
+function getEmbedEndpoint()  { return cfgValue('embedEndpoint', 'EXPERIENCE_EMBED_ENDPOINT', ''); }
+function getEmbedKey()       { return cfgValue('embedKey', 'EXPERIENCE_EMBED_KEY', ''); }
+function getBrainEndpoint()  { return cfgValue('brainEndpoint', 'EXPERIENCE_BRAIN_ENDPOINT', ''); }
+function getBrainKey()       { return cfgValue('brainKey', 'EXPERIENCE_BRAIN_KEY', ''); }
+function getEmbedDim()       { return cfgValue('embedDim', 'EXPERIENCE_EMBED_DIM', 768); }
+function getMinConfidence()  { return cfgValue('minConfidence', 'EXPERIENCE_MIN_CONFIDENCE', 0.42); }
+function getHighConfidence() { return cfgValue('highConfidence', 'EXPERIENCE_HIGH_CONFIDENCE', 0.60); }
 
 // --- Model Router config ---
-const ROUTER_ENABLED           = _cfg.routing === true;
-const ROUTER_HISTORY_THRESHOLD = _cfg.routerHistoryThreshold || 0.80;
-const ROUTER_DEFAULT_TIER      = _cfg.routerDefaultTier      || 'balanced';
-const MODEL_TIERS = _cfg.modelTiers || {
-  claude:   { fast: 'haiku',           balanced: 'sonnet',        premium: 'opus' },
-  gemini:   { fast: 'gemini-2.0-flash', balanced: 'gemini-2.5-pro', premium: 'gemini-2.5-pro' },
-  codex:    { fast: 'codex-mini',      balanced: 'o3',            premium: 'o3' },
-  opencode: { fast: 'haiku',           balanced: 'sonnet',        premium: 'opus' },
-};
+function isRouterEnabled() {
+  return getConfig().routing === true;
+}
 
-const OLLAMA_EMBED_URL = `${OLLAMA_BASE}/api/embed`;
-const OLLAMA_GENERATE_URL = `${OLLAMA_BASE}/api/generate`;
+function getRouterHistoryThreshold() {
+  return getConfig().routerHistoryThreshold ?? 0.80;
+}
+
+function getRouterDefaultTier() {
+  return getConfig().routerDefaultTier ?? 'balanced';
+}
+
+function getModelTiers() {
+  return getConfig().modelTiers || {
+    claude:   { fast: 'claude-haiku-4-5',  balanced: 'claude-sonnet-4-6', premium: 'claude-opus-4-6' },
+    gemini:   { fast: 'gemini-3-flash',    balanced: 'gemini-3-pro',      premium: 'gemini-3.1-pro' },
+    codex:    { fast: 'o4-mini',           balanced: 'gpt-5.2',           premium: 'gpt-5.4' },
+    opencode: { fast: 'claude-haiku-4-5',  balanced: 'claude-sonnet-4-6', premium: 'claude-opus-4-6' },
+  };
+}
+
+function getOllamaEmbedUrl() {
+  return `${getOllamaBase()}/api/embed`;
+}
+
+function getOllamaGenerateUrl() {
+  return `${getOllamaBase()}/api/generate`;
+}
 
 const COLLECTIONS = [
   { name: 'experience-principles', topK: 2, budgetChars: 800 },
@@ -179,8 +227,8 @@ async function updatePointPayload(collection, pointId, updateFn) {
     return;
   }
   try {
-    const res = await fetch(`${QDRANT_BASE}/collections/${collection}/points/${pointId}`, {
-      headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+    const res = await fetch(`${getQdrantBase()}/collections/${collection}/points/${pointId}`, {
+      headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return;
@@ -188,9 +236,9 @@ async function updatePointPayload(collection, pointId, updateFn) {
     if (!point?.payload?.json) return;
     const data = JSON.parse(point.payload.json);
     updateFn(data);
-    await fetch(`${QDRANT_BASE}/collections/${collection}/points/payload`, {
+    await fetch(`${getQdrantBase()}/collections/${collection}/points/payload`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+      headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
       body: JSON.stringify({ points: [pointId], payload: { json: JSON.stringify(data) } }),
       signal: AbortSignal.timeout(5000),
     });
@@ -204,20 +252,26 @@ async function incrementIgnoreCount(collection, pointId) {
 // --- Qdrant availability (per D-14) ---
 let qdrantAvailable = null; // null = unchecked, true/false = checked
 // Phase 109: Multi-user support — user-namespaced store directory
-const EXP_USER = _cfg.user || process.env.EXP_USER || 'default';
-const FILESTORE_BASE = require('path').join(require('os').homedir(), '.experience', 'store');
-const FILESTORE_DIR = require('path').join(FILESTORE_BASE, EXP_USER);
+function getExpUser() {
+  return cfgValue('user', 'EXP_USER', 'default');
+}
+
+const FILESTORE_BASE = pathMod.join(os.homedir(), '.experience', 'store');
+
+function getFileStoreDir() {
+  return pathMod.join(FILESTORE_BASE, getExpUser());
+}
 
 // Auto-migrate: if old-style files exist at base and user is 'default', move them
 (() => {
-  if (EXP_USER !== 'default') return;
+  if (getExpUser() !== 'default') return;
   try {
     const oldFiles = fs.readdirSync(FILESTORE_BASE).filter(f => f.endsWith('.json') && !f.startsWith('.'));
-    if (oldFiles.length > 0 && !fs.existsSync(FILESTORE_DIR)) {
-      fs.mkdirSync(FILESTORE_DIR, { recursive: true });
+    if (oldFiles.length > 0 && !fs.existsSync(getFileStoreDir())) {
+      fs.mkdirSync(getFileStoreDir(), { recursive: true });
       for (const f of oldFiles) {
         const src = pathMod.join(FILESTORE_BASE, f);
-        const dst = pathMod.join(FILESTORE_DIR, f);
+        const dst = pathMod.join(getFileStoreDir(), f);
         if (!fs.existsSync(dst)) fs.renameSync(src, dst);
       }
     }
@@ -227,8 +281,9 @@ const FILESTORE_DIR = require('path').join(FILESTORE_BASE, EXP_USER);
 async function checkQdrant() {
   if (qdrantAvailable !== null) return qdrantAvailable;
   try {
-    const res = await fetch(`${QDRANT_BASE}/collections`, {
-      headers: QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {},
+    const apiKey = getQdrantApiKey();
+    const res = await fetch(`${getQdrantBase()}/collections`, {
+      headers: apiKey ? { 'api-key': apiKey } : {},
       signal: AbortSignal.timeout(3000),
     });
     qdrantAvailable = res.ok;
@@ -236,12 +291,8 @@ async function checkQdrant() {
   return qdrantAvailable;
 }
 
-// --- FileStore: JSON-based fallback (per D-13) ---
-const fs = require('fs');
-const pathMod = require('path');
-
 // --- Activity logging (Phase 102) ---
-const ACTIVITY_LOG = process.env.EXPERIENCE_ACTIVITY_LOG || pathMod.join(require('os').homedir(), '.experience', 'activity.jsonl');
+const ACTIVITY_LOG = process.env.EXPERIENCE_ACTIVITY_LOG || pathMod.join(os.homedir(), '.experience', 'activity.jsonl');
 const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB
 
 function activityLog(event) {
@@ -348,7 +399,7 @@ function extractProjectSlug(filePath) {
 }
 
 function fileStorePath(collection) {
-  return pathMod.join(FILESTORE_DIR, `${collection}.json`);
+  return pathMod.join(getFileStoreDir(), `${collection}.json`);
 }
 
 function fileStoreRead(collection) {
@@ -397,7 +448,7 @@ function releaseLock(collection) {
 }
 
 function fileStoreWrite(collection, entries) {
-  fs.mkdirSync(FILESTORE_DIR, { recursive: true });
+  fs.mkdirSync(getFileStoreDir(), { recursive: true });
   const locked = acquireLock(collection);
   try {
     const tmp = fileStorePath(collection) + '.tmp';
@@ -492,7 +543,7 @@ async function interceptWithMeta(toolName, toolInput, signal) {
   if (!vector) return null;
 
   // Route model in parallel with searches when routing is enabled (zero added latency)
-  const routePromise = ROUTER_ENABLED
+  const routePromise = isRouterEnabled()
     ? routeModel(query, { files: [filePath].filter(Boolean), domain: queryDomain }, detectRuntime(toolName)).catch(() => null)
     : Promise.resolve(null);
 
@@ -577,7 +628,7 @@ async function interceptWithMeta(toolName, toolInput, signal) {
   const surfaced = allReranked.filter(p => {
     try {
       const exp = JSON.parse(p.payload?.json || '{}');
-      return exp.solution && computeEffectiveConfidence(exp) >= MIN_CONFIDENCE;
+      return exp.solution && computeEffectiveConfidence(exp) >= getMinConfidence();
     } catch { return false; }
   });
   if (surfaced.length > 0) {
@@ -615,7 +666,7 @@ async function interceptWithMeta(toolName, toolInput, signal) {
   }
 
   // P6: Brain relevance filter — ask brain if remaining suggestions are relevant to THIS action
-  if (lines.length > 0 && _cfg.brainFilter !== false) {
+  if (lines.length > 0 && getConfig().brainFilter !== false) {
     try {
       const kept = await brainRelevanceFilter(query, lines, signal, queryProjectSlug);
       if (kept !== null) {
@@ -846,20 +897,24 @@ const BRAIN_FNS = {
 };
 
 // Fallback config: primary provider → fallback provider
-const BRAIN_FALLBACK = _cfg.brainFallback || process.env.EXPERIENCE_BRAIN_FALLBACK || (BRAIN_PROVIDER === 'ollama' ? '' : 'ollama');
+function getBrainFallback() {
+  return cfgValue('brainFallback', 'EXPERIENCE_BRAIN_FALLBACK', getBrainProvider() === 'ollama' ? '' : 'ollama');
+}
 
 async function callBrainWithFallback(prompt) {
-  const primary = BRAIN_FNS[BRAIN_PROVIDER] || BRAIN_FNS.ollama;
+  const brainProvider = getBrainProvider();
+  const fallbackProvider = getBrainFallback();
+  const primary = BRAIN_FNS[brainProvider] || BRAIN_FNS.ollama;
   let result = await primary(prompt);
   if (result) return result;
-  activityLog({ op: 'brain-failure', provider: BRAIN_PROVIDER, phase: 'primary' });
-  if (BRAIN_FALLBACK && BRAIN_FNS[BRAIN_FALLBACK]) {
-    result = await BRAIN_FNS[BRAIN_FALLBACK](prompt);
+  activityLog({ op: 'brain-failure', provider: brainProvider, phase: 'primary' });
+  if (fallbackProvider && BRAIN_FNS[fallbackProvider]) {
+    result = await BRAIN_FNS[fallbackProvider](prompt);
     if (result) {
-      activityLog({ op: 'brain-fallback', provider: BRAIN_FALLBACK });
+      activityLog({ op: 'brain-fallback', provider: fallbackProvider });
       return result;
     }
-    activityLog({ op: 'brain-failure', provider: BRAIN_FALLBACK, phase: 'fallback' });
+    activityLog({ op: 'brain-failure', provider: fallbackProvider, phase: 'fallback' });
   }
   return null;
 }
@@ -895,26 +950,26 @@ Reply with ONLY the relevant warning numbers separated by commas (e.g. "1,3"), o
 
   // Use a dedicated fast brain call with short timeout
   try {
-    const brainFn = BRAIN_FNS[BRAIN_PROVIDER] || BRAIN_FNS.ollama;
+    const brainProvider = getBrainProvider();
     let response;
 
     // Direct call with tight timeout — bypass callBrainWithFallback to avoid JSON parsing
-    if (BRAIN_PROVIDER === 'ollama') {
-      const res = await fetch(OLLAMA_GENERATE_URL, {
+    if (brainProvider === 'ollama') {
+      const res = await fetch(getOllamaGenerateUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: BRAIN_MODEL, prompt, stream: false, options: { temperature: 0.1, num_predict: 20 } }),
+        body: JSON.stringify({ model: getBrainModel(), prompt, stream: false, options: { temperature: 0.1, num_predict: 20 } }),
         signal: signal || AbortSignal.timeout(3000),
       });
       if (!res.ok) return null;
       response = (await res.json()).response || '';
     } else {
       // OpenAI-compatible / Gemini / Claude — use chat endpoint
-      const endpoint = BRAIN_ENDPOINT || 'https://api.openai.com/v1/chat/completions';
+      const endpoint = getBrainEndpoint() || 'https://api.openai.com/v1/chat/completions';
       const res = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${BRAIN_KEY}` },
-        body: JSON.stringify({ model: BRAIN_MODEL, messages: [{ role: 'user', content: prompt }], temperature: 0.1, max_tokens: 20 }),
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getBrainKey()}` },
+        body: JSON.stringify({ model: getBrainModel(), messages: [{ role: 'user', content: prompt }], temperature: 0.1, max_tokens: 20 }),
         signal: signal || AbortSignal.timeout(3000),
       });
       if (!res.ok) return null;
@@ -942,10 +997,10 @@ async function extractQA(mistake) {
 
 async function brainOllama(prompt) {
   try {
-    const res = await fetch(OLLAMA_GENERATE_URL, {
+    const res = await fetch(getOllamaGenerateUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: BRAIN_MODEL, prompt, stream: false, options: { temperature: 0.3 } }),
+      body: JSON.stringify({ model: getBrainModel(), prompt, stream: false, options: { temperature: 0.3 } }),
       signal: AbortSignal.timeout(90000),
     });
     if (!res.ok) return null;
@@ -956,8 +1011,8 @@ async function brainOllama(prompt) {
 
 async function brainOpenAI(prompt) {
   // Reused for any OpenAI-compatible API (OpenAI, SiliconFlow, Together, Groq, etc.)
-  const endpoint = BRAIN_ENDPOINT || 'https://api.openai.com/v1/chat/completions';
-  const body = { model: BRAIN_MODEL || 'gpt-4o-mini', messages: [{ role:'user', content: prompt }], temperature: 0.3 };
+  const endpoint = getBrainEndpoint() || 'https://api.openai.com/v1/chat/completions';
+  const body = { model: getBrainModel() || 'gpt-4o-mini', messages: [{ role:'user', content: prompt }], temperature: 0.3 };
   // Only add json_object mode for known-supporting providers (OpenAI, DeepSeek)
   if (endpoint.includes('openai.com') || endpoint.includes('deepseek.com')) {
     body.response_format = { type: 'json_object' };
@@ -965,7 +1020,7 @@ async function brainOpenAI(prompt) {
   try {
     const res = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${BRAIN_KEY}` },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getBrainKey()}` },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(15000),
     });
@@ -980,8 +1035,8 @@ async function brainOpenAI(prompt) {
 
 async function brainGemini(prompt) {
   try {
-    const model = BRAIN_MODEL || 'gemini-2.0-flash';
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${BRAIN_KEY}`, {
+    const model = getBrainModel() || 'gemini-2.0-flash';
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${getBrainKey()}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0.3 } }),
@@ -997,8 +1052,8 @@ async function brainClaude(prompt) {
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': BRAIN_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: BRAIN_MODEL || 'claude-haiku-4-5-20251001', max_tokens: 512, messages: [{ role:'user', content: prompt }] }),
+      headers: { 'Content-Type': 'application/json', 'x-api-key': getBrainKey(), 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: getBrainModel() || 'claude-haiku-4-5-20251001', max_tokens: 512, messages: [{ role:'user', content: prompt }] }),
       signal: AbortSignal.timeout(15000),
     });
     if (!res.ok) return null;
@@ -1012,8 +1067,8 @@ async function brainDeepSeek(prompt) {
   try {
     const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${BRAIN_KEY}` },
-      body: JSON.stringify({ model: BRAIN_MODEL || 'deepseek-chat', messages: [{ role:'user', content: prompt }], temperature: 0.3, response_format: { type:'json_object' } }),
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getBrainKey()}` },
+      body: JSON.stringify({ model: getBrainModel() || 'deepseek-chat', messages: [{ role:'user', content: prompt }], temperature: 0.3, response_format: { type:'json_object' } }),
       signal: AbortSignal.timeout(15000),
     });
     if (!res.ok) return null;
@@ -1033,10 +1088,10 @@ async function isDuplicate(qa) {
   }
 
   try {
-    const res = await fetch(`${QDRANT_BASE}/collections/${SELFQA_COLLECTION}/points/query`, {
+    const res = await fetch(`${getQdrantBase()}/collections/${SELFQA_COLLECTION}/points/query`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-      body: JSON.stringify({ query: vector, limit: 1, with_payload: false, filter: { must: [QDRANT_USER_FILTER] } }),
+      headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+      body: JSON.stringify({ query: vector, limit: 1, with_payload: false, filter: { must: [buildQdrantUserFilter()] } }),
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return false;
@@ -1073,15 +1128,15 @@ async function storeExperience(qa, domain, projectSlug) {
   const id = crypto.randomUUID();
   const payload = {
     json: JSON.stringify(buildStorePayload(id, qa, domain, projectSlug)),
-    user: EXP_USER,
+    user: getExpUser(),
   };
 
   if (!(await checkQdrant())) {
     fileStoreUpsert(SELFQA_COLLECTION, id, vector, payload);
   } else {
-    await fetch(`${QDRANT_BASE}/collections/${SELFQA_COLLECTION}/points`, {
+    await fetch(`${getQdrantBase()}/collections/${SELFQA_COLLECTION}/points`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+      headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
       body: JSON.stringify({ points: [{ id, vector, payload }] }),
       signal: AbortSignal.timeout(5000),
     });
@@ -1111,7 +1166,7 @@ async function storeExperience(qa, domain, projectSlug) {
 
 // --- Provider abstraction (D-08, D-09, D-10) ---
 // EMBED_PROVIDER / BRAIN_PROVIDER come from config.json (set by setup.sh).
-// Dim is ALWAYS read from config.json (EMBED_DIM constant) — never hardcoded here.
+// Dim is ALWAYS read from config.json via getEmbedDim() — never hardcoded here.
 // siliconflow and custom are first-class providers (reuse OpenAI-compatible fn).
 
 const EMBED_PROVIDERS = {
@@ -1124,16 +1179,16 @@ const EMBED_PROVIDERS = {
 };
 
 async function getEmbedding(text, signal) {
-  const p = EMBED_PROVIDERS[EMBED_PROVIDER] || EMBED_PROVIDERS.ollama;
+  const p = EMBED_PROVIDERS[getEmbedProvider()] || EMBED_PROVIDERS.ollama;
   return p.fn(text, signal);
 }
 
 async function embedOllama(text, signal) {
   try {
-    const res = await fetch(OLLAMA_EMBED_URL, {
+    const res = await fetch(getOllamaEmbedUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: EMBED_MODEL, input: text }),
+      body: JSON.stringify({ model: getEmbedModel(), input: text }),
       signal: signal || AbortSignal.timeout(10000),
     });
     if (!res.ok) return null;
@@ -1143,12 +1198,12 @@ async function embedOllama(text, signal) {
 
 async function embedOpenAI(text, signal) {
   // Supports OpenAI, SiliconFlow, custom, and any OpenAI-compatible embedding API
-  const endpoint = EMBED_ENDPOINT || 'https://api.openai.com/v1/embeddings';
+  const endpoint = getEmbedEndpoint() || 'https://api.openai.com/v1/embeddings';
   try {
     const res = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${EMBED_KEY}` },
-      body: JSON.stringify({ model: EMBED_MODEL || 'text-embedding-3-small', input: text.slice(0, 8000) }),
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getEmbedKey()}` },
+      body: JSON.stringify({ model: getEmbedModel() || 'text-embedding-3-small', input: text.slice(0, 8000) }),
       signal: signal || AbortSignal.timeout(10000),
     });
     if (!res.ok) return null;
@@ -1158,8 +1213,8 @@ async function embedOpenAI(text, signal) {
 
 async function embedGemini(text, signal) {
   try {
-    const model = EMBED_MODEL || 'text-embedding-004';
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${EMBED_KEY}`, {
+    const model = getEmbedModel() || 'text-embedding-004';
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${getEmbedKey()}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: { parts: [{ text: text.slice(0, 8000) }] } }),
@@ -1174,8 +1229,8 @@ async function embedVoyageAI(text, signal) {
   try {
     const res = await fetch('https://api.voyageai.com/v1/embeddings', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${EMBED_KEY}` },
-      body: JSON.stringify({ model: EMBED_MODEL || 'voyage-code-3', input: [text.slice(0, 8000)] }),
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getEmbedKey()}` },
+      body: JSON.stringify({ model: getEmbedModel() || 'voyage-code-3', input: [text.slice(0, 8000)] }),
       signal: signal || AbortSignal.timeout(10000),
     });
     if (!res.ok) return null;
@@ -1192,8 +1247,9 @@ async function fetchPointById(collection, pointId) {
     return found ? { id: found.id, score: 1.0, payload: found.payload } : null;
   }
   try {
-    const res = await fetch(`${QDRANT_BASE}/collections/${collection}/points/${pointId}`, {
-      headers: { 'Content-Type': 'application/json', ...(QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {}) },
+    const apiKey = getQdrantApiKey();
+    const res = await fetch(`${getQdrantBase()}/collections/${collection}/points/${pointId}`, {
+      headers: { 'Content-Type': 'application/json', ...(apiKey ? { 'api-key': apiKey } : {}) },
       signal: AbortSignal.timeout(3000),
     });
     if (!res.ok) return null;
@@ -1203,20 +1259,22 @@ async function fetchPointById(collection, pointId) {
 }
 
 // Qdrant user filter — only return entries owned by current user (or untagged legacy entries)
-const QDRANT_USER_FILTER = {
-  should: [
-    { key: 'user', match: { value: EXP_USER } },
-    { is_empty: { key: 'user' } },  // backward-compat: untagged = accessible by all
-  ],
-};
+function buildQdrantUserFilter() {
+  return {
+    should: [
+      { key: 'user', match: { value: getExpUser() } },
+      { is_empty: { key: 'user' } },  // backward-compat: untagged = accessible by all
+    ],
+  };
+}
 
 async function searchCollection(name, vector, topK, signal) {
   if (!(await checkQdrant())) return fileStoreSearch(name, vector, topK);
   try {
-    const res = await fetch(`${QDRANT_BASE}/collections/${name}/points/query`, {
+    const res = await fetch(`${getQdrantBase()}/collections/${name}/points/query`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-      body: JSON.stringify({ query: vector, limit: topK, with_payload: true, filter: { must: [QDRANT_USER_FILTER] } }),
+      headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+      body: JSON.stringify({ query: vector, limit: topK, with_payload: true, filter: { must: [buildQdrantUserFilter()] } }),
       signal,
     });
     if (!res.ok) return fileStoreSearch(name, vector, topK);
@@ -1290,11 +1348,11 @@ function formatPoints(points) {
     if (!exp.solution) continue;
     // Use effective confidence for the MIN_CONFIDENCE filter (NOISE-03)
     const effConf = computeEffectiveConfidence(exp);
-    if (effConf < MIN_CONFIDENCE) continue;
+    if (effConf < getMinConfidence()) continue;
     // Use _effectiveScore (from rerankByQuality) for display, fallback to raw score
     const displayScore = point._effectiveScore ?? point.score ?? 0;
     let line;
-    if (displayScore >= HIGH_CONFIDENCE) {
+    if (displayScore >= getHighConfidence()) {
       line = `⚠️ [Experience - High Confidence (${displayScore.toFixed(2)})]: ${exp.solution}`;
     } else {
       line = `💡 [Suggestion (${displayScore.toFixed(2)})]: ${exp.solution}`;
@@ -1373,9 +1431,9 @@ async function syncToQdrant() {
       const batch = entries.slice(i, i + 50).map(e => ({
         id: e.id, vector: e.vector, payload: e.payload,
       }));
-      await fetch(`${QDRANT_BASE}/collections/${coll}/points`, {
+      await fetch(`${getQdrantBase()}/collections/${coll}/points`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+        headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
         body: JSON.stringify({ points: batch }),
         signal: AbortSignal.timeout(30000),
       });
@@ -1406,7 +1464,7 @@ function createEdge(source, target, type, weight = 1.0, createdBy = 'auto') {
   if (exists) return null;
   // Edges are FileStore-only — no vector search needed, queried by source/target ID.
   // Removed dummy vector: [0] Qdrant upsert (Risk #4: wasted index space).
-  fileStoreUpsert(EDGE_COLLECTION, edge.id, [], { json: JSON.stringify(edge), user: EXP_USER });
+  fileStoreUpsert(EDGE_COLLECTION, edge.id, [], { json: JSON.stringify(edge), user: getExpUser() });
   activityLog({ op: 'edge-create', type, source: source.slice(0, 8), target: target.slice(0, 8) });
   return edge;
 }
@@ -1543,7 +1601,7 @@ async function evolve(trigger) {
   // Step 3: Demote T1 -> T2 (per D-06)
   // Demotion triggers:
   //   - ignoreCount >= 3: agent repeatedly ignores this suggestion (tracked by NOISE-04)
-  //   - confidence decayed below MIN_CONFIDENCE after aging
+  //   - confidence decayed below getMinConfidence() after aging
   //   - contradiction flag set externally (future: user override)
   const t1Entries = await getAllEntries('experience-behavioral');
   for (const entry of t1Entries) {
@@ -1551,7 +1609,7 @@ async function evolve(trigger) {
     if (!data) continue;
     const shouldDemote = data.contradiction
       || (data.ignoreCount || 0) >= 3
-      || computeEffectiveConfidence(data) < MIN_CONFIDENCE;
+      || computeEffectiveConfidence(data) < getMinConfidence();
     if (shouldDemote) {
       data.tier = 2;
       data.confidence = Math.max(0.1, (data.confidence || 0.5) - 0.2);
