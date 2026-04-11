@@ -170,8 +170,8 @@ describe('Multi-runtime tier resolution', () => {
   it('resolves claude runtime', async () => {
     const r = await routeModel(testTask, null, 'claude');
     assertRouteShape(r, 'claude');
-    assert.ok(['haiku', 'sonnet', 'opus'].includes(r.model),
-      `claude model must be haiku/sonnet/opus, got "${r.model}"`);
+    assert.ok(r.model && r.model.startsWith('claude-'),
+      `claude model must start with "claude-", got "${r.model}"`);
   });
 
   it('resolves gemini runtime', async () => {
@@ -184,15 +184,15 @@ describe('Multi-runtime tier resolution', () => {
   it('resolves codex runtime', async () => {
     const r = await routeModel(testTask, null, 'codex');
     assertRouteShape(r, 'codex');
-    assert.ok(['codex-mini', 'o3'].includes(r.model),
-      `codex model must be codex-mini/o3, got "${r.model}"`);
+    assert.ok(['o4-mini', 'gpt-5.2', 'gpt-5.4'].includes(r.model),
+      `codex model must be o4-mini/gpt-5.2/gpt-5.4, got "${r.model}"`);
   });
 
   it('resolves opencode runtime', async () => {
     const r = await routeModel(testTask, null, 'opencode');
     assertRouteShape(r, 'opencode');
-    assert.ok(['haiku', 'sonnet', 'opus'].includes(r.model),
-      `opencode model must be haiku/sonnet/opus, got "${r.model}"`);
+    assert.ok(r.model && r.model.startsWith('claude-'),
+      `opencode model must start with "claude-", got "${r.model}"`);
   });
 
   it('returns null model when runtime is null', async () => {

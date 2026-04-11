@@ -1822,15 +1822,16 @@ async function getEmbeddingRaw(text, signal) {
   return getEmbedding(text, signal);
 }
 
-// --- Qdrant multi-user migration: tag untagged entries with EXP_USER ---
+// --- Qdrant multi-user migration: tag untagged entries with current user ---
 // Runs once per process, best-effort. Tags existing points that lack a `user` field.
 
 async function migrateQdrantUserTags() {
   // Bypass checkQdrant() cache — migration runs early, cache may not be warm yet.
   // Direct probe instead.
   try {
-    const probe = await fetch(`${QDRANT_BASE}/collections`, {
-      headers: QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {},
+    const apiKey = getQdrantApiKey();
+    const probe = await fetch(`${getQdrantBase()}/collections`, {
+      headers: apiKey ? { 'api-key': apiKey } : {},
       signal: AbortSignal.timeout(3000),
     });
     if (!probe.ok) return;
@@ -1840,9 +1841,9 @@ async function migrateQdrantUserTags() {
   for (const coll of COLLECTIONS) {
     try {
       // Find points without user field
-      const res = await fetch(`${QDRANT_BASE}/collections/${coll.name}/points/scroll`, {
+      const res = await fetch(`${getQdrantBase()}/collections/${coll.name}/points/scroll`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+        headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
         body: JSON.stringify({ limit: 100, with_payload: true, with_vector: false, filter: { must: [{ is_empty: { key: 'user' } }] } }),
         signal: AbortSignal.timeout(10000),
       });
@@ -1850,10 +1851,10 @@ async function migrateQdrantUserTags() {
       const points = (await res.json()).result?.points || [];
       if (points.length === 0) continue;
       // Batch-set user field
-      await fetch(`${QDRANT_BASE}/collections/${coll.name}/points/payload`, {
+      await fetch(`${getQdrantBase()}/collections/${coll.name}/points/payload`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-        body: JSON.stringify({ points: points.map(p => p.id), payload: { user: EXP_USER } }),
+        headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+        body: JSON.stringify({ points: points.map(p => p.id), payload: { user: getExpUser() } }),
         signal: AbortSignal.timeout(10000),
       });
       activityLog({ op: 'migrate-user-tags', collection: coll.name, tagged: points.length });
@@ -1937,14 +1938,14 @@ async function ensureRoutesCollection() {
   if (_routesCollectionReady) return;
   if (!(await checkQdrant())) { _routesCollectionReady = true; return; } // FileStore needs no setup
   try {
-    const check = await fetch(`${QDRANT_BASE}/collections/${ROUTES_COLLECTION}`, {
-      headers: { 'api-key': QDRANT_API_KEY }, signal: AbortSignal.timeout(3000),
+    const check = await fetch(`${getQdrantBase()}/collections/${ROUTES_COLLECTION}`, {
+      headers: { 'api-key': getQdrantApiKey() }, signal: AbortSignal.timeout(3000),
     });
     if (check.ok) { _routesCollectionReady = true; return; }
-    await fetch(`${QDRANT_BASE}/collections/${ROUTES_COLLECTION}`, {
+    await fetch(`${getQdrantBase()}/collections/${ROUTES_COLLECTION}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-      body: JSON.stringify({ vectors: { size: EMBED_DIM, distance: 'Cosine' } }),
+      headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+      body: JSON.stringify({ vectors: { size: getEmbedDim(), distance: 'Cosine' } }),
       signal: AbortSignal.timeout(5000),
     });
     _routesCollectionReady = true;
@@ -1963,18 +1964,21 @@ ensureRoutesCollection().catch(() => {});
  * @returns {Promise<string|null>} raw text response or null on failure
  */
 async function classifyViaBrain(prompt, timeoutMs = 10000) {
-  const key = BRAIN_KEY || '';
+  const brainProvider = getBrainProvider();
+  const endpoint = getBrainEndpoint();
+  const brainModel = getBrainModel();
+  const key = getBrainKey() || '';
 
   // Provider: siliconflow or any OpenAI-compatible endpoint
-  if (BRAIN_PROVIDER === 'siliconflow' || BRAIN_ENDPOINT) {
+  if (brainProvider === 'siliconflow' || endpoint) {
     if (!key) return null;
-    const endpoint = BRAIN_ENDPOINT || 'https://api.siliconflow.com/v1/chat/completions';
+    const targetEndpoint = endpoint || 'https://api.siliconflow.com/v1/chat/completions';
     try {
-      const res = await fetch(endpoint, {
+      const res = await fetch(targetEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
         body: JSON.stringify({
-          model: BRAIN_MODEL || 'Qwen/Qwen2.5-7B-Instruct',
+          model: brainModel || 'Qwen/Qwen2.5-7B-Instruct',
           messages: [{ role: 'user', content: prompt }],
           max_tokens: 10,
           temperature: 0.1,
@@ -1987,13 +1991,13 @@ async function classifyViaBrain(prompt, timeoutMs = 10000) {
   }
 
   // Provider: ollama (generate endpoint, plain text)
-  if (BRAIN_PROVIDER === 'ollama') {
+  if (brainProvider === 'ollama') {
     try {
-      const res = await fetch(`${OLLAMA_BASE}/api/generate`, {
+      const res = await fetch(getOllamaGenerateUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: BRAIN_MODEL || 'qwen2.5:3b',
+          model: brainModel || 'qwen2.5:3b',
           prompt,
           stream: false,
           options: { temperature: 0.1, num_predict: 10 },
@@ -2024,7 +2028,7 @@ function normalizeTierResponse(raw) {
 
 function resolveTierModel(tier, runtime) {
   if (!runtime) return null;
-  const runtimeTiers = MODEL_TIERS[runtime];
+  const runtimeTiers = getModelTiers()[runtime];
   if (!runtimeTiers) return null;
   return runtimeTiers[tier] || runtimeTiers.balanced || null;
 }
@@ -2043,13 +2047,13 @@ async function storeRouteDecision(taskText, taskHash, tier, model, runtime, cont
   };
 
   // Dual-write: FileStore always, Qdrant when available
-  try { fileStoreUpsert(ROUTES_COLLECTION, id, vector, { json: JSON.stringify(routeData), user: EXP_USER }); } catch { /* non-blocking */ }
+  try { fileStoreUpsert(ROUTES_COLLECTION, id, vector, { json: JSON.stringify(routeData), user: getExpUser() }); } catch { /* non-blocking */ }
   if (await checkQdrant()) {
     try {
-      await fetch(`${QDRANT_BASE}/collections/${ROUTES_COLLECTION}/points`, {
+      await fetch(`${getQdrantBase()}/collections/${ROUTES_COLLECTION}/points`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-        body: JSON.stringify({ points: [{ id, vector, payload: { json: JSON.stringify(routeData), user: EXP_USER } }] }),
+        headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+        body: JSON.stringify({ points: [{ id, vector, payload: { json: JSON.stringify(routeData), user: getExpUser() } }] }),
         signal: AbortSignal.timeout(5000),
       });
     } catch { /* non-blocking */ }
@@ -2062,7 +2066,7 @@ async function storeRouteDecision(taskText, taskHash, tier, model, runtime, cont
  * Layer 0: Keyword pre-filter (free, ~0ms) — catches obvious cases
  * Layer 1: History check (semantic search, ~50ms) — reuse/upgrade past decisions
  * Layer 2: Brain classify (LLM call, ~200ms) — only when layers 0+1 miss
- * Fallback: ROUTER_DEFAULT_TIER
+ * Fallback: getRouterDefaultTier()
  *
  * @param {string} task - Task description (any language)
  * @param {object|null} context - { files, domain, phase } optional context
@@ -2072,7 +2076,7 @@ async function storeRouteDecision(taskText, taskHash, tier, model, runtime, cont
 async function routeModel(task, context, runtime) {
   const taskText = (task || '').slice(0, 500);
   if (!taskText) {
-    const tier = ROUTER_DEFAULT_TIER;
+    const tier = getRouterDefaultTier();
     const model = resolveTierModel(tier, runtime);
     printRouteDecision(tier, model, 'empty task', 'default');
     activityLog({ op: 'route', task: '', tier, model, source: 'default', confidence: 0 });
@@ -2102,11 +2106,11 @@ async function routeModel(task, context, runtime) {
     const vector = await getEmbedding(taskText);
     if (vector) {
       const hits = await searchCollection(ROUTES_COLLECTION, vector, 3);
-      const bestHit = hits.find(h => (h.score || 0) >= ROUTER_HISTORY_THRESHOLD);
+      const bestHit = hits.find(h => (h.score || 0) >= getRouterHistoryThreshold());
       if (bestHit) {
         const data = (() => { try { return JSON.parse(bestHit.payload?.json || '{}'); } catch { return {}; } })();
         if (data.outcome) {
-          let tier = data.tier || ROUTER_DEFAULT_TIER;
+          let tier = data.tier || getRouterDefaultTier();
           let source = 'history';
           const tiers = ['fast', 'balanced', 'premium'];
           const isNegative = data.outcome === 'fail' || data.outcome === 'cancelled' || (data.retryCount || 0) >= 2;
@@ -2134,7 +2138,7 @@ async function routeModel(task, context, runtime) {
     const brainResult = await classifyViaBrain(prompt);
     if (brainResult) {
       const normalizedTier = normalizeTierResponse(brainResult);
-      const tier = normalizedTier || ROUTER_DEFAULT_TIER;
+      const tier = normalizedTier || getRouterDefaultTier();
       const model = resolveTierModel(tier, runtime);
       const confidence = normalizedTier ? 0.75 : 0.50;
       const reason = `${tier} complexity task`;
@@ -2153,10 +2157,11 @@ async function routeModel(task, context, runtime) {
   } catch { /* Layer 2 failure — fall through to default */ }
 
   // Fallback: safe default
-  const model = resolveTierModel(ROUTER_DEFAULT_TIER, runtime);
-  printRouteDecision(ROUTER_DEFAULT_TIER, model, 'classification unavailable', 'default');
-  activityLog({ op: 'route', task: taskText.slice(0, 100), tier: ROUTER_DEFAULT_TIER, model, source: 'default', confidence: 0 });
-  return { tier: ROUTER_DEFAULT_TIER, model, confidence: 0, source: 'default', reason: 'fallback — classification unavailable', taskHash };
+  const fallbackTier = getRouterDefaultTier();
+  const model = resolveTierModel(fallbackTier, runtime);
+  printRouteDecision(fallbackTier, model, 'classification unavailable', 'default');
+  activityLog({ op: 'route', task: taskText.slice(0, 100), tier: fallbackTier, model, source: 'default', confidence: 0 });
+  return { tier: fallbackTier, model, confidence: 0, source: 'default', reason: 'fallback — classification unavailable', taskHash };
 }
 
 /**
@@ -2207,10 +2212,10 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
   // Qdrant: scroll and update (always try, not just when FileStore misses)
   if (await checkQdrant()) {
     try {
-      const scrollRes = await fetch(`${QDRANT_BASE}/collections/${ROUTES_COLLECTION}/points/scroll`, {
+      const scrollRes = await fetch(`${getQdrantBase()}/collections/${ROUTES_COLLECTION}/points/scroll`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-        body: JSON.stringify({ limit: 100, with_payload: true, filter: { must: [QDRANT_USER_FILTER] } }),
+        headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+        body: JSON.stringify({ limit: 100, with_payload: true, filter: { must: [buildQdrantUserFilter()] } }),
         signal: AbortSignal.timeout(5000),
       });
       if (scrollRes.ok) {
@@ -2220,10 +2225,10 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
           const data = (() => { try { return JSON.parse(point.payload?.json || '{}'); } catch { return {}; } })();
           if (data.taskHash === taskHash) {
             applyUpdate(data);
-            await fetch(`${QDRANT_BASE}/collections/${ROUTES_COLLECTION}/points/payload`, {
+            await fetch(`${getQdrantBase()}/collections/${ROUTES_COLLECTION}/points/payload`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-              body: JSON.stringify({ points: [point.id], payload: { json: JSON.stringify(data), user: EXP_USER } }),
+              headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+              body: JSON.stringify({ points: [point.id], payload: { json: JSON.stringify(data), user: getExpUser() } }),
               signal: AbortSignal.timeout(5000),
             });
             found = true;
