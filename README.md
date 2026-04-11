@@ -16,7 +16,7 @@
     <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-yellow">
     <img alt="Node.js 20+" src="https://img.shields.io/badge/node-20%2B-green">
     <img alt="Tests" src="https://img.shields.io/badge/tests-187%20passing-brightgreen">
-    <img alt="E2E" src="https://img.shields.io/badge/E2E-12%2F12%20verified-brightgreen">
+    <img alt="E2E" src="https://img.shields.io/badge/E2E-44%20tests-brightgreen">
   </p>
 </p>
 
@@ -114,6 +114,8 @@ Step D — Agent wiring:    Claude Code / Gemini CLI / Codex CLI / OpenCode
 ```bash
 bash .experience/setup.sh --local   # Docker Qdrant + Ollama (100% free, 100% local)
 bash .experience/setup.sh --vps     # VPS Qdrant via SSH tunnel
+bash .experience/setup.sh --remote  # Connect to a remote VPS-hosted experience engine instead of local
+                                    # Uses QDRANT_URL and server URL from config.json
 ```
 
 ## How It Works
@@ -228,6 +230,7 @@ node server.js
 | `POST` | `/api/feedback` | Report if suggestion was followed/ignored |
 | `POST` | `/api/route-model` | Intelligent model tier routing |
 | `POST` | `/api/route-feedback` | Record agent outcome for routing learning |
+| `POST` | `/api/brain` | Proxy LLM brain call through server — enables local agents on firewalled machines to reach brain API | `{ prompt, timeoutMs? }` |
 
 Zero dependencies — uses Node.js built-in `http` module. CORS enabled for browser extensions.
 
@@ -399,6 +402,44 @@ Cost: ~200 input tokens + 1 output token per call. $0 with Ollama, ~$0.00004 wit
 Fail-open: if brain is unavailable or slow (>3s), all suggestions pass through.
 Configurable: set `brainFilter: false` in `~/.experience/config.json` to disable.
 
+Layer 3 also triggers the judge-worker — a detached LLM process that evaluates whether the hint was
+followed, ignored, or irrelevant. Results are posted back to the experience engine as feedback,
+closing the loop without requiring any agent cooperation.
+
+## Judge Worker — Auto-Feedback Loop
+
+The judge-worker runs as a detached background process after each tool call, evaluating whether
+experience hints were followed by the agent. This closes the feedback loop automatically —
+no agent cooperation required.
+
+### How it works
+
+1. `interceptor-post.js` captures every PostToolUse event and queues it for evaluation
+2. `judge-worker.js` picks up the queue, calls the brain LLM with a structured prompt
+3. The judge assigns one of 4 verdicts:
+   - `FOLLOWED` — agent used the hint correctly → positive feedback
+   - `IGNORED` — agent had the hint and ignored it → negative feedback
+   - `IRRELEVANT` — hint was not applicable to this call → neutral (no feedback)
+   - `UNCLEAR` — judge cannot determine → no feedback (abstain)
+4. Verdict is posted to `/api/feedback` on the experience engine server
+
+### Brain proxy support
+
+When the experience engine server runs on a VPS and the local brain API is unreachable
+(firewall, corporate network), set `brainProxyUrl` in config.json. The judge-worker will
+route brain calls through the VPS proxy endpoint (`/api/brain`) instead of calling the
+brain API directly.
+
+Configure during setup:
+```bash
+EXP_BRAIN_PROXY=http://72.61.127.154:8082/api/brain bash .experience/setup.sh
+```
+
+Or set manually in `~/.experience/config.json`:
+```json
+{ "brainProxyUrl": "http://your-vps:8082/api/brain" }
+```
+
 ## Supported Providers
 
 | Embedding | Brain (extraction) |
@@ -418,6 +459,9 @@ Configurable: set `brainFilter: false` in `~/.experience/config.json` to disable
   experience-core.js    — engine (1709 LOC, zero deps)
   stop-extractor.js     — session extraction + evolution trigger
   setup.sh              — guided setup wizard
+  interceptor.js        — PreToolUse hook — injects experience hints before agent calls
+  interceptor-post.js   — PostToolUse hook — captures tool outcomes for extraction
+  judge-worker.js       — Async LLM judge — evaluates followed/ignored signals
 
 server.js               — REST API (282 LOC, zero deps)
 
@@ -437,7 +481,7 @@ tools/
   test-model-router.js  — 44 model router tests (9 suites)
 ```
 
-**E2E verified: 2026-04-10 — 12/12 tests pass (T1-T12 including Qdrant feedback, PostToolUse outcome hook, session dedup + budget cap, exp-stats route metrics)**
+**E2E verified: 2026-04-11 — 44 model router tests pass (9 suites: keyword routing, history routing, brain routing, claude/gemini/codex/opencode runtimes, feedback learning, tier fallback)**
 
 ## Philosophy
 
