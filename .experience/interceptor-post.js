@@ -3,20 +3,18 @@
 /**
  * interceptor-post.js — PostToolUse hook for Experience Engine feedback loop
  *
- * Strategy B: Outcome-based feedback (complemented by Strategy A: agent self-report via POST /api/feedback).
+ * Strategy: Async LLM judge (judge-worker.js) evaluates whether the agent followed
+ * each surfaced hint. PostToolUse writes a queue file and spawns the judge worker
+ * detached — zero latency impact on agent flow.
  *
- * Instead of guessing whether the agent "followed" a hint via keyword matching (unreliable),
- * we observe the OUTCOME of the tool call after a hint was surfaced:
- *
- *   - Tool ERRORED right after hint was shown → hint was relevant, agent likely ignored it
- *     → record followed=false (boost hint confidence)
- *   - Tool SUCCEEDED → neutral, can't determine causation
- *     → record followed=true (mild positive signal — hint didn't hurt)
- *   - Agent explicitly told user "ignoring this hint" → Strategy A covers this
- *     (agent calls POST /api/feedback directly)
- *
- * This is conservative: we only penalize on clear negative signal (error after hint),
- * and give mild positive on success. Strategy A (agent self-report) provides the precise signal.
+ * Flow:
+ *   1. Orphan cleanup — delete stale judge-*.json files older than 60s
+ *   2. Read last-suggestions.json (written by PreToolUse interceptor.js)
+ *   3. Stale check (10s window)
+ *   4. Write judge-{ts}.json queue file (~1ms)
+ *   5. Spawn judge-worker.js detached + unref (~1ms)
+ *   6. Delete last-suggestions.json
+ *   7. Exit (total added latency ~3ms, no inline LLM call)
  *
  * Register in ~/.claude/settings.json:
  *   PostToolUse: [{ matcher: "Edit|Write|Bash", hooks: [{ command: "node ~/.experience/interceptor-post.js" }] }]
@@ -26,11 +24,14 @@ const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
 
-const STATE_FILE = path.join(os.homedir(), '.experience', 'tmp', 'last-suggestions.json');
+const EXP_DIR    = path.join(os.homedir(), '.experience');
+const TMP_DIR    = path.join(EXP_DIR, 'tmp');
+const STATE_FILE = path.join(TMP_DIR, 'last-suggestions.json');
 const DEBUG_LOG  = process.env.EXPERIENCE_HOOK_DEBUG_LOG
   || path.join(os.homedir(), '.codex', 'log', 'experience-hook-debug.jsonl');
 
-const STALE_MS = 10_000;
+const STALE_MS   = 10_000;
+const ORPHAN_TTL = 60_000;
 
 function debugLog(event) {
   try {
@@ -40,17 +41,16 @@ function debugLog(event) {
 }
 
 /**
- * Outcome-based feedback: observe tool result, not content.
+ * Classify tool outcome for hybrid signal in judge queue.
+ * Kept here so judge-worker can record toolOutcome without needing outcome logic.
  *
- * @param {object} toolOutput - PostToolUse output/result
- * @returns {'error'|'success'|null} - error = hint was relevant and ignored, success = neutral positive, null = can't determine
+ * @returns {'error'|'success'|null}
  */
 function classifyOutcome(toolName, toolInput, toolOutput) {
   const tool = (toolName || '').toLowerCase();
   const isMutatingTool = /edit|write|bash|shell|replace|execute_command/i.test(tool);
   if (!isMutatingTool) return null;
 
-  // Check for error signals in tool output
   const hasError = !!(
     toolOutput?.error ||
     toolOutput?.is_error ||
@@ -58,7 +58,6 @@ function classifyOutcome(toolName, toolInput, toolOutput) {
     (toolOutput?.output && /error|Error|ERROR|FAIL|fatal|exception/i.test(String(toolOutput.output).slice(0, 500)))
   );
 
-  // For Bash: also check exit code
   const exitCode = toolOutput?.exit_code ?? toolOutput?.exitCode ?? null;
   if (exitCode !== null && exitCode !== 0) return 'error';
 
@@ -79,7 +78,22 @@ process.stdin.on('end', async () => {
   debugLog({ stage: 'stdin_end', bytes: input.length });
 
   try {
-    // Load state file written by PreToolUse hook
+    // --- Step 1: Orphan cleanup — delete judge-*.json files older than 60s ---
+    try {
+      fs.mkdirSync(TMP_DIR, { recursive: true });
+      const cutoff = Date.now() - ORPHAN_TTL;
+      for (const f of fs.readdirSync(TMP_DIR)) {
+        if (f.startsWith('judge-') && f.endsWith('.json')) {
+          const fp = path.join(TMP_DIR, f);
+          try {
+            const stat = fs.statSync(fp);
+            if (stat.mtimeMs < cutoff) fs.unlinkSync(fp);
+          } catch { /* skip individual file errors */ }
+        }
+      }
+    } catch { /* tmp dir may not exist yet */ }
+
+    // --- Step 2: Read last-suggestions.json ---
     let state;
     try {
       const raw = fs.readFileSync(STATE_FILE, 'utf8');
@@ -89,7 +103,7 @@ process.stdin.on('end', async () => {
       process.exit(0);
     }
 
-    // Stale check
+    // --- Step 3: Stale check ---
     const ageMs = Date.now() - new Date(state.ts).getTime();
     if (ageMs > STALE_MS) {
       debugLog({ stage: 'stale_state', ageMs });
@@ -100,6 +114,7 @@ process.stdin.on('end', async () => {
     const surfacedIds = state.surfacedIds || [];
     if (surfacedIds.length === 0) {
       debugLog({ stage: 'no_surfaced_ids' });
+      try { fs.unlinkSync(STATE_FILE); } catch {}
       process.exit(0);
     }
 
@@ -112,45 +127,36 @@ process.stdin.on('end', async () => {
     const toolOutput = data.tool_response || data.output || data.result || {};
     debugLog({ stage: 'parsed', tool: toolName, surfacedCount: surfacedIds.length });
 
-    // Classify outcome
-    const outcome = classifyOutcome(toolName, toolInput, toolOutput);
-    if (outcome === null) {
-      debugLog({ stage: 'unclassifiable_outcome' });
-      try { fs.unlinkSync(STATE_FILE); } catch {}
-      process.exit(0);
-    }
+    // --- Step 4: Write judge queue file ---
+    const queueFile = path.join(TMP_DIR, `judge-${Date.now()}.json`);
+    try {
+      fs.mkdirSync(TMP_DIR, { recursive: true });
+      fs.writeFileSync(queueFile, JSON.stringify({
+        ts:          new Date().toISOString(),
+        surfacedIds,
+        toolName,
+        toolInput:   JSON.stringify(toolInput || {}).slice(0, 300),
+        toolOutcome: classifyOutcome(toolName, toolInput, toolOutput),
+      }));
 
-    // Load recordFeedback from experience-core
-    const { recordFeedback } = require(path.join(os.homedir(), '.experience', 'experience-core.js'));
-    if (typeof recordFeedback !== 'function') {
-      debugLog({ stage: 'no_recordFeedback' });
-      process.exit(0);
-    }
-
-    // Record feedback for each surfaced suggestion based on outcome:
-    // - error → followed=false (hint was relevant, agent ignored it → boost hint)
-    // - success → followed=true (mild positive — hint didn't cause problems)
-    const followed = outcome === 'success';
-    const feedbackPromises = [];
-    for (const suggestion of surfacedIds) {
-      if (!suggestion.collection || !suggestion.id) continue;
-      debugLog({ stage: 'record_feedback', id: suggestion.id, collection: suggestion.collection, outcome, followed });
-      feedbackPromises.push(
-        recordFeedback(suggestion.collection, suggestion.id, followed).catch(err => {
-          debugLog({ stage: 'feedback_error', id: suggestion.id, error: err?.message });
-        })
+      // --- Step 5: Spawn judge-worker detached + unref ---
+      const workerPath = path.join(EXP_DIR, 'judge-worker.js');
+      const worker = require('child_process').spawn(
+        process.execPath,
+        [workerPath, queueFile],
+        { detached: true, stdio: 'ignore' }
       );
+      worker.unref(); // parent exits immediately, worker continues in background
+
+      debugLog({ stage: 'judge_spawned', queueFile, surfacedCount: surfacedIds.length });
+    } catch (spawnErr) {
+      // Spawn failure must never block PostToolUse
+      debugLog({ stage: 'spawn_error', message: spawnErr?.message });
     }
 
-    // Wait up to 400ms for all feedback calls
-    await Promise.race([
-      Promise.all(feedbackPromises),
-      new Promise(resolve => setTimeout(resolve, 400)),
-    ]);
-
-    // Clean up state file
+    // --- Step 6: Delete last-suggestions.json ---
     try { fs.unlinkSync(STATE_FILE); } catch {}
-    debugLog({ stage: 'done', outcome, processed: surfacedIds.length });
+    debugLog({ stage: 'done', processed: surfacedIds.length });
 
   } catch (error) {
     debugLog({ stage: 'error', message: error?.message || String(error) });
