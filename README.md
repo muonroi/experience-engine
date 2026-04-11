@@ -348,6 +348,35 @@ node tools/exp-stats.js --all        # all time
 
 Shows: suggestions fired, hit rate, mistakes avoided, learning velocity, per-project breakdown.
 
+## Health Check
+
+Diagnostic dashboard to verify the engine is running, reachable, and firing.
+
+```bash
+bash ~/.experience/health-check.sh          # full dashboard
+bash ~/.experience/health-check.sh --json   # machine-readable output
+bash ~/.experience/health-check.sh --watch  # auto-refresh every 30s
+```
+
+**What it checks (14 points):**
+
+| Category | Checks |
+|----------|--------|
+| **Infrastructure** | Config valid, SSH tunnel alive, Qdrant reachable, Embed API, Brain API |
+| **Core Files** | experience-core.js, interceptor.js, interceptor-post.js, stop-extractor.js |
+| **Agent Hooks** | Claude Code, Codex CLI, Gemini CLI hook wiring |
+| **Runtime** | Activity log (last intercept, suggestion count), Model Routing status |
+
+**Cross-platform support:**
+
+| Platform | Config path | Tunnel detection |
+|----------|------------|------------------|
+| Windows (Git Bash/MSYS) | MSYS→Windows path auto-convert | `netstat -an` fallback |
+| WSL Ubuntu | Native `~/.experience/` | `ps aux` + `ss` |
+| Linux / macOS | Native `~/.experience/` | `ps aux` + `ss` |
+
+Exit code `0` = all checks pass, `>0` = failures found. Use in cron or monitoring scripts.
+
 ## Bootstrap Brain Instantly
 
 Don't wait months for organic learning. Seed from existing rules:
@@ -496,30 +525,40 @@ tools/
 
 ### Codex CLI on Windows
 
-Codex CLI **disables hooks on Windows** ([docs](https://developers.openai.com/codex/hooks)). The workaround is to run Codex from WSL:
+Codex CLI **disables hooks on Windows** ([docs](https://developers.openai.com/codex/hooks)). Run Codex from WSL instead:
 
 ```bash
 # 1. Open WSL Ubuntu
 wsl -d Ubuntu
 
-# 2. Run setup (Node.js 20+ required in WSL)
-cd /mnt/c/path/to/experience-engine
-bash .experience/setup.sh
+# 2. Install Node.js in WSL (MUST be WSL's own node, not Windows node)
+#    WSL sees Windows node via PATH but it installs x64 binaries, not linux-x64.
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs
+hash -r && which node  # must be /usr/bin/node, NOT /mnt/c/...
 
-# 3. If your Qdrant runs via SSH tunnel on Windows, the tunnel
-#    won't be accessible from WSL. Setup will detect this and
-#    start a tunnel inside WSL automatically.
+# 3. Install Codex CLI in WSL
+npm install -g @openai/codex@latest
 
-# 4. Run Codex from WSL
-cd /mnt/c/your/project && codex
+# 4. Copy SSH key if using tunnel (WSL has separate home)
+mkdir -p ~/.ssh
+cp /mnt/c/Users/YOUR_USER/.ssh/your_key ~/.ssh/
+chmod 600 ~/.ssh/your_key
+
+# 5. Run setup with EXP_AGENTS=codex (only patches Codex, leaves Windows agents alone)
+cd /mnt/d/path/to/experience-engine
+EXP_AGENTS="codex" bash .experience/setup.sh
+
+# 6. Run Codex from WSL — hooks will work
+cd /mnt/d/your/project && codex
 ```
 
 `setup.sh` handles all WSL-specific wiring automatically:
-- Detects WSL environment
-- Creates `~/.codex/hooks.json` (not `config.json` — Codex uses separate hooks file)
+- Detects WSL environment and shows informational banner
+- Creates `~/.codex/hooks.json` with PreToolUse + PostToolUse + Stop hooks
 - Enables hooks via `~/.codex/config.toml` (`codex_hooks = true`)
 - Starts SSH tunnel inside WSL if needed (Windows tunnel not reachable from WSL2)
-- Symlinks `~/.experience` to Windows files so all agents share the same brain
+- Adds tunnel auto-start to `.bashrc` (survives shell restarts)
 
 ### Agent Hook Comparison
 
