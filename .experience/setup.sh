@@ -18,18 +18,18 @@ INSTALL_DIR="$HOME/.experience"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Cross-platform node stdout capture.
-# On MSYS/Git Bash (Windows), native .exe in $() subshells fail with
-# "stdout is not a tty". This routes node stdout through a temp file,
-# then cats it back (cat is a POSIX tool — no TTY issue).
-# Usage: VAR=$(_node_capture -e "js code")
-#        VAR=$(_node_capture script.js)
-_node_capture() {
-  local _nco="/tmp/_ncap_$$.out"
-  node "$@" > "$_nco"
-  local _rc=$?
-  [ -f "$_nco" ] && cat "$_nco"
-  rm -f "$_nco"
-  return $_rc
+# MSYS/Git Bash "stdout is not a tty": native .exe (node) inside $() subshells
+# triggers MSYS TTY detection errors. Fix: run node OUTSIDE $(), redirect stdout
+# to temp file, then read with cat (POSIX tool — no TTY issue).
+# Usage: _node_run [node args...] — sets _NR_OUT (stdout) and _NR_RC (exit code)
+_NR_FILE="/tmp/_nrun_$$.out"
+_node_run() {
+  rm -f "$_NR_FILE"
+  node "$@" > "$_NR_FILE" 2>"${_NR_ERR:-/dev/null}"
+  _NR_RC=$?
+  _NR_OUT=""
+  [ -f "$_NR_FILE" ] && _NR_OUT=$(cat "$_NR_FILE")
+  rm -f "$_NR_FILE"
 }
 
 echo ""
@@ -256,7 +256,7 @@ if [ -f "$CONFIG_FILE" ] && [ "$NI_MODE" = "false" ]; then
     echo "  Loading and validating existing config..."
 
     # Load existing config fields
-    _LOAD_RESULT=$(_node_capture -e "
+    _NR_ERR=/dev/stdout _node_run -e "
 try {
   const fs=require('fs'), path=require('path'), os=require('os');
   const f=path.join(os.homedir(),'.experience','config.json');
@@ -278,7 +278,8 @@ try {
   ];
   process.stdout.write(fields.join('\n')+'\n');
 } catch(e) { process.stderr.write('LOAD_FAILED: '+e.message+'\n'); process.exit(1); }
-" 2>&1)
+"
+    _LOAD_RESULT="$_NR_OUT"
 
     if echo "$_LOAD_RESULT" | grep -q "LOAD_FAILED"; then
       echo ""
@@ -431,10 +432,11 @@ if [ "$NI_MODE" = "true" ] && [ -z "$EMBED_DIM" ]; then
   } catch(e) { process.stderr.write(e.message + '\\n'); process.exit(1); }
 })();
 JSEOF
-  EMBED_DIM=$(_node_capture "$_DIM_PROBE" 2>/tmp/exp-dim-err)
+  _NR_ERR=/tmp/exp-dim-err _node_run "$_DIM_PROBE"
+  EMBED_DIM="$_NR_OUT"
   rm -f "$_DIM_PROBE"
 
-  if [ $? -ne 0 ] || [ -z "$EMBED_DIM" ]; then
+  if [ $_NR_RC -ne 0 ] || [ -z "$EMBED_DIM" ]; then
     echo ""
     echo "  [WARN] Cannot probe embed dimension ($EMBED_PROVIDER / $EMBED_MODEL)"
     if [ -s /tmp/exp-dim-err ]; then
@@ -793,10 +795,11 @@ if [ "$KEEP_CONFIG" = "false" ] && [ "$NI_MODE" = "false" ]; then
   }
 })();
 JSEOF
-  EMBED_DIM=$(_node_capture "$_DIM_PROBE" 2>/tmp/exp-dim-err)
+  _NR_ERR=/tmp/exp-dim-err _node_run "$_DIM_PROBE"
+  EMBED_DIM="$_NR_OUT"
   rm -f "$_DIM_PROBE"
 
-  if [ $? -ne 0 ] || [ -z "$EMBED_DIM" ]; then
+  if [ $_NR_RC -ne 0 ] || [ -z "$EMBED_DIM" ]; then
     echo ""
     echo "  [WARN] Cannot reach embed API ($EMBED_PROVIDER / $EMBED_MODEL)"
     if [ -s /tmp/exp-dim-err ]; then
@@ -1114,21 +1117,23 @@ echo ""
 echo "◆ [4/6] Verifying Qdrant collections..."
 
 # Load embedDim from written config (handles both keep and new paths)
-EMBED_DIM=$(_node_capture -e "
+_node_run -e "
 try {
   const c=JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.experience/config.json','utf8'));
   process.stdout.write(String(c.embedDim||768));
 } catch(e) {
   process.stderr.write('Cannot read config: '+e.message+'\n');
   process.stdout.write('768');
-}")
+}"
+EMBED_DIM="$_NR_OUT"
 
 QDRANT_AUTH_HEADER=""
 [ -n "$QDRANT_KEY" ] && QDRANT_AUTH_HEADER="-H \"api-key: $QDRANT_KEY\""
 
 # Load QDRANT_URL from config if not set (keep mode)
 if [ -z "$QDRANT_URL" ]; then
-  QDRANT_URL=$(_node_capture -e "try{const c=JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.experience/config.json','utf8'));process.stdout.write(c.qdrantUrl||'http://localhost:6333')}catch{process.stdout.write('http://localhost:6333')}")
+  _node_run -e "try{const c=JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.experience/config.json','utf8'));process.stdout.write(c.qdrantUrl||'http://localhost:6333')}catch{process.stdout.write('http://localhost:6333')}"
+  QDRANT_URL="$_NR_OUT"
 fi
 
 for COLL in experience-principles experience-behavioral experience-selfqa experience-routes; do
@@ -1537,7 +1542,7 @@ HEALTH_PASS=0
 HEALTH_FAIL=0
 
 # Load config for health check (handles both keep and new paths)
-_HC_RAW=$(_node_capture -e "
+_node_run -e "
 try {
   const c=JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.experience/config.json','utf8'));
   const fields=[
@@ -1551,14 +1556,15 @@ try {
 } catch(e) {
   process.stderr.write('Cannot read config for health check: '+e.message+'\n');
 }
-" 2>/dev/null)
+"
+_HC_RAW="$_NR_OUT"
 while IFS='=' read -r k v; do
   [ -n "$k" ] && export "$k"="$v"
 done <<< "$_HC_RAW"
 
 # 1. Embed API probe
 printf "  Embed API (%s)... " "$HC_embedProvider"
-EMBED_RESULT=$(_node_capture -e "
+_NR_ERR=/dev/stdout _node_run -e "
 (async () => {
   try {
     const core = require(require('path').join(require('os').homedir(),'.experience','experience-core.js'));
@@ -1567,8 +1573,9 @@ EMBED_RESULT=$(_node_capture -e "
     console.log('FAIL: empty response'); process.exit(1);
   } catch(e) { console.log('FAIL: ' + e.message); process.exit(1); }
 })();
-" 2>&1)
-if [ $? -eq 0 ]; then
+"
+EMBED_RESULT="$_NR_OUT"
+if [ $_NR_RC -eq 0 ]; then
   HEALTH_PASS=$((HEALTH_PASS+1))
   echo "$EMBED_RESULT"
 else
@@ -1620,9 +1627,10 @@ cat > "$_COLL_PROBE" <<'JSEOF'
   } catch(e) { console.log('FAIL: ' + e.message); process.exit(1); }
 })();
 JSEOF
-COLL_RESULT=$(_node_capture "$_COLL_PROBE" 2>&1)
+_NR_ERR=/dev/stdout _node_run "$_COLL_PROBE"
 rm -f "$_COLL_PROBE"
-if [ $? -eq 0 ]; then
+COLL_RESULT="$_NR_OUT"
+if [ $_NR_RC -eq 0 ]; then
   HEALTH_PASS=$((HEALTH_PASS+1))
   echo "$COLL_RESULT"
 else
