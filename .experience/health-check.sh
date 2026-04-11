@@ -85,7 +85,7 @@ run_checks() {
   fi
 
   # 2. Core files
-  for f in experience-core.js interceptor.js interceptor-post.js stop-extractor.js; do
+  for f in experience-core.js interceptor.js interceptor-post.js interceptor-prompt.js stop-extractor.js; do
     if [ -f "$EXP_DIR/$f" ]; then
       check "$f" "ok" "$(wc -l < "$EXP_DIR/$f") lines"
     else

@@ -179,6 +179,7 @@ if [[ "$1" == "--docker" ]]; then
       cp "$SRC_DIR/experience-core.js" "$HOME/.experience/" 2>/dev/null
       cp "$SRC_DIR/stop-extractor.js" "$HOME/.experience/" 2>/dev/null
       cp "$SRC_DIR/interceptor-post.js" "$HOME/.experience/" 2>/dev/null
+      cp "$SRC_DIR/interceptor-prompt.js" "$HOME/.experience/" 2>/dev/null
       cp "$SRC_DIR/judge-worker.js" "$HOME/.experience/" 2>/dev/null
 
       # Write config pointing to Docker services
@@ -984,12 +985,17 @@ if [ -f "$SRC_DIR/interceptor-post.js" ]; then
   cp "$SRC_DIR/interceptor-post.js" "$INSTALL_DIR/interceptor-post.js"
 fi
 
+# Copy interceptor-prompt.js (UserPromptSubmit hook for Codex)
+if [ -f "$SRC_DIR/interceptor-prompt.js" ]; then
+  cp "$SRC_DIR/interceptor-prompt.js" "$INSTALL_DIR/interceptor-prompt.js"
+fi
+
 # Copy judge-worker.js (async LLM judge spawned by interceptor-post.js)
 if [ -f "$SRC_DIR/judge-worker.js" ]; then
   cp "$SRC_DIR/judge-worker.js" "$INSTALL_DIR/judge-worker.js"
 fi
 
-chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js" "$INSTALL_DIR/interceptor-post.js" "$INSTALL_DIR/judge-worker.js" 2>/dev/null
+chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js" "$INSTALL_DIR/interceptor-post.js" "$INSTALL_DIR/interceptor-prompt.js" "$INSTALL_DIR/judge-worker.js" 2>/dev/null
 
 # Atomic config write — only when NOT keeping config
 if [ "$KEEP_CONFIG" = "false" ]; then
@@ -1256,18 +1262,21 @@ fi
 
 INTERCEPTOR_PATH="$INSTALL_DIR/interceptor.js"
 INTERCEPTOR_POST_PATH="$INSTALL_DIR/interceptor-post.js"
+INTERCEPTOR_PROMPT_PATH="$INSTALL_DIR/interceptor-prompt.js"
 STOP_PATH="$INSTALL_DIR/stop-extractor.js"
 
 # Convert to forward slashes for Node.js on Windows
 INTERCEPTOR_FWD=$(echo "$INTERCEPTOR_PATH" | sed 's|\\|/|g' | sed 's|^/\([a-zA-Z]\)/|\1:/|')
 INTERCEPTOR_POST_FWD=$(echo "$INTERCEPTOR_POST_PATH" | sed 's|\\|/|g' | sed 's|^/\([a-zA-Z]\)/|\1:/|')
+INTERCEPTOR_PROMPT_FWD=$(echo "$INTERCEPTOR_PROMPT_PATH" | sed 's|\\|/|g' | sed 's|^/\([a-zA-Z]\)/|\1:/|')
 STOP_FWD=$(echo "$STOP_PATH" | sed 's|\\|/|g' | sed 's|^/\([a-zA-Z]\)/|\1:/|')
 
-EXP_SELECTED_AGENTS="$SELECTED_AGENTS" EXP_INTERCEPTOR="$INTERCEPTOR_FWD" EXP_INTERCEPTOR_POST="$INTERCEPTOR_POST_FWD" EXP_STOP="$STOP_FWD" node << 'JSEOF'
+EXP_SELECTED_AGENTS="$SELECTED_AGENTS" EXP_INTERCEPTOR="$INTERCEPTOR_FWD" EXP_INTERCEPTOR_POST="$INTERCEPTOR_POST_FWD" EXP_INTERCEPTOR_PROMPT="$INTERCEPTOR_PROMPT_FWD" EXP_STOP="$STOP_FWD" node << 'JSEOF'
 const fs = require('fs'), path = require('path'), os = require('os');
 const home = os.homedir();
 const interceptor = process.env.EXP_INTERCEPTOR;
 const interceptorPost = process.env.EXP_INTERCEPTOR_POST;
+const interceptorPrompt = process.env.EXP_INTERCEPTOR_PROMPT;
 const stop = process.env.EXP_STOP;
 const selected = (process.env.EXP_SELECTED_AGENTS || '').split(',').map(s => s.trim().toLowerCase());
 
@@ -1330,6 +1339,12 @@ const AGENTS = [
       cfg.hooks.PostToolUse = cfg.hooks.PostToolUse || [];
       if (!cfg.hooks.PostToolUse.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor-post')))) {
         cfg.hooks.PostToolUse.push({ matcher:'Bash', hooks:[{ type:'command', command:`node "${interceptorPost}"`, timeout:5 }] });
+      }
+      // UserPromptSubmit: fires on EVERY prompt — covers all tools (rg, Search, Write, etc.)
+      // Since Codex PreToolUse only intercepts Bash, this is the primary experience surface.
+      cfg.hooks.UserPromptSubmit = cfg.hooks.UserPromptSubmit || [];
+      if (!cfg.hooks.UserPromptSubmit.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor-prompt')))) {
+        cfg.hooks.UserPromptSubmit.push({ hooks:[{ type:'command', command:`node "${interceptorPrompt}"`, timeout:5 }] });
       }
       cfg.hooks.Stop = cfg.hooks.Stop || [];
       if (!cfg.hooks.Stop.some(h => (h.hooks||[]).some(e => e.command?.includes('stop-extractor')))) {
