@@ -105,13 +105,10 @@ process.stdin.on('end', async () => {
     }
 
     if (outputText) {
-      // Codex UserPromptSubmit output format
-      process.stdout.write(JSON.stringify({
-        hookSpecificOutput: {
-          hookEventName: 'UserPromptSubmit',
-          additionalContext: outputText
-        }
-      }));
+      // UserPromptSubmit: plain text stdout is added as developer context.
+      // This is the safest cross-version approach per Codex hooks spec.
+      // Ref: https://developers.openai.com/codex/hooks
+      process.stdout.write(outputText);
     }
   } catch (error) {
     debugLog({ stage: 'error', message: error?.message || String(error) });
