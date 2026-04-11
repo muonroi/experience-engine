@@ -86,7 +86,26 @@ if (!fs.existsSync(normalised)) process.exit(0);
 
     let verdict = 'UNCLEAR';
     try {
-      const raw  = await classifyViaBrain(prompt, 8000);
+      let raw = await classifyViaBrain(prompt, 8000);
+      // Fallback: if direct brain call returns null, try VPS brain proxy
+      if (raw === null) {
+        try {
+          const cfg = JSON.parse(fs.readFileSync(path.join(EXP_DIR, 'config.json'), 'utf8'));
+          const proxyUrl = cfg.brainProxyUrl; // e.g. "http://72.61.127.154:8082/api/brain"
+          if (proxyUrl) {
+            const res = await fetch(proxyUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ prompt, timeoutMs: 8000 }),
+              signal: AbortSignal.timeout(10000),
+            });
+            if (res.ok) {
+              const j = await res.json();
+              raw = j.result || null;
+            }
+          }
+        } catch { /* proxy fallback best-effort */ }
+      }
       const word = (raw || '').trim().toUpperCase().split(/\s+/)[0];
       if (VALID_VERDICTS.has(word)) verdict = word;
     } catch (err) {
