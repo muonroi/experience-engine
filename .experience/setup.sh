@@ -195,6 +195,29 @@ fi
 CONFIG_FILE="$INSTALL_DIR/config.json"
 KEEP_CONFIG=false
 
+# ── Parse --remote flag ────────────────────────────────────────────────────
+REMOTE_HOST=""
+REMOTE_KEY=""
+_ARGS=("$@")
+for (( _i=0; _i<${#_ARGS[@]}; _i++ )); do
+  if [ "${_ARGS[$_i]}" = "--remote" ]; then
+    _j=$((_i+1)); REMOTE_HOST="${_ARGS[$_j]:-}"
+    # Validate format: user@host or host (no shell metacharacters)
+    if [[ -n "$REMOTE_HOST" ]] && ! [[ "$REMOTE_HOST" =~ ^[a-zA-Z0-9._@-]+$ ]]; then
+      echo "  [ERROR] Invalid --remote value: '$REMOTE_HOST'. Use user@host format."
+      exit 1
+    fi
+  fi
+  if [ "${_ARGS[$_i]}" = "--key" ]; then
+    _j=$((_i+1)); REMOTE_KEY="${_ARGS[$_j]:-}"
+    # Validate key file exists
+    if [ -n "$REMOTE_KEY" ] && [ ! -f "$REMOTE_KEY" ]; then
+      echo "  [ERROR] --key file not found: '$REMOTE_KEY'"
+      exit 1
+    fi
+  fi
+done
+
 # ── Step 1: Resolve config ─────────────────────────────────────────────────
 echo "◆ [1/6] Resolving config..."
 
@@ -1052,7 +1075,7 @@ if [ -z "$QDRANT_URL" ]; then
   QDRANT_URL=$(node -e "try{const c=JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.experience/config.json','utf8'));process.stdout.write(c.qdrantUrl||'http://localhost:6333')}catch{process.stdout.write('http://localhost:6333')}")
 fi
 
-for COLL in experience-principles experience-behavioral experience-selfqa; do
+for COLL in experience-principles experience-behavioral experience-selfqa experience-routes; do
   COLL_INFO=$(eval "curl -s -m 5 $QDRANT_AUTH_HEADER '$QDRANT_URL/collections/$COLL'" 2>/dev/null)
   STATUS=$(echo "$COLL_INFO" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(d);process.stdout.write(j.result?.status||'')}catch{}})" 2>/dev/null)
   CURRENT_DIM=$(echo "$COLL_INFO" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(d);process.stdout.write(String(j.result?.config?.params?.vectors?.size||0))}catch{}})" 2>/dev/null)
@@ -1568,4 +1591,67 @@ if [ "$HEALTH_FAIL" -eq 0 ]; then
   echo ""
 else
   echo "  $HEALTH_FAIL check(s) failed. Fix the issues above, then re-run setup.sh."
+fi
+
+# ── Remote deploy (--remote flag) ───────────────────────────────────────────
+if [ -n "$REMOTE_HOST" ]; then
+  echo ""
+  echo "── Remote Deploy ──────────────────────────────────────────────"
+  SSH_OPTS="-o StrictHostKeyChecking=no -o BatchMode=yes"
+  [ -n "$REMOTE_KEY" ] && SSH_OPTS="$SSH_OPTS -i \"$REMOTE_KEY\""
+
+  echo "  Target: $REMOTE_HOST:~/.experience/"
+
+  # Check if remote config already exists — warn before overwriting
+  REMOTE_HAS_CONFIG=$(ssh $SSH_OPTS "$REMOTE_HOST" "test -f ~/.experience/config.json && echo yes || echo no" 2>/dev/null)
+  SKIP_REMOTE_CONFIG=""
+  if [ "$REMOTE_HAS_CONFIG" = "yes" ]; then
+    echo "  Warning: remote ~/.experience/config.json already exists."
+    read -r -p "  Overwrite remote config? [y/N]: " OVERWRITE_CONF
+    if [ "$OVERWRITE_CONF" != "y" ] && [ "$OVERWRITE_CONF" != "Y" ]; then
+      echo "  Skipping config overwrite — copying JS files only."
+      SKIP_REMOTE_CONFIG=1
+    fi
+  fi
+
+  # Create remote directory
+  ssh $SSH_OPTS "$REMOTE_HOST" "mkdir -p ~/.experience/tmp ~/.experience/store" 2>/dev/null
+
+  # Copy 6 core files
+  REMOTE_FILES=(
+    "$INSTALL_DIR/experience-core.js"
+    "$INSTALL_DIR/interceptor.js"
+    "$INSTALL_DIR/interceptor-post.js"
+    "$INSTALL_DIR/judge-worker.js"
+    "$INSTALL_DIR/stop-extractor.js"
+  )
+  [ -z "$SKIP_REMOTE_CONFIG" ] && REMOTE_FILES+=("$INSTALL_DIR/config.json")
+
+  SCP_CMD="scp $SSH_OPTS"
+  for FILE in "${REMOTE_FILES[@]}"; do
+    if [ -f "$FILE" ]; then
+      $SCP_CMD "$FILE" "$REMOTE_HOST:~/.experience/" 2>/dev/null \
+        && echo "  Copied: $(basename "$FILE")" \
+        || echo "  [FAIL] $(basename "$FILE")"
+    fi
+  done
+
+  # Verify remote health
+  echo ""
+  echo "  Verifying remote..."
+  REMOTE_NODE=$(ssh $SSH_OPTS "$REMOTE_HOST" "node ~/.experience/experience-core.js --version 2>/dev/null || echo 'node-fail'" 2>/dev/null)
+  REMOTE_QDRANT=$(ssh $SSH_OPTS "$REMOTE_HOST" \
+    "QDRANT_URL=\$(node -e \"try{const c=JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.experience/config.json','utf8'));process.stdout.write(c.qdrantUrl||'http://localhost:6333')}catch{process.stdout.write('http://localhost:6333')}\"); curl -s -m 5 \"\$QDRANT_URL/health\" | grep -c ok" \
+    2>/dev/null)
+
+  [ "$REMOTE_NODE" != "node-fail" ] \
+    && echo "  [OK] experience-core.js reachable on remote" \
+    || echo "  [WARN] node check failed on remote — verify node is installed"
+  [ "$REMOTE_QDRANT" = "1" ] \
+    && echo "  [OK] Qdrant healthy on remote" \
+    || echo "  [WARN] Qdrant health check failed on remote"
+
+  echo ""
+  echo "  Remote deploy complete: $REMOTE_HOST"
+  echo "────────────────────────────────────────────────────────────────"
 fi
