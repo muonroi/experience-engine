@@ -48,6 +48,7 @@ const MIN_CONFIDENCE  = _cfg.minConfidence  || 0.42;
 const HIGH_CONFIDENCE = _cfg.highConfidence || 0.60;
 
 // --- Model Router config ---
+const ROUTER_ENABLED           = _cfg.routing === true;
 const ROUTER_HISTORY_THRESHOLD = _cfg.routerHistoryThreshold || 0.80;
 const ROUTER_DEFAULT_TIER      = _cfg.routerDefaultTier      || 'balanced';
 const MODEL_TIERS = _cfg.modelTiers || {
@@ -258,8 +259,66 @@ function activityLog(event) {
 
 function extractProjectPath(toolInput) {
   const raw = toolInput?.file_path || toolInput?.path || '';
-  if (!raw) return null;
-  return raw.replace(/\\/g, '/');
+  if (raw) return raw.replace(/\\/g, '/');
+
+  // For Bash/Shell commands: extract project path from command text
+  const cmd = toolInput?.command || toolInput?.cmd || '';
+  if (!cmd) return null;
+
+  const extracted = extractPathFromCommand(cmd);
+  return extracted ? extracted.replace(/\\/g, '/') : null;
+}
+
+/**
+ * Extract a meaningful project path from a shell command string.
+ * Handles: cd targets, explicit file paths in arguments.
+ * Supports: Windows (D:\path), Unix (/path), mixed (D:/path), MSYS (/d/path).
+ * Returns first valid absolute path found, or null.
+ */
+function extractPathFromCommand(cmd) {
+  if (!cmd || typeof cmd !== 'string') return null;
+
+  // Strategy 1: Look for "cd <path>" — strongest project signal
+  // Matches: cd "path", cd 'path', cd path (with &&, ||, ; terminators)
+  const cdMatch = cmd.match(/\bcd\s+["']?([^"';&|$\n]+?)["']?\s*(?:[;&|]|\s*$)/);
+  if (cdMatch) {
+    const p = cdMatch[1].trim();
+    if (isAbsolutePath(p)) return p;
+  }
+
+  // Strategy 2: Scan for absolute paths in the command
+  // Collects all candidate paths and picks the best (longest, most specific)
+  const candidates = [];
+
+  // Windows: D:\path or D:/path (drive letter)
+  const winMatches = cmd.matchAll(/[A-Za-z]:[\\/][^\s"';&|$*?<>]+/g);
+  for (const m of winMatches) candidates.push(m[0]);
+
+  // Unix absolute: /path/to/something (at least 2 segments to avoid bare /)
+  const unixMatches = cmd.matchAll(/(?:^|\s|["'=])(\/{1}(?!dev\/null)[A-Za-z][^\s"';&|$*?<>]*\/[^\s"';&|$*?<>]*)/g);
+  for (const m of unixMatches) candidates.push(m[1]);
+
+  // MSYS: /d/Personal/... (single lowercase letter after /)
+  const msysMatches = cmd.matchAll(/\/([a-z])\/[^\s"';&|$*?<>]+/g);
+  for (const m of msysMatches) candidates.push(m[0]);
+
+  if (candidates.length === 0) return null;
+
+  // Pick the longest candidate (most specific path = best project signal)
+  candidates.sort((a, b) => b.length - a.length);
+  return candidates[0];
+}
+
+/**
+ * Check if a path string looks like an absolute path (any OS).
+ */
+function isAbsolutePath(p) {
+  if (!p) return false;
+  // Windows: C:\ or C:/
+  if (/^[A-Za-z]:[\\/]/.test(p)) return true;
+  // Unix/MSYS: starts with /
+  if (p.startsWith('/')) return true;
+  return false;
 }
 
 /**
@@ -384,6 +443,23 @@ function fileStoreUpsert(collection, id, vector, payload) {
 // P5: Read-only command detection — fast-path skip, no embedding/search cost
 const READ_ONLY_CMD = /^(ls|dir|cat|head|tail|wc|file|stat|find|tree|which|where|echo|printf|pwd|whoami|hostname|date|uptime|type|less|more|sort|uniq|tee|realpath|basename|dirname|env|printenv|id|groups|df|du|free|top|htop|lsof|ps|pgrep|mount|uname)\b|^git\s+(log|status|diff|show|branch|tag|remote|stash\s+list|describe|rev-parse|config\s+--get|shortlog|blame|reflog|ls-files|ls-tree|name-rev|cherry)\b|^(grep|rg|ag|ack)\b|^diff\b|^(npm|yarn|pnpm)\s+(list|ls|info|view|outdated|audit|why)\b|^(dotnet)\s+(--list-sdks|--list-runtimes|--info)\b|^(docker|podman)\s+(ps|images|inspect|logs|stats|top|port|volume\s+ls|network\s+ls)\b/;
 
+/**
+ * Detect the agent runtime from tool name patterns and env vars.
+ * Returns 'claude' | 'gemini' | 'codex' | 'opencode' | null.
+ */
+function detectRuntime(toolName) {
+  const tool = (toolName || '').toLowerCase();
+  // Gemini CLI uses run_shell_command, write_file, edit_file, replace_in_file
+  if (process.env.GEMINI_SESSION_ID || process.env.GEMINI_PROJECT_DIR
+    || /^(run_shell_command|write_file|edit_file|replace_in_file)$/.test(tool)) return 'gemini';
+  // Codex CLI
+  if (process.env.CODEX_SESSION_ID) return 'codex';
+  // OpenCode
+  if (process.env.OPENCODE_SESSION_ID) return 'opencode';
+  // Default: Claude Code (Edit, Write, Bash, Shell)
+  return 'claude';
+}
+
 function isReadOnlyCommand(toolName, toolInput) {
   const tool = (toolName || '').toLowerCase();
   if (tool !== 'bash' && tool !== 'shell' && tool !== 'execute_command') return false;
@@ -408,17 +484,23 @@ async function interceptWithMeta(toolName, toolInput, signal) {
   }
 
   const query = buildQuery(toolName, toolInput);
-  const filePath = toolInput?.file_path || toolInput?.path || '';
+  const filePath = toolInput?.file_path || toolInput?.path || extractProjectPath(toolInput) || '';
   const queryDomain = detectContext(filePath);
   // P0: Extract project slug for cross-project penalty
   const queryProjectSlug = extractProjectSlug(filePath);
   const vector = await getEmbedding(query, signal);
   if (!vector) return null;
 
-  const [t0, t1, t2] = await Promise.all([
+  // Route model in parallel with searches when routing is enabled (zero added latency)
+  const routePromise = ROUTER_ENABLED
+    ? routeModel(query, { files: [filePath].filter(Boolean), domain: queryDomain }, detectRuntime(toolName)).catch(() => null)
+    : Promise.resolve(null);
+
+  const [t0, t1, t2, routeResult] = await Promise.all([
     searchCollection(COLLECTIONS[0].name, vector, COLLECTIONS[0].topK, signal),
     searchCollection(COLLECTIONS[1].name, vector, COLLECTIONS[1].topK, signal),
     searchCollection(COLLECTIONS[2].name, vector, COLLECTIONS[2].topK, signal),
+    routePromise,
   ]);
 
   // v2: Hard scope filter — binary gate before rerank. If scope.lang set and current
@@ -545,9 +627,9 @@ async function interceptWithMeta(toolName, toolInput, signal) {
     } catch { /* never block intercept on brain filter failure */ }
   }
 
-  activityLog({ op: 'intercept', query: query.slice(0, 120), scores: [...r0, ...r1, ...r2].map(p => p._effectiveScore ?? p.score).sort((a, b) => b - a).slice(0, 3), result: lines.length > 0 ? 'suggestion' : null, project: extractProjectPath(toolInput) });
+  activityLog({ op: 'intercept', query: query.slice(0, 120), scores: [...r0, ...r1, ...r2].map(p => p._effectiveScore ?? p.score).sort((a, b) => b - a).slice(0, 3), result: lines.length > 0 ? 'suggestion' : null, project: extractProjectPath(toolInput), ...(routeResult ? { route: routeResult.tier, routeSource: routeResult.source } : {}) });
 
-  return { suggestions: lines.length > 0 ? lines.join('\n---\n') : null, surfacedIds: surfacedMeta };
+  return { suggestions: lines.length > 0 ? lines.join('\n---\n') : null, surfacedIds: surfacedMeta, route: routeResult || null };
 }
 
 // --- intercept: backward-compatible wrapper returning string|null ---
@@ -2098,4 +2180,4 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
 
 // --- Exports ---
 
-module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter };
+module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _ROUTER_ENABLED: ROUTER_ENABLED };
