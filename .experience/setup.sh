@@ -17,6 +17,21 @@ set +H 2>/dev/null   # disable history expansion — fixes !res.ok in node -e bl
 INSTALL_DIR="$HOME/.experience"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Cross-platform node stdout capture.
+# On MSYS/Git Bash (Windows), native .exe in $() subshells fail with
+# "stdout is not a tty". This routes node stdout through a temp file,
+# then cats it back (cat is a POSIX tool — no TTY issue).
+# Usage: VAR=$(_node_capture -e "js code")
+#        VAR=$(_node_capture script.js)
+_node_capture() {
+  local _nco="/tmp/_ncap_$$.out"
+  node "$@" > "$_nco"
+  local _rc=$?
+  [ -f "$_nco" ] && cat "$_nco"
+  rm -f "$_nco"
+  return $_rc
+}
+
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo " Experience Engine v1.0 — Setup Wizard"
@@ -241,7 +256,7 @@ if [ -f "$CONFIG_FILE" ] && [ "$NI_MODE" = "false" ]; then
     echo "  Loading and validating existing config..."
 
     # Load existing config fields
-    _LOAD_RESULT=$(node -e "
+    _LOAD_RESULT=$(_node_capture -e "
 try {
   const fs=require('fs'), path=require('path'), os=require('os');
   const f=path.join(os.homedir(),'.experience','config.json');
@@ -416,7 +431,7 @@ if [ "$NI_MODE" = "true" ] && [ -z "$EMBED_DIM" ]; then
   } catch(e) { process.stderr.write(e.message + '\\n'); process.exit(1); }
 })();
 JSEOF
-  EMBED_DIM=$(node "$_DIM_PROBE" 2>/tmp/exp-dim-err)
+  EMBED_DIM=$(_node_capture "$_DIM_PROBE" 2>/tmp/exp-dim-err)
   rm -f "$_DIM_PROBE"
 
   if [ $? -ne 0 ] || [ -z "$EMBED_DIM" ]; then
@@ -778,7 +793,7 @@ if [ "$KEEP_CONFIG" = "false" ] && [ "$NI_MODE" = "false" ]; then
   }
 })();
 JSEOF
-  EMBED_DIM=$(node "$_DIM_PROBE" 2>/tmp/exp-dim-err)
+  EMBED_DIM=$(_node_capture "$_DIM_PROBE" 2>/tmp/exp-dim-err)
   rm -f "$_DIM_PROBE"
 
   if [ $? -ne 0 ] || [ -z "$EMBED_DIM" ]; then
@@ -1099,7 +1114,7 @@ echo ""
 echo "◆ [4/6] Verifying Qdrant collections..."
 
 # Load embedDim from written config (handles both keep and new paths)
-EMBED_DIM=$(node -e "
+EMBED_DIM=$(_node_capture -e "
 try {
   const c=JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.experience/config.json','utf8'));
   process.stdout.write(String(c.embedDim||768));
@@ -1113,13 +1128,17 @@ QDRANT_AUTH_HEADER=""
 
 # Load QDRANT_URL from config if not set (keep mode)
 if [ -z "$QDRANT_URL" ]; then
-  QDRANT_URL=$(node -e "try{const c=JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.experience/config.json','utf8'));process.stdout.write(c.qdrantUrl||'http://localhost:6333')}catch{process.stdout.write('http://localhost:6333')}")
+  QDRANT_URL=$(_node_capture -e "try{const c=JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.experience/config.json','utf8'));process.stdout.write(c.qdrantUrl||'http://localhost:6333')}catch{process.stdout.write('http://localhost:6333')}")
 fi
 
 for COLL in experience-principles experience-behavioral experience-selfqa experience-routes; do
   COLL_INFO=$(eval "curl -s -m 5 $QDRANT_AUTH_HEADER '$QDRANT_URL/collections/$COLL'" 2>/dev/null)
-  STATUS=$(echo "$COLL_INFO" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(d);process.stdout.write(j.result?.status||'')}catch{}})" 2>/dev/null)
-  CURRENT_DIM=$(echo "$COLL_INFO" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(d);process.stdout.write(String(j.result?.config?.params?.vectors?.size||0))}catch{}})" 2>/dev/null)
+  _npi="/tmp/_npipe_$$.out"
+  echo "$COLL_INFO" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(d);require('fs').writeFileSync('$_npi',j.result?.status||'')}catch{require('fs').writeFileSync('$_npi','')}})" 2>/dev/null
+  STATUS=""; [ -f "$_npi" ] && STATUS=$(cat "$_npi")
+  echo "$COLL_INFO" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(d);require('fs').writeFileSync('$_npi',String(j.result?.config?.params?.vectors?.size||0))}catch{require('fs').writeFileSync('$_npi','0')}})" 2>/dev/null
+  CURRENT_DIM="0"; [ -f "$_npi" ] && CURRENT_DIM=$(cat "$_npi")
+  rm -f "$_npi"
 
   if [ "$STATUS" = "green" ] || [ "$STATUS" = "yellow" ]; then
     if [ -n "$CURRENT_DIM" ] && [ "$CURRENT_DIM" != "0" ] && [ "$CURRENT_DIM" != "$EMBED_DIM" ]; then
@@ -1518,7 +1537,7 @@ HEALTH_PASS=0
 HEALTH_FAIL=0
 
 # Load config for health check (handles both keep and new paths)
-_HC_RAW=$(node -e "
+_HC_RAW=$(_node_capture -e "
 try {
   const c=JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.experience/config.json','utf8'));
   const fields=[
@@ -1539,7 +1558,7 @@ done <<< "$_HC_RAW"
 
 # 1. Embed API probe
 printf "  Embed API (%s)... " "$HC_embedProvider"
-EMBED_RESULT=$(node -e "
+EMBED_RESULT=$(_node_capture -e "
 (async () => {
   try {
     const core = require(require('path').join(require('os').homedir(),'.experience','experience-core.js'));
@@ -1601,7 +1620,7 @@ cat > "$_COLL_PROBE" <<'JSEOF'
   } catch(e) { console.log('FAIL: ' + e.message); process.exit(1); }
 })();
 JSEOF
-COLL_RESULT=$(node "$_COLL_PROBE" 2>&1)
+COLL_RESULT=$(_node_capture "$_COLL_PROBE" 2>&1)
 rm -f "$_COLL_PROBE"
 if [ $? -eq 0 ]; then
   HEALTH_PASS=$((HEALTH_PASS+1))
