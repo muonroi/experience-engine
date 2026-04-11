@@ -15,24 +15,33 @@ set +H 2>/dev/null   # disable history expansion — fixes !res.ok in node -e bl
 # Prerequisites: Node.js 20+
 
 # ── WSL mismatch detection ─────────────────────────────────────────────────
-# PowerShell's `bash` invokes WSL, not Git Bash. WSL lacks Windows node,
-# paths differ, and install goes to /root/ instead of /c/Users/.
-# Detect: WSL + script on Windows filesystem = wrong shell.
+# PowerShell's `bash` invokes WSL, not Git Bash. If the user intentionally
+# runs from WSL (e.g., to set up Codex CLI), that's fine — as long as
+# Node.js is available. Only block when WSL has no node (accidental invoke).
 if grep -qi microsoft /proc/version 2>/dev/null; then
   _SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)"
   if [[ "$_SCRIPT_PATH" == /mnt/* ]]; then
+    if ! command -v node &>/dev/null; then
+      echo ""
+      echo "  [ERROR] Running in WSL but Node.js is not installed in WSL."
+      echo ""
+      echo "  This usually means PowerShell's 'bash' invoked WSL accidentally."
+      echo "  WSL needs its own Node.js to run setup correctly."
+      echo ""
+      echo "  Fix — choose one:"
+      echo "    A. Install Node.js in WSL:  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs"
+      echo "    B. From PowerShell:  & \"\$env:ProgramFiles\\Git\\bin\\bash.exe\" $0 $*"
+      echo "    C. Open Git Bash terminal, then:  bash $0"
+      echo "    D. Use setup.ps1 wrapper:  powershell .experience\\setup.ps1"
+      echo ""
+      exit 1
+    fi
+    # WSL with node available — warn about install paths but allow
     echo ""
-    echo "  [ERROR] Running in WSL but script is on Windows filesystem."
+    echo "  [WSL] Running from WSL on Windows filesystem (/mnt/...)."
+    echo "  Files will install to WSL home (~), not Windows home."
+    echo "  This is correct for Codex CLI (hooks only work in WSL)."
     echo ""
-    echo "  PowerShell 'bash' invokes WSL, not Git Bash."
-    echo "  WSL lacks Windows-side Node.js and paths won't work correctly."
-    echo ""
-    echo "  Fix — choose one:"
-    echo "    1. From PowerShell:  & \"\$env:ProgramFiles\\Git\\bin\\bash.exe\" $0 $*"
-    echo "    2. Open Git Bash terminal, then:  bash $0"
-    echo "    3. Install setup.ps1 wrapper (see README)"
-    echo ""
-    exit 1
   fi
 fi
 
