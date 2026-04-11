@@ -40,14 +40,15 @@ process.stdin.on('end', async () => {
     }, 2500);
 
     const resultMeta = await (async () => {
-      // Use interceptWithMeta to get surfacedIds alongside suggestions
+      // Use interceptWithMeta to get surfacedIds + route alongside suggestions
       const { interceptWithMeta: interceptMeta } = require(path.join(os.homedir(), '.experience', 'experience-core.js'));
       if (interceptMeta) return interceptMeta(tool, toolInput, ctrl.signal);
-      return { suggestions: await intercept(tool, toolInput, ctrl.signal), surfacedIds: [] };
+      return { suggestions: await intercept(tool, toolInput, ctrl.signal), surfacedIds: [], route: null };
     })();
     clearTimeout(timer);
     const result = resultMeta?.suggestions ?? (typeof resultMeta === 'string' ? resultMeta : null);
     const surfacedIds = resultMeta?.surfacedIds || [];
+    const routeInfo = resultMeta?.route || null;
     debugLog({ stage: 'intercept_done', tool, hasResult: !!result, surfacedCount: surfacedIds.length, preview: typeof result === 'string' ? result.slice(0, 240) : null });
 
     // Write last-suggestions state for PostToolUse hook
@@ -60,17 +61,34 @@ process.stdin.on('end', async () => {
       } catch {}
     }
 
-    if (result) {
+    // Write route decision for consumers (GSD, external tools)
+    if (routeInfo) {
+      try {
+        const tmpDir = path.join(os.homedir(), '.experience', 'tmp');
+        fs.mkdirSync(tmpDir, { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, 'last-route.json'), JSON.stringify({ ts: new Date().toISOString(), ...routeInfo }, null, 2), 'utf8');
+      } catch {}
+    }
+
+    if (result || routeInfo) {
       // Detect CLI from tool name pattern or env vars
       const isGemini = !!(process.env.GEMINI_SESSION_ID || process.env.GEMINI_PROJECT_DIR)
         || /^(run_shell_command|write_file|edit_file|replace_in_file)$/.test(tool);
+
+      // Build output text: experience suggestions + optional route advisory
+      let outputText = result || '';
+      if (routeInfo && routeInfo.tier) {
+        const routeLine = `\n[Model Route] tier=${routeInfo.tier} model=${routeInfo.model || '?'} confidence=${(routeInfo.confidence || 0).toFixed(2)} source=${routeInfo.source || 'default'}`;
+        outputText = outputText ? outputText + '\n---\n' + routeLine : routeLine;
+      }
+
       if (isGemini) {
         // Gemini: plain text stdout → treated as systemMessage
-        process.stdout.write(result);
+        process.stdout.write(outputText);
       } else {
         // Claude Code / Codex: structured JSON with additionalContext
         process.stdout.write(JSON.stringify({
-          hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', additionalContext: result }
+          hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', additionalContext: outputText }
         }));
       }
     }
