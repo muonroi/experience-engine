@@ -128,6 +128,7 @@ if [[ "$1" == "--docker" ]]; then
       cp "$SRC_DIR/experience-core.js" "$HOME/.experience/" 2>/dev/null
       cp "$SRC_DIR/stop-extractor.js" "$HOME/.experience/" 2>/dev/null
       cp "$SRC_DIR/interceptor-post.js" "$HOME/.experience/" 2>/dev/null
+      cp "$SRC_DIR/judge-worker.js" "$HOME/.experience/" 2>/dev/null
 
       # Write config pointing to Docker services
       cat > "$HOME/.experience/config.json" <<DOCKERCFG
@@ -869,7 +870,12 @@ if [ -f "$SRC_DIR/interceptor-post.js" ]; then
   cp "$SRC_DIR/interceptor-post.js" "$INSTALL_DIR/interceptor-post.js"
 fi
 
-chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js" "$INSTALL_DIR/interceptor-post.js" 2>/dev/null
+# Copy judge-worker.js (async LLM judge spawned by interceptor-post.js)
+if [ -f "$SRC_DIR/judge-worker.js" ]; then
+  cp "$SRC_DIR/judge-worker.js" "$INSTALL_DIR/judge-worker.js"
+fi
+
+chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js" "$INSTALL_DIR/interceptor-post.js" "$INSTALL_DIR/judge-worker.js" 2>/dev/null
 
 # Atomic config write — only when NOT keeping config
 if [ "$KEEP_CONFIG" = "false" ]; then
