@@ -417,10 +417,11 @@ if [ "$NI_MODE" = "true" ] && [ -z "$EMBED_DIM" ]; then
 
   if [ $? -ne 0 ] || [ -z "$EMBED_DIM" ]; then
     echo ""
-    echo "  [FAIL] Cannot probe embed dimension ($EMBED_PROVIDER / $EMBED_MODEL)"
+    echo "  [WARN] Cannot probe embed dimension ($EMBED_PROVIDER / $EMBED_MODEL)"
     if [ -s /tmp/exp-dim-err ]; then
       echo "  Error: $(cat /tmp/exp-dim-err)"
     fi
+    echo "  Common: SiliconFlow=2048, OpenAI=1536, Gemini/Ollama=768, VoyageAI=1024"
     echo "  Fix:   Set EXP_EMBED_DIM=<number> or verify API key/endpoint"
     exit 1
   fi
@@ -775,15 +776,33 @@ if [ "$KEEP_CONFIG" = "false" ] && [ "$NI_MODE" = "false" ]; then
 
   if [ $? -ne 0 ] || [ -z "$EMBED_DIM" ]; then
     echo ""
-    echo "  [FAIL] Cannot reach embed API ($EMBED_PROVIDER / $EMBED_MODEL)"
+    echo "  [WARN] Cannot reach embed API ($EMBED_PROVIDER / $EMBED_MODEL)"
     if [ -s /tmp/exp-dim-err ]; then
       echo "  Error: $(cat /tmp/exp-dim-err)"
     fi
-    echo "  Fix:   Verify your API key and endpoint, then re-run setup.sh"
-    exit 1
+    echo ""
+    echo "  Common dimensions by provider:"
+    echo "    SiliconFlow (Qwen3-Embedding-0.6B): 2048"
+    echo "    SiliconFlow (BAAI/bge-m3):          1024"
+    echo "    OpenAI (text-embedding-3-small):     1536"
+    echo "    Gemini (text-embedding-004):         768"
+    echo "    Ollama (nomic-embed-text):           768"
+    echo "    VoyageAI (voyage-code-3):            1024"
+    if [ "$NI_MODE" = "true" ]; then
+      echo ""
+      echo "  Fix: Set EXP_EMBED_DIM=<number> (e.g. EXP_EMBED_DIM=2048)"
+      exit 1
+    else
+      printf "  Enter dimension manually (or Ctrl+C to abort): "; read -r EMBED_DIM
+      if [ -z "$EMBED_DIM" ] || ! echo "$EMBED_DIM" | grep -qE '^[0-9]+$'; then
+        echo "  [FAIL] Invalid dimension. Re-run setup.sh with working API or set EXP_EMBED_DIM."
+        exit 1
+      fi
+      echo "  Using manual dimension: $EMBED_DIM"
+    fi
+  else
+    echo "  Embed dimension: $EMBED_DIM (probed from API)"
   fi
-
-  echo "  Embed dimension: $EMBED_DIM (probed from API)"
 fi
 
 # ── Step C: Optional seed ─────────────────────────────────────────────────
