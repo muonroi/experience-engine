@@ -47,6 +47,16 @@ const EMBED_DIM       = _cfg.embedDim      || 768;
 const MIN_CONFIDENCE  = _cfg.minConfidence  || 0.42;
 const HIGH_CONFIDENCE = _cfg.highConfidence || 0.60;
 
+// --- Model Router config ---
+const ROUTER_HISTORY_THRESHOLD = _cfg.routerHistoryThreshold || 0.80;
+const ROUTER_DEFAULT_TIER      = _cfg.routerDefaultTier      || 'balanced';
+const MODEL_TIERS = _cfg.modelTiers || {
+  claude:   { fast: 'haiku',           balanced: 'sonnet',        premium: 'opus' },
+  gemini:   { fast: 'gemini-2.0-flash', balanced: 'gemini-2.5-pro', premium: 'gemini-2.5-pro' },
+  codex:    { fast: 'codex-mini',      balanced: 'o3',            premium: 'o3' },
+  opencode: { fast: 'haiku',           balanced: 'sonnet',        premium: 'opus' },
+};
+
 const OLLAMA_EMBED_URL = `${OLLAMA_BASE}/api/embed`;
 const OLLAMA_GENERATE_URL = `${OLLAMA_BASE}/api/generate`;
 
@@ -56,6 +66,7 @@ const COLLECTIONS = [
   { name: 'experience-selfqa',     topK: 2, budgetChars: 1000 },
 ];
 
+const ROUTES_COLLECTION = 'experience-routes';
 const SELFQA_COLLECTION = 'experience-selfqa';
 const EDGE_COLLECTION = 'experience-edges';
 const DEDUP_THRESHOLD = 0.85;
@@ -64,15 +75,20 @@ const QUERY_MAX_CHARS = 500;
 
 // --- Session-persistent tracking (file-based, survives process restarts) ---
 // Each hook invocation is a NEW process, so in-memory arrays are useless.
-// Use a temp file keyed by PPID (parent process = the agent session).
+// Key by date + CWD hash — PPID is unreliable on Windows (changes every hook call).
 
 const SESSION_TRACK_DIR = require('path').join(require('os').tmpdir(), 'experience-session');
 const MAX_SESSION_UNIQUE = 8; // P2: max unique experiences surfaced per session
 
 function getSessionTrackFile() {
   try { fs.mkdirSync(SESSION_TRACK_DIR, { recursive: true }); } catch {}
-  // Use PPID to group by agent session; fallback to daily bucket
-  const sessionKey = process.ppid || 'default';
+  // Stable session key: YYYYMMDD + CWD hash (same day + same project = same session)
+  // This groups all hook calls from the same agent workspace into one tracking file.
+  const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const cwd = process.cwd() || '';
+  let hash = 0;
+  for (let i = 0; i < cwd.length; i++) { hash = ((hash << 5) - hash + cwd.charCodeAt(i)) | 0; }
+  const sessionKey = `${today}-${(hash >>> 0).toString(36)}`;
   return pathMod.join(SESSION_TRACK_DIR, `session-${sessionKey}.json`);
 }
 
@@ -136,13 +152,26 @@ function incrementIgnoreCountData(data) {
   return data;
 }
 
-async function incrementIgnoreCount(collection, pointId) {
+function incrementIrrelevantData(data) {
+  data.irrelevantCount = (data.irrelevantCount || 0) + 1;
+  data.lastIrrelevantAt = new Date().toISOString();
+  return data;
+}
+
+/**
+ * Shared read-modify-write helper for FileStore and Qdrant.
+ * Fetches the point payload, calls updateFn(data) to mutate in-place, then writes back.
+ * @param {string} collection - Collection name
+ * @param {string} pointId    - Point UUID
+ * @param {Function} updateFn - Mutates data object in-place (e.g. applyHitUpdate, incrementIgnoreCountData)
+ */
+async function updatePointPayload(collection, pointId, updateFn) {
   if (!(await checkQdrant())) {
     const entries = fileStoreRead(collection);
     const entry = entries.find(e => e.id === pointId);
     if (entry && entry.payload?.json) {
       const data = JSON.parse(entry.payload.json);
-      incrementIgnoreCountData(data);
+      updateFn(data);
       entry.payload.json = JSON.stringify(data);
       fileStoreWrite(collection, entries);
     }
@@ -157,7 +186,7 @@ async function incrementIgnoreCount(collection, pointId) {
     const point = (await res.json()).result;
     if (!point?.payload?.json) return;
     const data = JSON.parse(point.payload.json);
-    incrementIgnoreCountData(data);
+    updateFn(data);
     await fetch(`${QDRANT_BASE}/collections/${collection}/points/payload`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
@@ -165,6 +194,10 @@ async function incrementIgnoreCount(collection, pointId) {
       signal: AbortSignal.timeout(5000),
     });
   } catch { /* silent */ }
+}
+
+async function incrementIgnoreCount(collection, pointId) {
+  await updatePointPayload(collection, pointId, incrementIgnoreCountData);
 }
 
 // --- Qdrant availability (per D-14) ---
@@ -348,7 +381,25 @@ function fileStoreUpsert(collection, id, vector, payload) {
 
 // --- Intercept: query experience before tool call ---
 
+// P5: Read-only command detection — fast-path skip, no embedding/search cost
+const READ_ONLY_CMD = /^(ls|dir|cat|head|tail|wc|file|stat|find|tree|which|where|echo|printf|pwd|whoami|hostname|date|uptime|type|less|more|sort|uniq|tee|realpath|basename|dirname|env|printenv|id|groups|df|du|free|top|htop|lsof|ps|pgrep|mount|uname)\b|^git\s+(log|status|diff|show|branch|tag|remote|stash\s+list|describe|rev-parse|config\s+--get|shortlog|blame|reflog|ls-files|ls-tree|name-rev|cherry)\b|^(grep|rg|ag|ack)\b|^diff\b|^(npm|yarn|pnpm)\s+(list|ls|info|view|outdated|audit|why)\b|^(dotnet)\s+(--list-sdks|--list-runtimes|--info)\b|^(docker|podman)\s+(ps|images|inspect|logs|stats|top|port|volume\s+ls|network\s+ls)\b/;
+
+function isReadOnlyCommand(toolName, toolInput) {
+  const tool = (toolName || '').toLowerCase();
+  if (tool !== 'bash' && tool !== 'shell' && tool !== 'execute_command') return false;
+  const cmd = (toolInput?.command || toolInput?.cmd || '').trim();
+  // Multi-command chains: only skip if ALL parts are read-only
+  // Split on && and || and ; — if any part is NOT read-only, treat whole thing as mutating
+  const parts = cmd.split(/\s*(?:&&|\|\||;)\s*/);
+  return parts.every(p => READ_ONLY_CMD.test(p.trim()));
+}
+
 async function interceptWithMeta(toolName, toolInput, signal) {
+  // P5: Skip read-only commands — no code mutation = no risk = no warning needed
+  if (isReadOnlyCommand(toolName, toolInput)) {
+    return { suggestions: null, surfacedIds: [] };
+  }
+
   // P2: Session budget cap — stop surfacing after N unique experiences
   const uniquesSoFar = sessionUniqueCount();
   if (uniquesSoFar >= MAX_SESSION_UNIQUE) {
@@ -370,10 +421,40 @@ async function interceptWithMeta(toolName, toolInput, signal) {
     searchCollection(COLLECTIONS[2].name, vector, COLLECTIONS[2].topK, signal),
   ]);
 
+  // v2: Hard scope filter — binary gate before rerank. If scope.lang set and current
+  // file's language doesn't match → eliminate entirely (not a penalty, full exclusion).
+  // Legacy entries without scope pass through unchanged.
+  function applyScopeFilter(points) {
+    if (!filePath) return points; // no file context — can't filter
+    const fileExt = filePath.replace(/\\/g, '/').split('.').pop()?.toLowerCase() || '';
+    // Normalize file extension to a language family for matching
+    const JS_FAMILY = new Set(['ts', 'tsx', 'js', 'jsx']);
+    const CSS_FAMILY = new Set(['css', 'scss', 'less', 'sass']);
+    const CS_FAMILY  = new Set(['cs', 'fs']);
+    function fileMatchesLang(scopeLang) {
+      if (!scopeLang || scopeLang === 'all') return true;
+      const sl = scopeLang.toLowerCase();
+      if (sl === 'c#')         return CS_FAMILY.has(fileExt);
+      if (sl === 'javascript') return JS_FAMILY.has(fileExt);
+      if (sl === 'typescript') return JS_FAMILY.has(fileExt);
+      if (sl === 'css')        return CSS_FAMILY.has(fileExt);
+      // Generic: compare lowercase scope.lang against detected context
+      const detected = (detectContext(filePath) || '').toLowerCase();
+      return detected === sl || detected.startsWith(sl);
+    }
+    return points.filter(p => {
+      try {
+        const exp = JSON.parse(p.payload?.json || '{}');
+        if (!exp.scope?.lang) return true; // legacy — always surface
+        return fileMatchesLang(exp.scope.lang);
+      } catch { return true; }
+    });
+  }
+
   // Rerank by quality score before formatting (Phase 103, 104)
-  const r0 = rerankByQuality(t0, queryDomain, queryProjectSlug);
-  const r1 = rerankByQuality(t1, queryDomain, queryProjectSlug);
-  const r2 = rerankByQuality(t2, queryDomain, queryProjectSlug);
+  const r0 = rerankByQuality(applyScopeFilter(t0), queryDomain, queryProjectSlug);
+  const r1 = rerankByQuality(applyScopeFilter(t1), queryDomain, queryProjectSlug);
+  const r2 = rerankByQuality(applyScopeFilter(t2), queryDomain, queryProjectSlug);
 
   const lines = [
     ...applyBudget(formatPoints(r0), COLLECTIONS[0].budgetChars),
@@ -422,7 +503,11 @@ async function interceptWithMeta(toolName, toolInput, signal) {
   }
 
   // Track suggestions: session dedup + ignore detection (NOISE-04, P4)
-  const surfacedMeta = surfaced.map(p => ({ collection: p._collection, id: p.id }));
+  const surfacedMeta = surfaced.map(p => {
+    let solution = null;
+    try { solution = JSON.parse(p.payload?.json || '{}').solution || null; } catch {}
+    return { collection: p._collection, id: p.id, solution };
+  });
   if (surfacedMeta.length > 0) {
     const { flagged, filtered } = trackSuggestions(surfacedMeta);
     // P4: Remove already-shown suggestions from output
@@ -445,6 +530,19 @@ async function interceptWithMeta(toolName, toolInput, signal) {
     if (flagged.length > 0) {
       Promise.all(flagged.map(f => incrementIgnoreCount(f.collection, f.id))).catch(() => {});
     }
+  }
+
+  // P6: Brain relevance filter — ask brain if remaining suggestions are relevant to THIS action
+  if (lines.length > 0 && _cfg.brainFilter !== false) {
+    try {
+      const kept = await brainRelevanceFilter(query, lines, signal, queryProjectSlug);
+      if (kept !== null) {
+        const removed = lines.length - kept.length;
+        lines.length = 0;
+        lines.push(...kept);
+        if (removed > 0) activityLog({ op: 'brain-filter', removed, kept: kept.length });
+      }
+    } catch { /* never block intercept on brain filter failure */ }
   }
 
   activityLog({ op: 'intercept', query: query.slice(0, 120), scores: [...r0, ...r1, ...r2].map(p => p._effectiveScore ?? p.score).sort((a, b) => b - a).slice(0, 3), result: lines.length > 0 ? 'suggestion' : null, project: extractProjectPath(toolInput) });
@@ -493,7 +591,8 @@ async function extractFromSession(transcript, projectPath) {
       const qa = await extractQA(mistake);
       if (!qa || !qa.trigger || !qa.solution) continue;
       if (await isDuplicate(qa)) continue;
-      await storeExperience(qa, domain);
+      const projectSlug = extractProjectSlug(projectPath);
+      await storeExperience(qa, domain, projectSlug);
       stored++;
     } catch { /* skip */ }
   }
@@ -683,8 +782,79 @@ async function callBrainWithFallback(prompt) {
   return null;
 }
 
+// P6: Brain relevance filter — lightweight brain call to check if suggestions match the action
+// Input: the action query + numbered warnings. Output: which numbers are relevant.
+// Timeout: 3s (tight — fail-open if brain is slow). Cost: ~80 tokens input, ~5 tokens output.
+async function brainRelevanceFilter(actionQuery, suggestionLines, signal, projectSlug) {
+  if (!suggestionLines || suggestionLines.length === 0) return null;
+
+  // Extract just the warning text (strip emoji/score prefix for cleaner prompt)
+  const warnings = suggestionLines.map((line, i) => {
+    const clean = line.replace(/^.*?\]:\s*/, '');
+    return `${i + 1}. ${clean}`;
+  });
+
+  const projectCtx = projectSlug ? `\nPROJECT: ${projectSlug} — warnings about OTHER projects are NOT relevant.` : '';
+  const prompt = `You are a relevance filter. An AI coding agent is about to perform this action:
+
+ACTION: ${actionQuery.slice(0, 300)}${projectCtx}
+
+These warnings were retrieved from past experience:
+${warnings.join('\n')}
+
+Which warnings could help prevent a mistake in THIS SPECIFIC action?
+Rules:
+- A warning is relevant ONLY if the action could actually trigger the mistake the warning describes
+- Generic advice that doesn't match the specific action is NOT relevant
+- Warnings about a DIFFERENT project/codebase than the current one are NOT relevant
+- "ls", "git log", "cat" commands reading files NEVER need warnings about code patterns
+
+Reply with ONLY the relevant warning numbers separated by commas (e.g. "1,3"), or "none" if none are relevant.`;
+
+  // Use a dedicated fast brain call with short timeout
+  try {
+    const brainFn = BRAIN_FNS[BRAIN_PROVIDER] || BRAIN_FNS.ollama;
+    let response;
+
+    // Direct call with tight timeout — bypass callBrainWithFallback to avoid JSON parsing
+    if (BRAIN_PROVIDER === 'ollama') {
+      const res = await fetch(OLLAMA_GENERATE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: BRAIN_MODEL, prompt, stream: false, options: { temperature: 0.1, num_predict: 20 } }),
+        signal: signal || AbortSignal.timeout(3000),
+      });
+      if (!res.ok) return null;
+      response = (await res.json()).response || '';
+    } else {
+      // OpenAI-compatible / Gemini / Claude — use chat endpoint
+      const endpoint = BRAIN_ENDPOINT || 'https://api.openai.com/v1/chat/completions';
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${BRAIN_KEY}` },
+        body: JSON.stringify({ model: BRAIN_MODEL, messages: [{ role: 'user', content: prompt }], temperature: 0.1, max_tokens: 20 }),
+        signal: signal || AbortSignal.timeout(3000),
+      });
+      if (!res.ok) return null;
+      response = (await res.json()).choices?.[0]?.message?.content || '';
+    }
+
+    const text = response.trim().toLowerCase();
+    if (text === 'none' || text === '0' || text === '') return [];
+
+    // Parse comma-separated numbers
+    const nums = text.match(/\d+/g);
+    if (!nums) return null; // unparseable — fail-open
+    const validIndices = nums.map(n => parseInt(n, 10) - 1).filter(i => i >= 0 && i < suggestionLines.length);
+    if (validIndices.length === 0) return [];
+    return validIndices.map(i => suggestionLines[i]);
+  } catch {
+    return null; // timeout or error — fail-open, show all suggestions
+  }
+}
+
 async function extractQA(mistake) {
-  const prompt = `Given this session excerpt where something went wrong:\n${mistake.excerpt.slice(0, 1500)}\n\nExtract in JSON (no markdown):\n{"trigger":"one line","question":"one line","reasoning":["step1","step2"],"solution":"one line"}`;
+  const prompt = `Given this session excerpt where something went wrong:\n${mistake.excerpt.slice(0, 1500)}\n\nExtract in JSON (no markdown):\n{"trigger":"when this fires","question":"one line","reasoning":["step1","step2"],"solution":"what to do","why":"root cause or incident that created this rule","scope":{"lang":"C#|JavaScript|all","repos":[],"filePattern":"*.cs"}}`;
   return callBrainWithFallback(prompt);
 }
 
@@ -801,6 +971,8 @@ function buildStorePayload(id, qa, domain, projectSlug) {
   return {
     id, trigger: qa.trigger, question: qa.question,
     reasoning: qa.reasoning || [], solution: qa.solution,
+    why: qa.why || null,    // v2: root cause / incident motivation
+    scope: qa.scope || null, // v2: {lang, repos, filePattern} — hard filter gate
     confidence: 0.5, hitCount: 0, tier: 2,
     lastHitAt: null, ignoreCount: 0,
     confirmedAt: [],  // Phase 108: temporal trace
@@ -811,14 +983,14 @@ function buildStorePayload(id, qa, domain, projectSlug) {
   };
 }
 
-async function storeExperience(qa, domain) {
+async function storeExperience(qa, domain, projectSlug) {
   const text = `${qa.trigger} ${qa.question} ${qa.solution}`;
   const vector = await getEmbedding(text);
   if (!vector) return;
 
   const id = crypto.randomUUID();
   const payload = {
-    json: JSON.stringify(buildStorePayload(id, qa, domain)),
+    json: JSON.stringify(buildStorePayload(id, qa, domain, projectSlug)),
     user: EXP_USER,
   };
 
@@ -993,9 +1165,11 @@ function computeEffectiveScore(point, data, queryDomain, queryProjectSlug) {
   const domainPenalty = (queryDomain && data.domain && queryDomain !== data.domain) ? 0.20
     : (queryDomain && !data.domain) ? 0.05 : 0;
   // P0: Project-aware penalty — cross-project suggestions heavily penalized
+  // v2: bypass penalty when scope.lang='all' (universal behavioral rules should surface everywhere)
   let projectPenalty = 0;
   if (queryProjectSlug && data._projectSlug) {
-    if (queryProjectSlug !== data._projectSlug) projectPenalty = 0.30;
+    const scopeLang = data.scope?.lang;
+    if (queryProjectSlug !== data._projectSlug && scopeLang !== 'all') projectPenalty = 0.70;
   }
   // Phase 108: temporal boost/penalty from confirmedAt trace
   let temporalAdj = 0;
@@ -1037,11 +1211,21 @@ function formatPoints(points) {
     if (effConf < MIN_CONFIDENCE) continue;
     // Use _effectiveScore (from rerankByQuality) for display, fallback to raw score
     const displayScore = point._effectiveScore ?? point.score ?? 0;
+    let line;
     if (displayScore >= HIGH_CONFIDENCE) {
-      lines.push(`⚠️ [Experience - High Confidence (${displayScore.toFixed(2)})]: ${exp.solution}`);
+      line = `⚠️ [Experience - High Confidence (${displayScore.toFixed(2)})]: ${exp.solution}`;
     } else {
-      lines.push(`💡 [Suggestion (${displayScore.toFixed(2)})]: ${exp.solution}`);
+      line = `💡 [Suggestion (${displayScore.toFixed(2)})]: ${exp.solution}`;
     }
+    // v2: append why when present so agent understands the motivation
+    if (exp.why) {
+      line += `\n   Why: ${exp.why}`;
+    }
+    // v2: append point ID so agent can call POST /api/feedback when ignoring
+    const pid = String(point.id).slice(0, 8);
+    const coll = point._collection || 'experience-behavioral';
+    line += `\n   [id:${pid} col:${coll}]`;
+    lines.push(line);
   }
   return lines;
 }
@@ -1071,107 +1255,26 @@ function applyHitUpdate(data) {
 }
 
 async function recordHit(collection, pointId) {
-  if (!(await checkQdrant())) {
-    // FileStore: update hitCount in-place
-    const entries = fileStoreRead(collection);
-    const entry = entries.find(e => e.id === pointId);
-    if (entry && entry.payload?.json) {
-      const data = JSON.parse(entry.payload.json);
-      applyHitUpdate(data);
-      entry.payload.json = JSON.stringify(data);
-      fileStoreWrite(collection, entries);
-    }
-    return;
-  }
-  try {
-    // Qdrant: scroll to get current payload, increment, update
-    const res = await fetch(`${QDRANT_BASE}/collections/${collection}/points/${pointId}`, {
-      headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return;
-    const point = (await res.json()).result;
-    if (!point?.payload?.json) return;
-    const data = JSON.parse(point.payload.json);
-    applyHitUpdate(data);
-    await fetch(`${QDRANT_BASE}/collections/${collection}/points/payload`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-      body: JSON.stringify({ points: [pointId], payload: { json: JSON.stringify(data) } }),
-      signal: AbortSignal.timeout(5000),
-    });
-  } catch { /* silent */ }
+  await updatePointPayload(collection, pointId, applyHitUpdate);
 }
 
 // --- recordFeedback: explicit agent feedback on surfaced suggestions ---
 
 async function recordFeedback(collection, pointId, followed) {
-  if (followed === true) {
-    // Same logic as recordHit: increment hitCount, reset ignoreCount, append confirmedAt
-    if (!(await checkQdrant())) {
-      const entries = fileStoreRead(collection);
-      const entry = entries.find(e => e.id === pointId);
-      if (entry && entry.payload?.json) {
-        const data = JSON.parse(entry.payload.json);
-        applyHitUpdate(data);
-        entry.payload.json = JSON.stringify(data);
-        fileStoreWrite(collection, entries);
-      }
-    } else {
-      try {
-        const res = await fetch(`${QDRANT_BASE}/collections/${collection}/points/${pointId}`, {
-          headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-          signal: AbortSignal.timeout(5000),
-        });
-        if (res.ok) {
-          const point = (await res.json()).result;
-          if (point?.payload?.json) {
-            const data = JSON.parse(point.payload.json);
-            applyHitUpdate(data);
-            await fetch(`${QDRANT_BASE}/collections/${collection}/points/payload`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-              body: JSON.stringify({ points: [pointId], payload: { json: JSON.stringify(data) } }),
-              signal: AbortSignal.timeout(5000),
-            });
-          }
-        }
-      } catch { /* silent */ }
-    }
-  } else {
-    // followed === false: only increment ignoreCount (do NOT reset it unlike recordHit)
-    if (!(await checkQdrant())) {
-      const entries = fileStoreRead(collection);
-      const entry = entries.find(e => e.id === pointId);
-      if (entry && entry.payload?.json) {
-        const data = JSON.parse(entry.payload.json);
-        incrementIgnoreCountData(data);
-        entry.payload.json = JSON.stringify(data);
-        fileStoreWrite(collection, entries);
-      }
-    } else {
-      try {
-        const res = await fetch(`${QDRANT_BASE}/collections/${collection}/points/${pointId}`, {
-          headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-          signal: AbortSignal.timeout(5000),
-        });
-        if (res.ok) {
-          const point = (await res.json()).result;
-          if (point?.payload?.json) {
-            const data = JSON.parse(point.payload.json);
-            incrementIgnoreCountData(data);
-            await fetch(`${QDRANT_BASE}/collections/${collection}/points/payload`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-              body: JSON.stringify({ points: [pointId], payload: { json: JSON.stringify(data) } }),
-              signal: AbortSignal.timeout(5000),
-            });
-          }
-        }
-      } catch { /* silent */ }
-    }
-  }
+  await updatePointPayload(collection, pointId, followed ? applyHitUpdate : incrementIgnoreCountData);
   activityLog({ op: 'feedback', collection, pointId: pointId.slice(0, 8), followed });
+}
+
+// --- recordJudgeFeedback: LLM judge verdict with IRRELEVANT separation ---
+
+async function recordJudgeFeedback(collection, pointId, verdict) {
+  const updateFn = verdict === 'FOLLOWED' ? applyHitUpdate
+    : verdict === 'IGNORED' ? incrementIgnoreCountData
+    : verdict === 'IRRELEVANT' ? incrementIrrelevantData
+    : null;
+  if (!updateFn) return; // UNCLEAR → no feedback
+  await updatePointPayload(collection, pointId, updateFn);
+  activityLog({ op: 'judge-feedback', collection, pointId: pointId.slice(0, 8), verdict });
 }
 
 // --- syncToQdrant: migrate FileStore data to Qdrant (per D-17) ---
@@ -1417,6 +1520,26 @@ async function evolve(trigger) {
     }
   }
 
+  // Step 4c: Auto-cleanup noise entries — high ignore + low hit ratio = junk
+  // Targets: entries ignored often but rarely followed, across ALL tiers
+  const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+  for (const collCfg of [{ name: 'experience-behavioral' }, { name: 'experience-selfqa' }]) {
+    const entries = await getAllEntries(collCfg.name);
+    for (const entry of entries) {
+      const data = parsePayload(entry);
+      if (!data) continue;
+      const ignores = data.ignoreCount || 0;
+      const hits = data.hitCount || 0;
+      const age = now - new Date(data.createdAt || 0).getTime();
+      // Noise criteria: ignoreCount >= 5 AND hit-to-ignore ratio < 0.2 AND age > 30 days
+      if (ignores >= 5 && (hits / Math.max(1, ignores)) < 0.2 && age > THIRTY_DAYS) {
+        await deleteEntry(collCfg.name, entry.id);
+        results.archived++;
+        activityLog({ op: 'evolve-noise-cleanup', id: entry.id.slice(0, 8), ignores, hits, age: Math.round(age / (24 * 60 * 60 * 1000)) });
+      }
+    }
+  }
+
   activityLog({ op: 'evolve', ...results, trigger: trigger || 'auto' });
 
   return results;
@@ -1599,6 +1722,380 @@ async function migrateQdrantUserTags() {
 // Fire once on load (non-blocking)
 migrateQdrantUserTags().catch(() => {});
 
+// --- Model Router (route-model spec) ---
+
+const CLASSIFY_PROMPT = `Classify this coding task complexity. Reply ONLY one word: fast, balanced, or premium.
+
+fast = trivial, mechanical, single action (rename, format, read file, delete unused, fix typo, update import, simple config change)
+balanced = moderate, requires understanding (implement feature, write tests, refactor single file, add endpoint, update logic)
+premium = complex, requires deep reasoning (multi-file architecture, race condition, security audit, system design, complex debug, breaking migration)
+
+Task: "{TASK}"`;
+
+// Keywords that hint at complexity level — used as a cheap pre-filter before brain call.
+// If files context contains these extensions/patterns, we can short-circuit.
+const COMPLEXITY_KEYWORDS = {
+  premium: [
+    'race condition', 'deadlock', 'concurrency', 'distributed', 'security audit',
+    'breaking change', 'multi-file', 'multi-service', 'architecture',
+    'performance regression', 'memory leak', 'heap', 'profil', 'benchmark',
+  ],
+  fast: [
+    'rename ', 'fix typo', 'typo in ', 'delete unused', 'update import',
+    'simple config', 'add comment', 'update version', 'format code',
+  ],
+};
+
+/**
+ * Cheap keyword pre-filter — returns tier hint without any API call.
+ * Checks task text + context.files extensions for complexity signals.
+ * Returns 'fast' | 'balanced' | 'premium' | null (null = inconclusive, call brain).
+ */
+function preFilterComplexity(taskText, context) {
+  const lower = taskText.toLowerCase();
+  const files = (context?.files || []).map(f => String(f).toLowerCase());
+
+  // Premium signals in task text
+  for (const kw of COMPLEXITY_KEYWORDS.premium) {
+    if (lower.includes(kw)) return 'premium';
+  }
+
+  // Fast signals — only for short descriptions (long tasks are never trivial)
+  if (lower.length < 80) {
+    for (const kw of COMPLEXITY_KEYWORDS.fast) {
+      if (lower.includes(kw)) return 'fast';
+    }
+  }
+
+  // Context files: many files → complexity signal
+  if (files.length >= 5) return 'premium';
+
+  // Context files: TypeScript/Go/Rust architecture files hint at complexity
+  const architectureFiles = files.filter(f =>
+    f.includes('service') || f.includes('middleware') || f.includes('gateway') ||
+    f.includes('migration') || f.includes('schema') || f.includes('interface')
+  );
+  if (architectureFiles.length >= 2) return 'premium';
+
+  return null; // inconclusive — let brain decide
+}
+
+/**
+ * Emit a structured routing decision line to stdout for GSD/user visibility.
+ * Format: [Model Router] -> {tier} ({model}) — {reason} [{source}]
+ */
+function printRouteDecision(tier, model, reason, source) {
+  const modelPart = model ? ` (${model})` : '';
+  process.stdout.write(`[Model Router] -> ${tier}${modelPart} — ${reason} [${source}]\n`);
+}
+
+// Bootstrap routes collection once on module load (fire-and-forget, like migrateQdrantUserTags)
+let _routesCollectionReady = false;
+async function ensureRoutesCollection() {
+  if (_routesCollectionReady) return;
+  if (!(await checkQdrant())) { _routesCollectionReady = true; return; } // FileStore needs no setup
+  try {
+    const check = await fetch(`${QDRANT_BASE}/collections/${ROUTES_COLLECTION}`, {
+      headers: { 'api-key': QDRANT_API_KEY }, signal: AbortSignal.timeout(3000),
+    });
+    if (check.ok) { _routesCollectionReady = true; return; }
+    await fetch(`${QDRANT_BASE}/collections/${ROUTES_COLLECTION}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+      body: JSON.stringify({ vectors: { size: EMBED_DIM, distance: 'Cosine' } }),
+      signal: AbortSignal.timeout(5000),
+    });
+    _routesCollectionReady = true;
+  } catch { _routesCollectionReady = true; /* fall through to FileStore */ }
+}
+
+// Fire once on module load — removes per-call overhead from routeModel()
+ensureRoutesCollection().catch(() => {});
+
+/**
+ * Call brain API for plain-text classification response.
+ * Deliberately separate from callBrainWithFallback() which expects JSON.
+ * Supports siliconflow (OpenAI-compatible) and ollama providers.
+ * @param {string} prompt
+ * @param {number} [timeoutMs=10000]
+ * @returns {Promise<string|null>} raw text response or null on failure
+ */
+async function classifyViaBrain(prompt, timeoutMs = 10000) {
+  const key = BRAIN_KEY || '';
+
+  // Provider: siliconflow or any OpenAI-compatible endpoint
+  if (BRAIN_PROVIDER === 'siliconflow' || BRAIN_ENDPOINT) {
+    if (!key) return null;
+    const endpoint = BRAIN_ENDPOINT || 'https://api.siliconflow.com/v1/chat/completions';
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+        body: JSON.stringify({
+          model: BRAIN_MODEL || 'Qwen/Qwen2.5-7B-Instruct',
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 10,
+          temperature: 0.1,
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!res.ok) return null;
+      return (await res.json()).choices?.[0]?.message?.content?.trim() || null;
+    } catch { return null; }
+  }
+
+  // Provider: ollama (generate endpoint, plain text)
+  if (BRAIN_PROVIDER === 'ollama') {
+    try {
+      const res = await fetch(`${OLLAMA_BASE}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: BRAIN_MODEL || 'qwen2.5:3b',
+          prompt,
+          stream: false,
+          options: { temperature: 0.1, num_predict: 10 },
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!res.ok) return null;
+      return (await res.json()).response?.trim() || null;
+    } catch { return null; }
+  }
+
+  return null;
+}
+
+/**
+ * Normalize brain classification response to a valid tier.
+ * Handles: multi-word responses, "medium" alias, casing.
+ * Returns 'fast' | 'balanced' | 'premium' | null (null = unrecognized).
+ */
+function normalizeTierResponse(raw) {
+  if (!raw) return null;
+  const word = raw.trim().toLowerCase().split(/\s+/)[0];
+  if (word === 'fast') return 'fast';
+  if (word === 'balanced' || word === 'medium') return 'balanced';
+  if (word === 'premium' || word === 'complex' || word === 'hard') return 'premium';
+  return null;
+}
+
+function resolveTierModel(tier, runtime) {
+  if (!runtime) return null;
+  const runtimeTiers = MODEL_TIERS[runtime];
+  if (!runtimeTiers) return null;
+  return runtimeTiers[tier] || runtimeTiers.balanced || null;
+}
+
+/**
+ * Store a new route decision to both FileStore and Qdrant (dual-write).
+ * Non-blocking — errors are swallowed so routing always returns quickly.
+ */
+async function storeRouteDecision(taskText, taskHash, tier, model, runtime, context, vector) {
+  const id = require('crypto').randomUUID();
+  const routeData = {
+    id, taskHash, taskSummary: taskText.slice(0, 200), tier, model, runtime: runtime || null,
+    source: 'brain', outcome: null, retryCount: 0, duration: null,
+    domain: context?.domain || null, projectSlug: context?.phase || null,
+    createdAt: new Date().toISOString(), feedbackAt: null,
+  };
+
+  // Dual-write: FileStore always, Qdrant when available
+  try { fileStoreUpsert(ROUTES_COLLECTION, id, vector, { json: JSON.stringify(routeData), user: EXP_USER }); } catch { /* non-blocking */ }
+  if (await checkQdrant()) {
+    try {
+      await fetch(`${QDRANT_BASE}/collections/${ROUTES_COLLECTION}/points`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+        body: JSON.stringify({ points: [{ id, vector, payload: { json: JSON.stringify(routeData), user: EXP_USER } }] }),
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch { /* non-blocking */ }
+  }
+}
+
+/**
+ * Route a task to the optimal model tier.
+ *
+ * Layer 0: Keyword pre-filter (free, ~0ms) — catches obvious cases
+ * Layer 1: History check (semantic search, ~50ms) — reuse/upgrade past decisions
+ * Layer 2: Brain classify (LLM call, ~200ms) — only when layers 0+1 miss
+ * Fallback: ROUTER_DEFAULT_TIER
+ *
+ * @param {string} task - Task description (any language)
+ * @param {object|null} context - { files, domain, phase } optional context
+ * @param {string|null} runtime - 'claude' | 'gemini' | 'codex' | 'opencode' | null
+ * @returns {Promise<{tier, model, confidence, source, reason, taskHash}>}
+ */
+async function routeModel(task, context, runtime) {
+  const taskText = (task || '').slice(0, 500);
+  if (!taskText) {
+    const tier = ROUTER_DEFAULT_TIER;
+    const model = resolveTierModel(tier, runtime);
+    printRouteDecision(tier, model, 'empty task', 'default');
+    activityLog({ op: 'route', task: '', tier, model, source: 'default', confidence: 0 });
+    return { tier, model, confidence: 0, source: 'default', reason: 'empty task', taskHash: null };
+  }
+
+  const taskHash = require('crypto').createHash('sha256').update(taskText).digest('hex').slice(0, 16);
+
+  // Layer 0: Keyword pre-filter (no API call)
+  const preFilterTier = preFilterComplexity(taskText, context);
+  if (preFilterTier) {
+    const model = resolveTierModel(preFilterTier, runtime);
+    const reason = `${preFilterTier} complexity detected`;
+    printRouteDecision(preFilterTier, model, reason, 'keyword');
+    activityLog({ op: 'route', task: taskText.slice(0, 100), tier: preFilterTier, model, source: 'keyword', confidence: 0.70 });
+
+    // Store for future history (async, non-blocking)
+    getEmbedding(taskText).then(vector => {
+      if (vector) storeRouteDecision(taskText, taskHash, preFilterTier, model, runtime, context, vector);
+    }).catch(() => {});
+
+    return { tier: preFilterTier, model, confidence: 0.70, source: 'keyword', reason, taskHash };
+  }
+
+  // Layer 1: History check (semantic search)
+  try {
+    const vector = await getEmbedding(taskText);
+    if (vector) {
+      const hits = await searchCollection(ROUTES_COLLECTION, vector, 3);
+      const bestHit = hits.find(h => (h.score || 0) >= ROUTER_HISTORY_THRESHOLD);
+      if (bestHit) {
+        const data = (() => { try { return JSON.parse(bestHit.payload?.json || '{}'); } catch { return {}; } })();
+        if (data.outcome) {
+          let tier = data.tier || ROUTER_DEFAULT_TIER;
+          let source = 'history';
+          const tiers = ['fast', 'balanced', 'premium'];
+          const isNegative = data.outcome === 'fail' || data.outcome === 'cancelled' || (data.retryCount || 0) >= 2;
+          if (isNegative) {
+            const idx = tiers.indexOf(tier);
+            if (idx < tiers.length - 1) tier = tiers[idx + 1];
+            source = 'history-upgrade';
+          }
+          const model = resolveTierModel(tier, runtime);
+          const reason = source === 'history-upgrade'
+            ? `similar task ${data.outcome === 'cancelled' ? 'was cancelled' : 'failed'} on ${data.tier || 'lower tier'}`
+            : 'similar task succeeded before';
+          const result = { tier, model, confidence: bestHit.score, source, reason, taskHash };
+          printRouteDecision(tier, model, reason, source);
+          activityLog({ op: 'route', task: taskText.slice(0, 100), tier, model, source, confidence: bestHit.score });
+          return result;
+        }
+      }
+    }
+  } catch { /* Layer 1 failure — proceed to Layer 2 */ }
+
+  // Layer 2: Brain classify (plain text — separate from callBrainWithFallback which expects JSON)
+  try {
+    const prompt = CLASSIFY_PROMPT.replace('{TASK}', taskText.slice(0, 300));
+    const brainResult = await classifyViaBrain(prompt);
+    if (brainResult) {
+      const normalizedTier = normalizeTierResponse(brainResult);
+      const tier = normalizedTier || ROUTER_DEFAULT_TIER;
+      const model = resolveTierModel(tier, runtime);
+      const confidence = normalizedTier ? 0.75 : 0.50;
+      const reason = `${tier} complexity task`;
+      const result = { tier, model, confidence, source: 'brain', reason, taskHash };
+      printRouteDecision(tier, model, reason, 'brain');
+      activityLog({ op: 'route', task: taskText.slice(0, 100), tier, model, source: 'brain', confidence });
+
+      // Dual-write: store route decision for future history
+      try {
+        const vector = await getEmbedding(taskText);
+        if (vector) await storeRouteDecision(taskText, taskHash, tier, model, runtime, context, vector);
+      } catch { /* non-blocking */ }
+
+      return result;
+    }
+  } catch { /* Layer 2 failure — fall through to default */ }
+
+  // Fallback: safe default
+  const model = resolveTierModel(ROUTER_DEFAULT_TIER, runtime);
+  printRouteDecision(ROUTER_DEFAULT_TIER, model, 'classification unavailable', 'default');
+  activityLog({ op: 'route', task: taskText.slice(0, 100), tier: ROUTER_DEFAULT_TIER, model, source: 'default', confidence: 0 });
+  return { tier: ROUTER_DEFAULT_TIER, model, confidence: 0, source: 'default', reason: 'fallback — classification unavailable', taskHash };
+}
+
+/**
+ * Record agent outcome for a past routing decision.
+ * Dual-writes update to both FileStore and Qdrant.
+ * ESC/interrupt → outcome='cancelled' → treated as negative → tier upgrade next time.
+ *
+ * @param {string} taskHash - Hash from routeModel response
+ * @param {string|null} tier - Tier used (for orphan records when taskHash not found)
+ * @param {string|null} model - Model used
+ * @param {string} outcome - 'success' | 'fail' | 'retry' | 'cancelled'
+ * @param {number} [retryCount=0]
+ * @param {number|null} [duration=null] - Duration in ms
+ * @returns {Promise<boolean>} true if record was found and updated
+ */
+async function routeFeedback(taskHash, tier, model, outcome, retryCount, duration) {
+  if (!taskHash || !outcome) return false;
+
+  const validOutcomes = ['success', 'fail', 'retry', 'cancelled'];
+  const normalizedOutcome = validOutcomes.includes(outcome) ? outcome : 'success';
+
+  const applyUpdate = (data) => {
+    data.outcome = normalizedOutcome;
+    data.retryCount = retryCount || 0;
+    data.duration = duration || null;
+    data.feedbackAt = new Date().toISOString();
+    if (tier) data.tier = tier;
+    if (model) data.model = model;
+  };
+
+  let found = false;
+
+  // FileStore: scan and update
+  try {
+    const entries = fileStoreRead(ROUTES_COLLECTION);
+    for (const entry of entries) {
+      const data = (() => { try { return JSON.parse(entry.payload?.json || '{}'); } catch { return {}; } })();
+      if (data.taskHash === taskHash) {
+        applyUpdate(data);
+        entry.payload.json = JSON.stringify(data);
+        fileStoreWrite(ROUTES_COLLECTION, entries);
+        found = true;
+        break;
+      }
+    }
+  } catch { /* FileStore scan failed — continue to Qdrant */ }
+
+  // Qdrant: scroll and update (always try, not just when FileStore misses)
+  if (await checkQdrant()) {
+    try {
+      const scrollRes = await fetch(`${QDRANT_BASE}/collections/${ROUTES_COLLECTION}/points/scroll`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+        body: JSON.stringify({ limit: 100, with_payload: true, filter: { must: [QDRANT_USER_FILTER] } }),
+        signal: AbortSignal.timeout(5000),
+      });
+      if (scrollRes.ok) {
+        const points = (await scrollRes.json()).result?.points || [];
+        if (points.length === 100) activityLog({ op: 'route-feedback-warn', msg: 'scroll hit 100 limit, may miss entries' });
+        for (const point of points) {
+          const data = (() => { try { return JSON.parse(point.payload?.json || '{}'); } catch { return {}; } })();
+          if (data.taskHash === taskHash) {
+            applyUpdate(data);
+            await fetch(`${QDRANT_BASE}/collections/${ROUTES_COLLECTION}/points/payload`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+              body: JSON.stringify({ points: [point.id], payload: { json: JSON.stringify(data), user: EXP_USER } }),
+              signal: AbortSignal.timeout(5000),
+            });
+            found = true;
+            break;
+          }
+        }
+      }
+    } catch { /* Qdrant scroll failed */ }
+  }
+
+  activityLog({ op: 'route-feedback', taskHash, tier, outcome: normalizedOutcome, retryCount: retryCount || 0, duration: duration || null });
+  return found;
+}
+
 // --- Exports ---
 
-module.exports = { intercept, interceptWithMeta, recordFeedback, extractFromSession, recordHit, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa) => buildStorePayload(require('crypto').randomUUID(), qa, null), _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback };
+module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter };

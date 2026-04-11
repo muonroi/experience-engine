@@ -18,7 +18,7 @@ SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo " Experience Engine v3.2 — Setup Wizard"
+echo " Experience Engine v1.0 — Setup Wizard"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo " Install dir: $INSTALL_DIR"
 echo ""
@@ -46,6 +46,8 @@ Non-interactive mode (CI/scripts):
     EXP_BRAIN_KEY        API key for brain provider (empty for ollama)
     EXP_EMBED_ENDPOINT   custom embed endpoint URL (for siliconflow/custom)
     EXP_BRAIN_ENDPOINT   custom brain endpoint URL (for siliconflow/custom)
+    EXP_BRAIN_PROXY      Optional proxy URL for brain API calls (firewall bypass)
+                         Example: EXP_BRAIN_PROXY=http://72.61.127.154:8082/api/brain
     EXP_OLLAMA_URL       Ollama URL (default: http://localhost:11434)
     EXP_AGENTS           comma-separated agent list (default: all)
                          values: claude,gemini,codex,opencode
@@ -127,6 +129,8 @@ if [[ "$1" == "--docker" ]]; then
       mkdir -p "$HOME/.experience"
       cp "$SRC_DIR/experience-core.js" "$HOME/.experience/" 2>/dev/null
       cp "$SRC_DIR/stop-extractor.js" "$HOME/.experience/" 2>/dev/null
+      cp "$SRC_DIR/interceptor-post.js" "$HOME/.experience/" 2>/dev/null
+      cp "$SRC_DIR/judge-worker.js" "$HOME/.experience/" 2>/dev/null
 
       # Write config pointing to Docker services
       cat > "$HOME/.experience/config.json" <<DOCKERCFG
@@ -187,11 +191,35 @@ if [[ "$1" == "--local" ]]; then
   EXP_BRAIN_KEY=""
   EXP_EMBED_ENDPOINT=""
   EXP_BRAIN_ENDPOINT=""
+  EXP_BRAIN_PROXY=""
   echo "  Shortcut --local: local Docker Qdrant + Ollama"
 fi
 
 CONFIG_FILE="$INSTALL_DIR/config.json"
 KEEP_CONFIG=false
+
+# ── Parse --remote flag ────────────────────────────────────────────────────
+REMOTE_HOST=""
+REMOTE_KEY=""
+_ARGS=("$@")
+for (( _i=0; _i<${#_ARGS[@]}; _i++ )); do
+  if [ "${_ARGS[$_i]}" = "--remote" ]; then
+    _j=$((_i+1)); REMOTE_HOST="${_ARGS[$_j]:-}"
+    # Validate format: user@host or host (no shell metacharacters)
+    if [[ -n "$REMOTE_HOST" ]] && ! [[ "$REMOTE_HOST" =~ ^[a-zA-Z0-9._@-]+$ ]]; then
+      echo "  [ERROR] Invalid --remote value: '$REMOTE_HOST'. Use user@host format."
+      exit 1
+    fi
+  fi
+  if [ "${_ARGS[$_i]}" = "--key" ]; then
+    _j=$((_i+1)); REMOTE_KEY="${_ARGS[$_j]:-}"
+    # Validate key file exists
+    if [ -n "$REMOTE_KEY" ] && [ ! -f "$REMOTE_KEY" ]; then
+      echo "  [ERROR] --key file not found: '$REMOTE_KEY'"
+      exit 1
+    fi
+  fi
+done
 
 # ── Step 1: Resolve config ─────────────────────────────────────────────────
 echo "◆ [1/6] Resolving config..."
@@ -327,9 +355,12 @@ if [ "$NI_MODE" = "true" ]; then
   BRAIN_KEY="${EXP_BRAIN_KEY:-}"
   EMBED_ENDPOINT="${EXP_EMBED_ENDPOINT:-}"
   BRAIN_ENDPOINT="${EXP_BRAIN_ENDPOINT:-}"
+  BRAIN_PROXY_URL="${EXP_BRAIN_PROXY:-}"
   OLLAMA_URL="${EXP_OLLAMA_URL:-http://localhost:11434}"
   TUNNEL_SSH=""
   KEEP_CONFIG=false
+  # Allow caller to bypass dimension probe by setting EXP_EMBED_DIM
+  [ -n "${EXP_EMBED_DIM:-}" ] && EMBED_DIM="${EXP_EMBED_DIM}"
 fi
 
 # ── NI mode dimension probe (must run before config write) ───────────────
@@ -386,10 +417,11 @@ if [ "$NI_MODE" = "true" ] && [ -z "$EMBED_DIM" ]; then
 
   if [ $? -ne 0 ] || [ -z "$EMBED_DIM" ]; then
     echo ""
-    echo "  [FAIL] Cannot probe embed dimension ($EMBED_PROVIDER / $EMBED_MODEL)"
+    echo "  [WARN] Cannot probe embed dimension ($EMBED_PROVIDER / $EMBED_MODEL)"
     if [ -s /tmp/exp-dim-err ]; then
       echo "  Error: $(cat /tmp/exp-dim-err)"
     fi
+    echo "  Common: SiliconFlow=2048, OpenAI=1536, Gemini/Ollama=768, VoyageAI=1024"
     echo "  Fix:   Set EXP_EMBED_DIM=<number> or verify API key/endpoint"
     exit 1
   fi
@@ -662,6 +694,14 @@ if [ "$KEEP_CONFIG" = "false" ] && [ "$NI_MODE" = "false" ]; then
       ;;
   esac
 
+  # ── Brain proxy URL (optional — firewall bypass) ─────────────────────────
+  echo ""
+  echo "  Brain proxy URL (optional — leave empty if not needed):"
+  echo "  Used when local brain API is unreachable (firewall, corporate network)"
+  echo "  Example: http://your-vps:8082/api/brain"
+  printf "  Proxy URL [none]: "; read -r BRAIN_PROXY_URL
+  BRAIN_PROXY_URL="${BRAIN_PROXY_URL:-}"
+
   # ── Dimension probe (after Step B) ──────────────────────────────────────
   echo ""
   echo "  Probing embedding dimension from API..."
@@ -736,15 +776,33 @@ if [ "$KEEP_CONFIG" = "false" ] && [ "$NI_MODE" = "false" ]; then
 
   if [ $? -ne 0 ] || [ -z "$EMBED_DIM" ]; then
     echo ""
-    echo "  [FAIL] Cannot reach embed API ($EMBED_PROVIDER / $EMBED_MODEL)"
+    echo "  [WARN] Cannot reach embed API ($EMBED_PROVIDER / $EMBED_MODEL)"
     if [ -s /tmp/exp-dim-err ]; then
       echo "  Error: $(cat /tmp/exp-dim-err)"
     fi
-    echo "  Fix:   Verify your API key and endpoint, then re-run setup.sh"
-    exit 1
+    echo ""
+    echo "  Common dimensions by provider:"
+    echo "    SiliconFlow (Qwen3-Embedding-0.6B): 2048"
+    echo "    SiliconFlow (BAAI/bge-m3):          1024"
+    echo "    OpenAI (text-embedding-3-small):     1536"
+    echo "    Gemini (text-embedding-004):         768"
+    echo "    Ollama (nomic-embed-text):           768"
+    echo "    VoyageAI (voyage-code-3):            1024"
+    if [ "$NI_MODE" = "true" ]; then
+      echo ""
+      echo "  Fix: Set EXP_EMBED_DIM=<number> (e.g. EXP_EMBED_DIM=2048)"
+      exit 1
+    else
+      printf "  Enter dimension manually (or Ctrl+C to abort): "; read -r EMBED_DIM
+      if [ -z "$EMBED_DIM" ] || ! echo "$EMBED_DIM" | grep -qE '^[0-9]+$'; then
+        echo "  [FAIL] Invalid dimension. Re-run setup.sh with working API or set EXP_EMBED_DIM."
+        exit 1
+      fi
+      echo "  Using manual dimension: $EMBED_DIM"
+    fi
+  else
+    echo "  Embed dimension: $EMBED_DIM (probed from API)"
   fi
-
-  echo "  Embed dimension: $EMBED_DIM (probed from API)"
 fi
 
 # ── Step C: Optional seed ─────────────────────────────────────────────────
@@ -863,7 +921,17 @@ function findCurrentSession() {
 main().catch(() => {}).finally(() => process.exit(0));
 HOOKEOF
 
-chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js"
+# Copy interceptor-post.js (PostToolUse feedback hook)
+if [ -f "$SRC_DIR/interceptor-post.js" ]; then
+  cp "$SRC_DIR/interceptor-post.js" "$INSTALL_DIR/interceptor-post.js"
+fi
+
+# Copy judge-worker.js (async LLM judge spawned by interceptor-post.js)
+if [ -f "$SRC_DIR/judge-worker.js" ]; then
+  cp "$SRC_DIR/judge-worker.js" "$INSTALL_DIR/judge-worker.js"
+fi
+
+chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js" "$INSTALL_DIR/interceptor-post.js" "$INSTALL_DIR/judge-worker.js" 2>/dev/null
 
 # Atomic config write — only when NOT keeping config
 if [ "$KEEP_CONFIG" = "false" ]; then
@@ -883,6 +951,7 @@ const cfg = {
   embedKey:       '$EMBED_KEY',
   brainEndpoint:  '$BRAIN_ENDPOINT',
   brainKey:       '$BRAIN_KEY',
+  brainProxyUrl:  '${BRAIN_PROXY_URL:-}',
   embedDim:       $EMBED_DIM,
   ollamaUrl:      '$OLLAMA_URL',
   tunnelSsh:      '$TUNNEL_SSH',
@@ -1040,7 +1109,7 @@ if [ -z "$QDRANT_URL" ]; then
   QDRANT_URL=$(node -e "try{const c=JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.experience/config.json','utf8'));process.stdout.write(c.qdrantUrl||'http://localhost:6333')}catch{process.stdout.write('http://localhost:6333')}")
 fi
 
-for COLL in experience-principles experience-behavioral experience-selfqa; do
+for COLL in experience-principles experience-behavioral experience-selfqa experience-routes; do
   COLL_INFO=$(eval "curl -s -m 5 $QDRANT_AUTH_HEADER '$QDRANT_URL/collections/$COLL'" 2>/dev/null)
   STATUS=$(echo "$COLL_INFO" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(d);process.stdout.write(j.result?.status||'')}catch{}})" 2>/dev/null)
   CURRENT_DIM=$(echo "$COLL_INFO" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(d);process.stdout.write(String(j.result?.config?.params?.vectors?.size||0))}catch{}})" 2>/dev/null)
@@ -1056,8 +1125,7 @@ for COLL in experience-principles experience-behavioral experience-selfqa; do
       if ! eval "curl -s -m 10 -X PUT $QDRANT_AUTH_HEADER '$QDRANT_URL/collections/$COLL' \
         -H 'Content-Type: application/json' \
         -d '{\"vectors\":{\"size\":${EMBED_DIM},\"distance\":\"Cosine\"}}'" >/dev/null 2>&1; then
-        echo "  [FAIL] Could not recreate $COLL (dim=$EMBED_DIM)"
-        exit 1
+        echo "  [WARN] Could not recreate $COLL (dim=$EMBED_DIM) — FileStore fallback will be used"
       fi
       echo "  $COLL recreated (dim=$EMBED_DIM)"
     else
@@ -1067,9 +1135,8 @@ for COLL in experience-principles experience-behavioral experience-selfqa; do
     if ! eval "curl -s -m 10 -X PUT $QDRANT_AUTH_HEADER '$QDRANT_URL/collections/$COLL' \
       -H 'Content-Type: application/json' \
       -d '{\"vectors\":{\"size\":${EMBED_DIM},\"distance\":\"Cosine\"}}'" >/dev/null 2>&1; then
-      echo "  [FAIL] Could not create collection $COLL"
-      echo "  Fix:   Check Qdrant is accessible at $QDRANT_URL"
-      exit 1
+      echo "  [WARN] Could not create collection $COLL — FileStore fallback will be used"
+      echo "  Fix:   Start Qdrant at $QDRANT_URL, then re-run setup.sh"
     fi
     echo "  $COLL created (dim=$EMBED_DIM)"
   fi
@@ -1124,16 +1191,19 @@ else
 fi
 
 INTERCEPTOR_PATH="$INSTALL_DIR/interceptor.js"
+INTERCEPTOR_POST_PATH="$INSTALL_DIR/interceptor-post.js"
 STOP_PATH="$INSTALL_DIR/stop-extractor.js"
 
 # Convert to forward slashes for Node.js on Windows
 INTERCEPTOR_FWD=$(echo "$INTERCEPTOR_PATH" | sed 's|\\|/|g' | sed 's|^/\([a-zA-Z]\)/|\1:/|')
+INTERCEPTOR_POST_FWD=$(echo "$INTERCEPTOR_POST_PATH" | sed 's|\\|/|g' | sed 's|^/\([a-zA-Z]\)/|\1:/|')
 STOP_FWD=$(echo "$STOP_PATH" | sed 's|\\|/|g' | sed 's|^/\([a-zA-Z]\)/|\1:/|')
 
-EXP_SELECTED_AGENTS="$SELECTED_AGENTS" EXP_INTERCEPTOR="$INTERCEPTOR_FWD" EXP_STOP="$STOP_FWD" node << 'JSEOF'
+EXP_SELECTED_AGENTS="$SELECTED_AGENTS" EXP_INTERCEPTOR="$INTERCEPTOR_FWD" EXP_INTERCEPTOR_POST="$INTERCEPTOR_POST_FWD" EXP_STOP="$STOP_FWD" node << 'JSEOF'
 const fs = require('fs'), path = require('path'), os = require('os');
 const home = os.homedir();
 const interceptor = process.env.EXP_INTERCEPTOR;
+const interceptorPost = process.env.EXP_INTERCEPTOR_POST;
 const stop = process.env.EXP_STOP;
 const selected = (process.env.EXP_SELECTED_AGENTS || '').split(',').map(s => s.trim().toLowerCase());
 
@@ -1147,6 +1217,10 @@ const AGENTS = [
       cfg.hooks.PreToolUse = cfg.hooks.PreToolUse || [];
       if (!cfg.hooks.PreToolUse.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor')))) {
         cfg.hooks.PreToolUse.unshift({ matcher: 'Edit|Write|Bash', hooks: [{ type:'command', command:`node "${interceptor}"`, timeout:5 }] });
+      }
+      cfg.hooks.PostToolUse = cfg.hooks.PostToolUse || [];
+      if (!cfg.hooks.PostToolUse.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor-post')))) {
+        cfg.hooks.PostToolUse.push({ matcher: 'Edit|Write|Bash', hooks: [{ type:'command', command:`node "${interceptorPost}"`, timeout:5 }] });
       }
       cfg.hooks.Stop = cfg.hooks.Stop || [];
       if (!cfg.hooks.Stop.some(h => (h.hooks||[]).some(e => e.command?.includes('stop-extractor')))) {
@@ -1241,6 +1315,173 @@ for (const agent of AGENTS) {
   }
 }
 JSEOF
+
+# ── Auto-inject Experience Engine instruction block into agent MD files ──
+echo ""
+echo "  Injecting Experience Engine instructions into agent config files..."
+
+EXP_INSTRUCTION_BLOCK='<!-- experience-engine:start -->
+## Experience Engine Hooks
+
+PreToolUse hooks inject experience-based warnings (`⚠️ [Experience]` / `💡 [Suggestion]`) before Edit/Write/Bash calls. Each warning includes a `Why:` line and ends with `[id:xxxx col:name]`.
+
+- **Follow** high-confidence warnings — they reflect confirmed patterns.
+- **If a warning is wrong or noisy** — tell the user immediately. Noise degrades ALL agents.
+- **When you IGNORE a hint**, report it: `curl -s -X POST http://localhost:8082/api/feedback -H "Content-Type: application/json" -d '\''{"pointId":"xxxx","collection":"col-name","followed":false}'\''` (use the short ID from `[id:xxxx]`).
+- Do NOT silently ignore repeated bad suggestions — feedback is critical for the engine to learn.
+<!-- experience-engine:end -->'
+
+# Inject into each MD file if the block doesn't already exist
+for MD_FILE in \
+  "$HOME/.claude/CLAUDE.md" \
+  "$HOME/.gemini/GEMINI.md" \
+  "$HOME/.codex/AGENTS.md" \
+  "$HOME/.config/opencode/AGENTS.md"; do
+
+  # Only inject if the parent directory exists (agent is installed)
+  MD_DIR=$(dirname "$MD_FILE")
+  if [ ! -d "$MD_DIR" ]; then
+    continue
+  fi
+
+  # Create file if it doesn't exist
+  if [ ! -f "$MD_FILE" ]; then
+    echo "$EXP_INSTRUCTION_BLOCK" > "$MD_FILE"
+    echo "  Created: $MD_FILE"
+    continue
+  fi
+
+  # Skip if already injected
+  if grep -q 'experience-engine:start' "$MD_FILE" 2>/dev/null; then
+    # Replace existing block with updated version
+    TMPFILE=$(mktemp)
+    awk '/<!-- experience-engine:start -->/{skip=1} /<!-- experience-engine:end -->/{skip=0; next} !skip' "$MD_FILE" > "$TMPFILE"
+    echo "$EXP_INSTRUCTION_BLOCK" >> "$TMPFILE"
+    mv "$TMPFILE" "$MD_FILE"
+    echo "  Updated: $MD_FILE"
+    continue
+  fi
+
+  # Append to existing file
+  echo "" >> "$MD_FILE"
+  echo "$EXP_INSTRUCTION_BLOCK" >> "$MD_FILE"
+  echo "  Injected: $MD_FILE"
+done
+
+# ── GSD Integration: patch Model Router into GSD framework ───────────────
+GSD_DIR="$HOME/.claude/get-shit-done"
+GSD_CORE="$GSD_DIR/bin/lib/core.cjs"
+GSD_CONFIG="$GSD_DIR/bin/lib/config.cjs"
+GSD_TOOLS="$GSD_DIR/bin/gsd-tools.cjs"
+
+if [ -d "$GSD_DIR" ] && [ -f "$GSD_CORE" ]; then
+  echo ""
+  echo "◆ [5.5/6] GSD framework detected — patching Model Router integration..."
+
+  # Patch 1: Add resolveModelWithRouter to core.cjs (if not already patched)
+  if ! grep -q 'resolveModelWithRouter' "$GSD_CORE" 2>/dev/null; then
+    EXP_PORT=8082
+    node -e "
+const fs = require('fs');
+const corePath = '$GSD_CORE'.replace(/\\\\/g, '/');
+let core = fs.readFileSync(corePath, 'utf8');
+
+// Add resolveModelWithRouter after resolveModelInternal
+const marker = 'return alias;\\n}';
+const lastIdx = core.lastIndexOf('return alias;\\n}');
+// Find the closing brace of resolveModelInternal
+const funcEnd = core.indexOf('\\n}', core.indexOf('function resolveModelInternal'));
+if (funcEnd < 0) { console.log('  Skip: cannot find resolveModelInternal end'); process.exit(0); }
+
+const insertPos = funcEnd + 2;
+const routerFn = \`
+
+/**
+ * Async model resolution via Experience Engine Model Router.
+ * Falls back to resolveModelInternal() when router is unavailable.
+ */
+async function resolveModelWithRouter(cwd, agentType, taskDescription, runtime) {
+  runtime = runtime || 'claude';
+  const config = loadConfig(cwd);
+  const override = config.model_overrides?.[agentType];
+  if (override) return { model: override, tier: null, source: 'override' };
+  const routerEnabled = config.workflow?.model_router !== false;
+  const profile = String(config.model_profile || 'balanced').toLowerCase();
+  if (!routerEnabled || !['balanced','adaptive','inherit'].includes(profile) || !taskDescription) {
+    return { model: resolveModelInternal(cwd, agentType), tier: null, source: 'profile' };
+  }
+  try {
+    const res = await fetch('http://localhost:${EXP_PORT}/api/route-model', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: taskDescription, runtime, context: { agent: agentType } }),
+      signal: AbortSignal.timeout(3000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const model = data.model || resolveModelInternal(cwd, agentType);
+      const resolved = config.resolve_model_ids ? (MODEL_ALIAS_MAP[model] || model) : model;
+      return { model: resolved, tier: data.tier, source: data.source || 'router' };
+    }
+  } catch {}
+  return { model: resolveModelInternal(cwd, agentType), tier: null, source: 'profile-fallback' };
+}\`;
+
+core = core.slice(0, insertPos) + routerFn + core.slice(insertPos);
+
+// Add to exports
+core = core.replace('resolveModelInternal,', 'resolveModelInternal,\\n  resolveModelWithRouter,');
+
+fs.writeFileSync(corePath, core);
+console.log('  Patched: core.cjs (resolveModelWithRouter)');
+"
+  else
+    echo "  core.cjs: already patched"
+  fi
+
+  # Patch 2: Add workflow.model_router default to config.cjs
+  if ! grep -q 'model_router' "$GSD_CONFIG" 2>/dev/null; then
+    sed -i "s/code_review_depth: 'standard',/code_review_depth: 'standard',\n      model_router: true,/" "$GSD_CONFIG"
+    echo "  Patched: config.cjs (model_router default)"
+  else
+    echo "  config.cjs: already patched"
+  fi
+
+  # Patch 3: Add route-model command to gsd-tools.cjs
+  if ! grep -q 'route-model' "$GSD_TOOLS" 2>/dev/null; then
+    node -e "
+const fs = require('fs');
+const toolsPath = '$GSD_TOOLS'.replace(/\\\\/g, '/');
+let tools = fs.readFileSync(toolsPath, 'utf8');
+
+const insertAfter = \"case 'resolve-model': {\\n      commands.cmdResolveModel(cwd, args[1], raw);\\n      break;\\n    }\";
+const routeCmd = \`
+
+    case 'route-model': {
+      const agentType = args[1];
+      const taskDesc = args.slice(2).filter(a => !a.startsWith('--')).join(' ');
+      const runtimeIdx = args.indexOf('--runtime');
+      const runtime = runtimeIdx >= 0 ? args[runtimeIdx + 1] : 'claude';
+      if (!agentType) { core.output({ error: 'agent-type required' }, raw); break; }
+      core.resolveModelWithRouter(cwd, agentType, taskDesc || '', runtime)
+        .then(result => core.output(result, raw, result.model))
+        .catch(e => core.output({ model: 'sonnet', tier: null, source: 'error', error: e.message }, raw, 'sonnet'));
+      break;
+    }\`;
+
+tools = tools.replace(insertAfter, insertAfter + routeCmd);
+fs.writeFileSync(toolsPath, tools);
+console.log('  Patched: gsd-tools.cjs (route-model command)');
+"
+  else
+    echo "  gsd-tools.cjs: already patched"
+  fi
+
+  echo "  GSD integration complete — run: gsd-tools route-model gsd-executor \"your task\""
+else
+  echo ""
+  echo "  GSD framework not found at $GSD_DIR — skipping Model Router integration"
+  echo "  Install GSD first, then re-run setup.sh to patch"
+fi
 
 # ── Step C execution: optional seed ───────────────────────────────────────
 if [ "$DO_SEED" = "true" ] && [ -n "$SEED_DIR" ]; then
@@ -1377,13 +1618,74 @@ if [ "$HEALTH_FAIL" -eq 0 ]; then
   echo ""
   echo " ── Experience Hook Awareness ──"
   echo ""
-  echo " Add this to your CLAUDE.md / GEMINI.md / agent instructions:"
+  echo " Agent instruction blocks auto-injected into:"
+  echo "   CLAUDE.md, GEMINI.md, AGENTS.md (where present)"
   echo ""
-  echo "   ## Experience Engine Hooks"
-  echo "   PreToolUse hooks inject experience-based warnings before Edit/Write/Bash."
-  echo "   Follow high-confidence warnings. If a warning is wrong or noisy,"
-  echo "   tell the user immediately — noise degrades ALL agents."
+  echo " Hooks installed: PreToolUse (intercept) + PostToolUse (feedback) + Stop (extract)"
   echo ""
 else
   echo "  $HEALTH_FAIL check(s) failed. Fix the issues above, then re-run setup.sh."
+fi
+
+# ── Remote deploy (--remote flag) ───────────────────────────────────────────
+if [ -n "$REMOTE_HOST" ]; then
+  echo ""
+  echo "── Remote Deploy ──────────────────────────────────────────────"
+  SSH_OPTS="-o StrictHostKeyChecking=no -o BatchMode=yes"
+  [ -n "$REMOTE_KEY" ] && SSH_OPTS="$SSH_OPTS -i \"$REMOTE_KEY\""
+
+  echo "  Target: $REMOTE_HOST:~/.experience/"
+
+  # Check if remote config already exists — warn before overwriting
+  REMOTE_HAS_CONFIG=$(ssh $SSH_OPTS "$REMOTE_HOST" "test -f ~/.experience/config.json && echo yes || echo no" 2>/dev/null)
+  SKIP_REMOTE_CONFIG=""
+  if [ "$REMOTE_HAS_CONFIG" = "yes" ]; then
+    echo "  Warning: remote ~/.experience/config.json already exists."
+    read -r -p "  Overwrite remote config? [y/N]: " OVERWRITE_CONF
+    if [ "$OVERWRITE_CONF" != "y" ] && [ "$OVERWRITE_CONF" != "Y" ]; then
+      echo "  Skipping config overwrite — copying JS files only."
+      SKIP_REMOTE_CONFIG=1
+    fi
+  fi
+
+  # Create remote directory
+  ssh $SSH_OPTS "$REMOTE_HOST" "mkdir -p ~/.experience/tmp ~/.experience/store" 2>/dev/null
+
+  # Copy 6 core files
+  REMOTE_FILES=(
+    "$INSTALL_DIR/experience-core.js"
+    "$INSTALL_DIR/interceptor.js"
+    "$INSTALL_DIR/interceptor-post.js"
+    "$INSTALL_DIR/judge-worker.js"
+    "$INSTALL_DIR/stop-extractor.js"
+  )
+  [ -z "$SKIP_REMOTE_CONFIG" ] && REMOTE_FILES+=("$INSTALL_DIR/config.json")
+
+  SCP_CMD="scp $SSH_OPTS"
+  for FILE in "${REMOTE_FILES[@]}"; do
+    if [ -f "$FILE" ]; then
+      $SCP_CMD "$FILE" "$REMOTE_HOST:~/.experience/" 2>/dev/null \
+        && echo "  Copied: $(basename "$FILE")" \
+        || echo "  [FAIL] $(basename "$FILE")"
+    fi
+  done
+
+  # Verify remote health
+  echo ""
+  echo "  Verifying remote..."
+  REMOTE_NODE=$(ssh $SSH_OPTS "$REMOTE_HOST" "node ~/.experience/experience-core.js --version 2>/dev/null || echo 'node-fail'" 2>/dev/null)
+  REMOTE_QDRANT=$(ssh $SSH_OPTS "$REMOTE_HOST" \
+    "QDRANT_URL=\$(node -e \"try{const c=JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.experience/config.json','utf8'));process.stdout.write(c.qdrantUrl||'http://localhost:6333')}catch{process.stdout.write('http://localhost:6333')}\"); curl -s -m 5 \"\$QDRANT_URL/health\" | grep -c ok" \
+    2>/dev/null)
+
+  [ "$REMOTE_NODE" != "node-fail" ] \
+    && echo "  [OK] experience-core.js reachable on remote" \
+    || echo "  [WARN] node check failed on remote — verify node is installed"
+  [ "$REMOTE_QDRANT" = "1" ] \
+    && echo "  [OK] Qdrant healthy on remote" \
+    || echo "  [WARN] Qdrant health check failed on remote"
+
+  echo ""
+  echo "  Remote deploy complete: $REMOTE_HOST"
+  echo "────────────────────────────────────────────────────────────────"
 fi
