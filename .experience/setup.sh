@@ -46,6 +46,8 @@ Non-interactive mode (CI/scripts):
     EXP_BRAIN_KEY        API key for brain provider (empty for ollama)
     EXP_EMBED_ENDPOINT   custom embed endpoint URL (for siliconflow/custom)
     EXP_BRAIN_ENDPOINT   custom brain endpoint URL (for siliconflow/custom)
+    EXP_BRAIN_PROXY      Optional proxy URL for brain API calls (firewall bypass)
+                         Example: EXP_BRAIN_PROXY=http://72.61.127.154:8082/api/brain
     EXP_OLLAMA_URL       Ollama URL (default: http://localhost:11434)
     EXP_AGENTS           comma-separated agent list (default: all)
                          values: claude,gemini,codex,opencode
@@ -189,6 +191,7 @@ if [[ "$1" == "--local" ]]; then
   EXP_BRAIN_KEY=""
   EXP_EMBED_ENDPOINT=""
   EXP_BRAIN_ENDPOINT=""
+  EXP_BRAIN_PROXY=""
   echo "  Shortcut --local: local Docker Qdrant + Ollama"
 fi
 
@@ -352,6 +355,7 @@ if [ "$NI_MODE" = "true" ]; then
   BRAIN_KEY="${EXP_BRAIN_KEY:-}"
   EMBED_ENDPOINT="${EXP_EMBED_ENDPOINT:-}"
   BRAIN_ENDPOINT="${EXP_BRAIN_ENDPOINT:-}"
+  BRAIN_PROXY_URL="${EXP_BRAIN_PROXY:-}"
   OLLAMA_URL="${EXP_OLLAMA_URL:-http://localhost:11434}"
   TUNNEL_SSH=""
   KEEP_CONFIG=false
@@ -689,6 +693,14 @@ if [ "$KEEP_CONFIG" = "false" ] && [ "$NI_MODE" = "false" ]; then
       ;;
   esac
 
+  # ── Brain proxy URL (optional — firewall bypass) ─────────────────────────
+  echo ""
+  echo "  Brain proxy URL (optional — leave empty if not needed):"
+  echo "  Used when local brain API is unreachable (firewall, corporate network)"
+  echo "  Example: http://your-vps:8082/api/brain"
+  printf "  Proxy URL [none]: "; read -r BRAIN_PROXY_URL
+  BRAIN_PROXY_URL="${BRAIN_PROXY_URL:-}"
+
   # ── Dimension probe (after Step B) ──────────────────────────────────────
   echo ""
   echo "  Probing embedding dimension from API..."
@@ -920,6 +932,7 @@ const cfg = {
   embedKey:       '$EMBED_KEY',
   brainEndpoint:  '$BRAIN_ENDPOINT',
   brainKey:       '$BRAIN_KEY',
+  brainProxyUrl:  '${BRAIN_PROXY_URL:-}',
   embedDim:       $EMBED_DIM,
   ollamaUrl:      '$OLLAMA_URL',
   tunnelSsh:      '$TUNNEL_SSH',
