@@ -1,4 +1,5 @@
 #!/bin/bash
+set +H 2>/dev/null   # disable history expansion — fixes !res.ok in node -e blocks
 # Experience Engine — Universal Setup Wizard v3.1
 #
 # Works from ANY project directory. Installs brain to ~/.experience/ (user-level).
@@ -47,7 +48,7 @@ Non-interactive mode (CI/scripts):
     EXP_EMBED_ENDPOINT   custom embed endpoint URL (for siliconflow/custom)
     EXP_BRAIN_ENDPOINT   custom brain endpoint URL (for siliconflow/custom)
     EXP_BRAIN_PROXY      Optional proxy URL for brain API calls (firewall bypass)
-                         Example: EXP_BRAIN_PROXY=http://72.61.127.154:8082/api/brain
+                         Example: EXP_BRAIN_PROXY=http://your-vps:8082/api/brain
     EXP_OLLAMA_URL       Ollama URL (default: http://localhost:11434)
     EXP_AGENTS           comma-separated agent list (default: all)
                          values: claude,gemini,codex,opencode
@@ -366,7 +367,8 @@ fi
 # ── NI mode dimension probe (must run before config write) ───────────────
 if [ "$NI_MODE" = "true" ] && [ -z "$EMBED_DIM" ]; then
   echo "  Probing embedding dimension from API..."
-  EMBED_DIM=$(node -e "
+  _DIM_PROBE=$(mktemp /tmp/exp-dim-probe.XXXXXX.mjs)
+  cat > "$_DIM_PROBE" <<JSEOF
 (async () => {
   const provider = '$EMBED_PROVIDER';
   const model = '$EMBED_MODEL';
@@ -384,7 +386,7 @@ if [ "$NI_MODE" = "true" ] && [ -z "$EMBED_DIM" ]; then
         body: JSON.stringify({ model, input: testInput }),
         signal: AbortSignal.timeout(10000),
       });
-      if (!res.ok) { process.stderr.write('HTTP ' + res.status + '\n'); process.exit(1); }
+      if (!res.ok) { process.stderr.write('HTTP ' + res.status + '\\n'); process.exit(1); }
       const d = await res.json();
       vec = d.embeddings?.[0];
     } else if (provider === 'gemini') {
@@ -394,7 +396,7 @@ if [ "$NI_MODE" = "true" ] && [ -z "$EMBED_DIM" ]; then
         body: JSON.stringify({ content: { parts: [{ text: testInput }] } }),
         signal: AbortSignal.timeout(10000),
       });
-      if (!res.ok) { process.stderr.write('HTTP ' + res.status + '\n'); process.exit(1); }
+      if (!res.ok) { process.stderr.write('HTTP ' + res.status + '\\n'); process.exit(1); }
       const d = await res.json();
       vec = d.embedding?.values;
     } else {
@@ -405,15 +407,17 @@ if [ "$NI_MODE" = "true" ] && [ -z "$EMBED_DIM" ]; then
         body: JSON.stringify({ model, input: testInput }),
         signal: AbortSignal.timeout(10000),
       });
-      if (!res.ok) { process.stderr.write('HTTP ' + res.status + '\n'); process.exit(1); }
+      if (!res.ok) { process.stderr.write('HTTP ' + res.status + '\\n'); process.exit(1); }
       const d = await res.json();
       vec = d.data?.[0]?.embedding;
     }
-    if (!vec || vec.length === 0) { process.stderr.write('Empty embedding\n'); process.exit(1); }
+    if (!vec || vec.length === 0) { process.stderr.write('Empty embedding\\n'); process.exit(1); }
     process.stdout.write(String(vec.length));
-  } catch(e) { process.stderr.write(e.message + '\n'); process.exit(1); }
+  } catch(e) { process.stderr.write(e.message + '\\n'); process.exit(1); }
 })();
-" 2>/tmp/exp-dim-err)
+JSEOF
+  EMBED_DIM=$(node "$_DIM_PROBE" 2>/tmp/exp-dim-err)
+  rm -f "$_DIM_PROBE"
 
   if [ $? -ne 0 ] || [ -z "$EMBED_DIM" ]; then
     echo ""
@@ -482,7 +486,7 @@ if [ "$KEEP_CONFIG" = "false" ] && [ "$NI_MODE" = "false" ]; then
       ;;
     3)
       echo ""
-      printf "  VPS user@host (e.g. user@72.61.127.154): "; read -r VPS_HOST
+      printf "  VPS user@host (e.g. user@203.0.113.10): "; read -r VPS_HOST
       printf "  SSH key path [~/.ssh/id_rsa]: "; read -r VPS_KEY
       VPS_KEY="${VPS_KEY:-$HOME/.ssh/id_rsa}"
       printf "  Remote Qdrant port [6333]: "; read -r VPS_PORT
@@ -706,7 +710,8 @@ if [ "$KEEP_CONFIG" = "false" ] && [ "$NI_MODE" = "false" ]; then
   echo ""
   echo "  Probing embedding dimension from API..."
 
-  EMBED_DIM=$(node -e "
+  _DIM_PROBE=$(mktemp /tmp/exp-dim-probe.XXXXXX.mjs)
+  cat > "$_DIM_PROBE" <<JSEOF
 (async () => {
   const provider = '$EMBED_PROVIDER';
   const model = '$EMBED_MODEL';
@@ -726,7 +731,7 @@ if [ "$KEEP_CONFIG" = "false" ] && [ "$NI_MODE" = "false" ]; then
         signal: AbortSignal.timeout(10000),
       });
       if (!res.ok) {
-        process.stderr.write('HTTP ' + res.status + ' from ' + url + '\n');
+        process.stderr.write('HTTP ' + res.status + ' from ' + url + '\\n');
         process.exit(1);
       }
       const d = await res.json();
@@ -740,7 +745,7 @@ if [ "$KEEP_CONFIG" = "false" ] && [ "$NI_MODE" = "false" ]; then
       });
       if (!res.ok) {
         const err = await res.text().catch(()=>'');
-        process.stderr.write('HTTP ' + res.status + ': ' + err.slice(0,200) + '\n');
+        process.stderr.write('HTTP ' + res.status + ': ' + err.slice(0,200) + '\\n');
         process.exit(1);
       }
       const d = await res.json();
@@ -756,23 +761,25 @@ if [ "$KEEP_CONFIG" = "false" ] && [ "$NI_MODE" = "false" ]; then
       });
       if (!res.ok) {
         const err = await res.text().catch(()=>'');
-        process.stderr.write('HTTP ' + res.status + ': ' + err.slice(0,200) + '\n');
+        process.stderr.write('HTTP ' + res.status + ': ' + err.slice(0,200) + '\\n');
         process.exit(1);
       }
       const d = await res.json();
       vec = d.data?.[0]?.embedding;
     }
     if (!vec || vec.length === 0) {
-      process.stderr.write('Empty embedding response\n');
+      process.stderr.write('Empty embedding response\\n');
       process.exit(1);
     }
     process.stdout.write(String(vec.length));
   } catch(e) {
-    process.stderr.write(e.message + '\n');
+    process.stderr.write(e.message + '\\n');
     process.exit(1);
   }
 })();
-" 2>/tmp/exp-dim-err)
+JSEOF
+  EMBED_DIM=$(node "$_DIM_PROBE" 2>/tmp/exp-dim-err)
+  rm -f "$_DIM_PROBE"
 
   if [ $? -ne 0 ] || [ -z "$EMBED_DIM" ]; then
     echo ""
@@ -1573,7 +1580,8 @@ fi
 
 # 3. Qdrant collections dimension check
 printf "  Collections... "
-COLL_RESULT=$(node -e "
+_COLL_PROBE=$(mktemp /tmp/exp-coll-probe.XXXXXX.mjs)
+cat > "$_COLL_PROBE" <<'JSEOF'
 (async () => {
   try {
     const cfg = JSON.parse(require('fs').readFileSync(require('path').join(require('os').homedir(),'.experience','config.json'),'utf8'));
@@ -1592,7 +1600,9 @@ COLL_RESULT=$(node -e "
     console.log('OK (' + ok + '/3 collections, dim=' + cfg.embedDim + ')');
   } catch(e) { console.log('FAIL: ' + e.message); process.exit(1); }
 })();
-" 2>&1)
+JSEOF
+COLL_RESULT=$(node "$_COLL_PROBE" 2>&1)
+rm -f "$_COLL_PROBE"
 if [ $? -eq 0 ]; then
   HEALTH_PASS=$((HEALTH_PASS+1))
   echo "$COLL_RESULT"
