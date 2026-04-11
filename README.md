@@ -15,7 +15,8 @@
     <img alt="Works Offline" src="https://img.shields.io/badge/works-offline-blue">
     <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-yellow">
     <img alt="Node.js 20+" src="https://img.shields.io/badge/node-20%2B-green">
-    <img alt="Tests" src="https://img.shields.io/badge/tests-49%20passing-brightgreen">
+    <img alt="Tests" src="https://img.shields.io/badge/tests-187%20passing-brightgreen">
+    <img alt="E2E" src="https://img.shields.io/badge/E2E-44%20tests-brightgreen">
   </p>
 </p>
 
@@ -113,6 +114,8 @@ Step D — Agent wiring:    Claude Code / Gemini CLI / Codex CLI / OpenCode
 ```bash
 bash .experience/setup.sh --local   # Docker Qdrant + Ollama (100% free, 100% local)
 bash .experience/setup.sh --vps     # VPS Qdrant via SSH tunnel
+bash .experience/setup.sh --remote  # Connect to a remote VPS-hosted experience engine instead of local
+                                    # Uses QDRANT_URL and server URL from config.json
 ```
 
 ## How It Works
@@ -121,11 +124,13 @@ bash .experience/setup.sh --vps     # VPS Qdrant via SSH tunnel
 YOU write code with any AI agent
   │
   ├─ BEFORE every Edit/Write/Bash
-  │   └─ Hook queries brain: "Have I seen this mistake before?"
+  │   └─ Layer 1: Read-only skip — ls, git log, cat etc. bypass instantly (0ms, $0)
+  │   └─ Layer 2: Semantic search — "Have I seen this mistake before?"
   │   └─ Detects language from file being edited (.ts → TypeScript, .cs → C#)
   │   └─ Ranks results by quality: hit count, recency, confidence, domain match
   │   └─ Follows 1-hop graph edges to surface related experiences
-  │   └─ If match → injects warning: "⚠️ Last time this caused X"
+  │   └─ Layer 3: Brain relevance filter — asks LLM "is this warning relevant HERE?"
+  │   └─ If relevant → injects warning: "⚠️ Last time this caused X"
   │
   └─ AFTER every session
       └─ Extracts lessons from mistakes (retry loops, user corrections, test failures)
@@ -222,6 +227,10 @@ node server.js
 | `GET` | `/api/user` | Current user identity |
 | `POST` | `/api/principles/share` | Export principle as portable JSON |
 | `POST` | `/api/principles/import` | Import shared principle |
+| `POST` | `/api/feedback` | Report if suggestion was followed/ignored |
+| `POST` | `/api/route-model` | Intelligent model tier routing |
+| `POST` | `/api/route-feedback` | Record agent outcome for routing learning |
+| `POST` | `/api/brain` | Proxy LLM brain call through server — enables local agents on firewalled machines to reach brain API | `{ prompt, timeoutMs? }` |
 
 Zero dependencies — uses Node.js built-in `http` module. CORS enabled for browser extensions.
 
@@ -235,9 +244,46 @@ curl -X POST http://localhost:8082/api/intercept \
 
 ```json
 {
-  "suggestions": "⚠️ [Experience - High Confidence (0.85)]: Stateful objects must be scoped, never singleton",
+  "suggestions": "⚠️ [Experience - High Confidence (0.85)]: Stateful objects must be scoped, never singleton\n   Why: Last time this caused state corruption in production\n   [id:a1b2c3d4 col:experience-behavioral]",
   "hasSuggestions": true
 }
+```
+
+### Example: Model Router
+
+Classify task complexity → route to optimal model tier.
+
+```bash
+curl -X POST http://localhost:8082/api/route-model \
+  -H "Content-Type: application/json" \
+  -d '{"task": "debug race condition in auth", "runtime": "claude"}'
+```
+
+```json
+{
+  "tier": "premium",
+  "model": "opus",
+  "confidence": 0.85,
+  "source": "brain",
+  "reason": "premium complexity task"
+}
+```
+
+Three layers, fastest first:
+- **Layer 0 — Keywords** (~0ms): Detects obvious fast/premium patterns without any API call
+- **Layer 1 — History** (~50ms): Semantic search of past routing decisions. Reuses successful routes, upgrades failed ones
+- **Layer 2 — Brain** (~200ms): LLM classification via SiliconFlow Qwen2.5-7B. Only called when Layer 0+1 miss
+
+Supports: `claude` (haiku/sonnet/opus), `gemini` (flash/pro), `codex` (mini/o3), `opencode`. Returns tier only when `runtime` is null.
+
+### Example: Feedback
+
+Report whether the agent followed or ignored a surfaced hint. Supports short ID prefix (8 chars).
+
+```bash
+curl -X POST http://localhost:8082/api/feedback \
+  -H "Content-Type: application/json" \
+  -d '{"pointId": "a1b2c3d4", "collection": "experience-behavioral", "followed": false}'
 ```
 
 ## Python SDK
@@ -310,9 +356,23 @@ Don't wait months for organic learning. Seed from existing rules:
 node tools/experience-bulk-seed.js --memory-dir ~/.claude/projects/*/memory
 ```
 
-## Anti-Noise Scoring
+## Anti-Noise: Hybrid 3-Layer Filter
 
-Not all experiences are equal. The engine ranks by:
+Noise kills value. The engine uses three layers to ensure only relevant warnings surface:
+
+**Layer 1 — Read-only skip (regex, 0ms, $0)**
+
+Commands that never mutate code are skipped entirely — no embedding, no search, no cost:
+
+```
+ls, cat, head, tail, wc, find, grep, diff, tree, stat, ...
+git log, git status, git diff, git show, git branch, ...
+docker ps, docker logs, docker inspect, npm list, ...
+```
+
+Chained commands (`&&`, `||`, `;`) skip only if ALL parts are read-only.
+
+**Layer 2 — Quality scoring (semantic search + rerank)**
 
 - **Hit frequency** — confirmed experiences rank higher
 - **Recency** — recently confirmed > stale
@@ -321,6 +381,64 @@ Not all experiences are equal. The engine ranks by:
 - **Domain match** — `.ts` file → TypeScript experiences rank higher
 - **Temporal decay** — no confirmation in 60+ days → penalty
 - **Superseded penalty** — replaced knowledge ranks lower
+- **Project penalty** — cross-project suggestions penalized -0.30
+- **Session dedup** — same warning never shown twice per session
+- **Session budget** — max 8 unique warnings per session
+
+**Layer 3 — Brain relevance filter (LLM, ~1 token output, fail-open)**
+
+After scoring produces suggestions, the brain checks: *"Is this warning relevant to THIS specific action?"*
+
+```
+Input:  ACTION: Edit Startup.cs — services.AddSingleton<DbContext>()
+        1. Stateful objects must be scoped, never singleton
+        2. Always use IMLog, never ILogger
+        3. Never modify ePort consumer code
+
+Output: 1        (only warning #1 is relevant to this action)
+```
+
+Cost: ~200 input tokens + 1 output token per call. $0 with Ollama, ~$0.00004 with SiliconFlow.
+Fail-open: if brain is unavailable or slow (>3s), all suggestions pass through.
+Configurable: set `brainFilter: false` in `~/.experience/config.json` to disable.
+
+Layer 3 also triggers the judge-worker — a detached LLM process that evaluates whether the hint was
+followed, ignored, or irrelevant. Results are posted back to the experience engine as feedback,
+closing the loop without requiring any agent cooperation.
+
+## Judge Worker — Auto-Feedback Loop
+
+The judge-worker runs as a detached background process after each tool call, evaluating whether
+experience hints were followed by the agent. This closes the feedback loop automatically —
+no agent cooperation required.
+
+### How it works
+
+1. `interceptor-post.js` captures every PostToolUse event and queues it for evaluation
+2. `judge-worker.js` picks up the queue, calls the brain LLM with a structured prompt
+3. The judge assigns one of 4 verdicts:
+   - `FOLLOWED` — agent used the hint correctly → positive feedback
+   - `IGNORED` — agent had the hint and ignored it → negative feedback
+   - `IRRELEVANT` — hint was not applicable to this call → neutral (no feedback)
+   - `UNCLEAR` — judge cannot determine → no feedback (abstain)
+4. Verdict is posted to `/api/feedback` on the experience engine server
+
+### Brain proxy support
+
+When the experience engine server runs on a VPS and the local brain API is unreachable
+(firewall, corporate network), set `brainProxyUrl` in config.json. The judge-worker will
+route brain calls through the VPS proxy endpoint (`/api/brain`) instead of calling the
+brain API directly.
+
+Configure during setup:
+```bash
+EXP_BRAIN_PROXY=http://72.61.127.154:8082/api/brain bash .experience/setup.sh
+```
+
+Or set manually in `~/.experience/config.json`:
+```json
+{ "brainProxyUrl": "http://your-vps:8082/api/brain" }
+```
 
 ## Supported Providers
 
@@ -338,24 +456,32 @@ Not all experiences are equal. The engine ranks by:
 
 ```
 .experience/
-  experience-core.js    — brain (1236 LOC, zero deps)
+  experience-core.js    — engine (1709 LOC, zero deps)
   stop-extractor.js     — session extraction + evolution trigger
   setup.sh              — guided setup wizard
+  interceptor.js        — PreToolUse hook — injects experience hints before agent calls
+  interceptor-post.js   — PostToolUse hook — captures tool outcomes for extraction
+  judge-worker.js       — Async LLM judge — evaluates followed/ignored signals
 
-server.js               — REST API (270 LOC, zero deps)
+server.js               — REST API (282 LOC, zero deps)
 
 sdk/
   python/               — Python SDK (pip install muonroi-experience)
 
 tools/
   exp-stats.js          — observability CLI
+  exp-demote.js         — interactive demote/delete CLI
+  exp-gates.js          — v3.0 gate status checker
   experience-bulk-seed.js — bootstrap from existing rules
-  test-server.js        — 49 integration tests
+  test-server.js        — 49 API integration tests
   test-activity-log.js  — activity logging tests
-  test-scoring.js       — anti-noise scoring tests
-  test-context.js       — context-aware query tests
+  test-scoring.js       — 41 anti-noise scoring tests
+  test-context.js       — 29 context-aware query tests
   test-exp-stats.js     — observability CLI tests
+  test-model-router.js  — 44 model router tests (9 suites)
 ```
+
+**E2E verified: 2026-04-11 — 44 model router tests pass (9 suites: keyword routing, history routing, brain routing, claude/gemini/codex/opencode runtimes, feedback learning, tier fallback)**
 
 ## Philosophy
 

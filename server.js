@@ -4,13 +4,22 @@
  * Zero npm dependencies. Node.js 20+ built-in http module only.
  *
  * Endpoints:
- *   GET  /health         — Qdrant + FileStore status
- *   POST /api/intercept  — Query experience before tool call
- *   POST /api/extract    — Extract lessons from session transcript
- *   POST /api/evolve     — Trigger evolution cycle
- *   GET  /api/stats      — Observability data (?since=7d, ?all=true)
+ *   GET  /health                    — Qdrant + FileStore status
+ *   POST /api/intercept             — Query experience before tool call
+ *   POST /api/extract               — Extract lessons from session transcript
+ *   POST /api/evolve                — Trigger evolution cycle
+ *   GET  /api/stats                 — Observability data (?since=7d, ?all=true)
+ *   GET  /api/timeline?topic=...    — Semantic timeline for a topic
+ *   GET  /api/graph?id=...          — Experience graph edges
+ *   POST /api/feedback              — Record agent feedback on suggestion
+ *   POST /api/principles/share      — Export a principle
+ *   POST /api/principles/import     — Import a principle
+ *   GET  /api/user                  — Current user identity
+ *   POST /api/route-model           — Intelligent model tier routing
+ *   POST /api/route-feedback        — Record agent outcome for routing learning
+ *   POST /api/brain                 — Proxy brain LLM calls (for clients behind firewall)
  *
- * Config: ~/.experience/config.json (server.port, default 8082)
+ * Config: ~/.experience/config.json (server.port, server.authToken)
  * Start: node server.js
  */
 
@@ -21,7 +30,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { intercept, extractFromSession, evolve, getEdgesForId, getEmbeddingRaw, sharePrinciple, importPrinciple, EXP_USER, recordFeedback } = require('./.experience/experience-core');
+const { intercept, extractFromSession, evolve, getEdgesForId, getEdgesOfType,
+        getEmbeddingRaw, searchCollection, sharePrinciple, importPrinciple,
+        EXP_USER, recordFeedback, routeModel, routeFeedback } = require('./.experience/experience-core');
 const { parseSince, loadEvents, filterEvents, computeStats, loadTop5 } = require('./tools/exp-stats');
 
 // --- Config ---
@@ -36,6 +47,7 @@ const _cfg = (() => {
 const PORT = _cfg.server?.port || parseInt(process.env.EXP_SERVER_PORT, 10) || 8082;
 const QDRANT_BASE = _cfg.qdrantUrl || process.env.EXPERIENCE_QDRANT_URL || 'http://localhost:6333';
 const QDRANT_API_KEY = _cfg.qdrantKey || process.env.EXPERIENCE_QDRANT_KEY || '';
+const AUTH_TOKEN = _cfg.server?.authToken || null;
 
 // --- CORS headers ---
 const CORS = {
@@ -43,6 +55,18 @@ const CORS = {
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
+
+// --- Auth middleware ---
+// When server.authToken is set in ~/.experience/config.json, all POST endpoints
+// require the matching Bearer token. GET endpoints remain open for observability tools.
+function requireAuth(req, res) {
+  if (!AUTH_TOKEN) return true; // no auth configured — allow all
+  const hdr = req.headers['authorization'] || '';
+  if (hdr === `Bearer ${AUTH_TOKEN}`) return true;
+  res.writeHead(401, { 'Content-Type': 'application/json', ...CORS });
+  res.end(JSON.stringify({ error: 'Unauthorized' }));
+  return false;
+}
 
 // --- Response helpers ---
 function json(res, data, status = 200) {
@@ -170,8 +194,32 @@ async function handleFeedback(req, res) {
   if (!body.pointId) return error(res, 'pointId is required');
   if (!body.collection) return error(res, 'collection is required');
   if (typeof body.followed !== 'boolean') return error(res, 'followed (boolean) is required');
-  await recordFeedback(body.collection, body.pointId, body.followed);
-  json(res, { ok: true });
+
+  let pointId = body.pointId;
+  // Support short ID prefix (8 chars) — resolve to full UUID via Qdrant scroll
+  if (pointId.length < 36) {
+    try {
+      const scrollRes = await fetch(`${QDRANT_BASE}/collections/${body.collection}/points/scroll`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {}) },
+        body: JSON.stringify({ limit: 100, with_payload: false }),
+        signal: AbortSignal.timeout(5000),
+      });
+      if (scrollRes.ok) {
+        const points = (await scrollRes.json()).result?.points || [];
+        const match = points.find(p => String(p.id).startsWith(pointId));
+        if (match) pointId = match.id;
+        else return error(res, `No point found matching prefix "${pointId}" in ${body.collection}`, 404);
+      } else {
+        return error(res, 'Failed to resolve short ID — Qdrant unavailable', 503);
+      }
+    } catch {
+      return error(res, 'Failed to resolve short ID — provide full UUID', 400);
+    }
+  }
+
+  await recordFeedback(body.collection, pointId, body.followed);
+  json(res, { ok: true, resolvedId: pointId });
 }
 
 function handleUser(req, res) {
@@ -186,23 +234,16 @@ async function handleTimeline(req, res, url) {
   const vector = await getEmbeddingRaw(topic);
   if (!vector) return error(res, 'Embedding unavailable', 503);
 
-  // Search across all experience collections
+  // Search across all experience collections using the canonical searchCollection helper
   const collections = ['experience-principles', 'experience-behavioral', 'experience-selfqa'];
   const allResults = [];
   for (const coll of collections) {
     try {
-      const storeDir = path.join(os.homedir(), '.experience', 'store');
-      const filePath = path.join(storeDir, `${coll}.json`);
-      const entries = (() => { try { return JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch { return []; } })();
-      for (const entry of entries) {
-        if (!entry.vector || entry.vector.length !== vector.length) continue;
-        let dot = 0, na = 0, nb = 0;
-        for (let i = 0; i < vector.length; i++) { dot += vector[i] * entry.vector[i]; na += vector[i] ** 2; nb += entry.vector[i] ** 2; }
-        const sim = Math.sqrt(na) * Math.sqrt(nb) === 0 ? 0 : dot / (Math.sqrt(na) * Math.sqrt(nb));
-        if (sim > 0.5) {
-          const data = (() => { try { return JSON.parse(entry.payload?.json || '{}'); } catch { return {}; } })();
-          allResults.push({ id: entry.id, collection: coll, score: sim, ...data });
-        }
+      const hits = await searchCollection(coll, vector, 20);
+      for (const hit of hits) {
+        if ((hit.score || 0) < 0.5) continue;
+        const data = (() => { try { return JSON.parse(hit.payload?.json || '{}'); } catch { return {}; } })();
+        allResults.push({ id: hit.id, collection: coll, score: hit.score, ...data });
       }
     } catch { /* skip collection */ }
   }
@@ -214,8 +255,7 @@ async function handleTimeline(req, res, url) {
     return bTime - aTime;
   });
 
-  // Check for supersedes edges
-  const { getEdgesOfType } = require('./.experience/experience-core');
+  // Filter out superseded experiences
   const supersedes = getEdgesOfType('supersedes');
   const supersededIds = new Set(supersedes.map(e => e.target));
 
@@ -233,6 +273,50 @@ async function handleTimeline(req, res, url) {
   json(res, { topic, timeline, count: timeline.length });
 }
 
+const VALID_OUTCOMES = new Set(['success', 'fail', 'retry', 'cancelled']);
+const KNOWN_RUNTIMES = new Set(['claude', 'gemini', 'codex', 'opencode']);
+
+async function handleRouteModel(req, res) {
+  const body = await readBody(req);
+  if (!body.task || typeof body.task !== 'string') return error(res, 'task is required and must be a string');
+  if (body.task.length > 2000) return error(res, 'task must be 2000 characters or less');
+  if (body.runtime !== undefined && body.runtime !== null && !KNOWN_RUNTIMES.has(body.runtime)) {
+    return error(res, `runtime must be one of: ${[...KNOWN_RUNTIMES].join(', ')}, or null`);
+  }
+  const result = await routeModel(body.task, body.context || null, body.runtime || null);
+  res.writeHead(200, { 'Content-Type': 'application/json', 'X-Route-Source': result.source || 'default', ...CORS });
+  res.end(JSON.stringify(result));
+}
+
+async function handleRouteFeedback(req, res) {
+  const body = await readBody(req);
+  if (!body.taskHash || typeof body.taskHash !== 'string') return error(res, 'taskHash is required');
+  if (!body.outcome) return error(res, 'outcome is required');
+  if (!VALID_OUTCOMES.has(body.outcome)) {
+    return error(res, `outcome must be one of: ${[...VALID_OUTCOMES].join(', ')}`);
+  }
+  const ok = await routeFeedback(body.taskHash, body.tier || null, body.model || null, body.outcome, body.retryCount || 0, body.duration || null);
+  res.writeHead(200, { 'Content-Type': 'application/json', 'X-Route-Source': 'feedback', ...CORS });
+  res.end(JSON.stringify({ ok }));
+}
+
+// --- Brain Proxy (allows local clients to reach SiliconFlow via VPS) ---
+
+async function handleBrainProxy(req, res) {
+  const body = await readBody(req);
+  if (!body.prompt) return error(res, 'prompt is required');
+  const timeoutMs = body.timeoutMs || 8000;
+  try {
+    const { classifyViaBrain } = require(path.join(os.homedir(), '.experience', 'experience-core.js'));
+    const result = await classifyViaBrain(body.prompt, timeoutMs);
+    res.writeHead(200, { 'Content-Type': 'application/json', ...CORS });
+    res.end(JSON.stringify({ ok: true, result }));
+  } catch (err) {
+    res.writeHead(502, { 'Content-Type': 'application/json', ...CORS });
+    res.end(JSON.stringify({ ok: false, error: err.message || 'brain call failed' }));
+  }
+}
+
 // --- Server ---
 
 const server = http.createServer(async (req, res) => {
@@ -247,17 +331,27 @@ const server = http.createServer(async (req, res) => {
   const p = url.pathname;
 
   try {
+    // GET endpoints — open (no auth required)
     if (p === '/health' && req.method === 'GET') return await handleHealth(req, res);
-    if (p === '/api/intercept' && req.method === 'POST') return await handleIntercept(req, res);
-    if (p === '/api/extract' && req.method === 'POST') return await handleExtract(req, res);
-    if (p === '/api/evolve' && req.method === 'POST') return await handleEvolve(req, res);
     if (p === '/api/stats' && req.method === 'GET') return await handleStats(req, res, url);
     if (p === '/api/graph' && req.method === 'GET') return await handleGraph(req, res, url);
     if (p === '/api/timeline' && req.method === 'GET') return await handleTimeline(req, res, url);
-    if (p === '/api/principles/share' && req.method === 'POST') return await handleShare(req, res);
-    if (p === '/api/principles/import' && req.method === 'POST') return await handleImport(req, res);
-    if (p === '/api/feedback' && req.method === 'POST') return await handleFeedback(req, res);
     if (p === '/api/user' && req.method === 'GET') return handleUser(req, res);
+
+    // POST endpoints — require Bearer token when server.authToken is configured
+    if (req.method === 'POST') {
+      if (!requireAuth(req, res)) return;
+      if (p === '/api/intercept') return await handleIntercept(req, res);
+      if (p === '/api/extract') return await handleExtract(req, res);
+      if (p === '/api/evolve') return await handleEvolve(req, res);
+      if (p === '/api/principles/share') return await handleShare(req, res);
+      if (p === '/api/principles/import') return await handleImport(req, res);
+      if (p === '/api/feedback') return await handleFeedback(req, res);
+      if (p === '/api/route-model') return await handleRouteModel(req, res);
+      if (p === '/api/route-feedback') return await handleRouteFeedback(req, res);
+      if (p === '/api/brain') return await handleBrainProxy(req, res);
+    }
+
     error(res, 'Not found', 404);
   } catch (err) {
     error(res, err.message || 'Internal server error', 500);
@@ -279,4 +373,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { server, handleHealth, handleIntercept, handleExtract, handleEvolve, handleStats, handleGraph, handleTimeline, handleShare, handleImport, handleFeedback, handleUser };
+module.exports = { server, handleHealth, handleIntercept, handleExtract, handleEvolve, handleStats, handleGraph, handleTimeline, handleShare, handleImport, handleFeedback, handleUser, handleRouteModel, handleRouteFeedback };
