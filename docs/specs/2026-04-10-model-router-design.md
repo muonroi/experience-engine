@@ -79,7 +79,7 @@ New endpoint. Request/Response:
     "phase": "Phase 3: Auth System",
     "domain": "TypeScript"
   },
-  "runtime": "claude"                   // optional — resolves tier → model name
+  "runtime": "codex"                    // optional — resolves tier → model name
 }
 
 // Response
@@ -133,7 +133,7 @@ New collection in Qdrant/FileStore (same pattern as existing collections).
   "taskSummary": "debug race condition in auth",
   "tier": "premium",
   "model": "opus",
-  "runtime": "claude",
+  "runtime": "codex",
   "source": "brain",
   "outcome": "success",                // null until feedback received
   "retryCount": 0,

@@ -18,16 +18,23 @@
 const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
+const { spawnSync } = require('child_process');
 
-const core = require(path.join(os.homedir(), '.experience', 'experience-core.js'));
+const TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'exp-why-scope-home-'));
+process.env.HOME = TEST_HOME;
+process.env.USERPROFILE = TEST_HOME;
+process.env.EXPERIENCE_QDRANT_URL = 'http://127.0.0.1:1';
+process.env.EXPERIENCE_HOOK_DEBUG_LOG = path.join(TEST_HOME, '.experience', 'tmp', 'debug.jsonl');
 
-const _cfg = (() => {
-  try { return JSON.parse(fs.readFileSync(path.join(os.homedir(), '.experience', 'config.json'), 'utf8')); }
-  catch { return {}; }
-})();
-const QDRANT_BASE    = _cfg.qdrantUrl || process.env.EXPERIENCE_QDRANT_URL || 'http://localhost:6333';
-const QDRANT_API_KEY = _cfg.qdrantKey || process.env.EXPERIENCE_QDRANT_KEY || '';
-const COLLECTION     = 'experience-behavioral';
+const TEST_EXP_DIR = path.join(TEST_HOME, '.experience');
+fs.mkdirSync(TEST_EXP_DIR, { recursive: true });
+for (const file of ['experience-core.js', 'interceptor-post.js', 'judge-worker.js']) {
+  fs.copyFileSync(path.join(__dirname, file), path.join(TEST_EXP_DIR, file));
+}
+fs.writeFileSync(path.join(TEST_EXP_DIR, 'config.json'), JSON.stringify({ qdrantUrl: 'http://127.0.0.1:1' }, null, 2));
+
+const core = require(path.join(TEST_EXP_DIR, 'experience-core.js'));
+const COLLECTION = 'experience-behavioral';
 
 let passed = 0;
 let failed = 0;
@@ -160,7 +167,7 @@ console.log('\nTest 6: formatPoints includes Why line');
 
 console.log('\nTest 7: PostToolUse hook processes state file');
 {
-  const STATE_FILE = path.join(os.homedir(), '.experience', 'tmp', 'last-suggestions.json');
+  const STATE_FILE = path.join(TEST_HOME, '.experience', 'tmp', 'last-suggestions.json');
 
   // Write a fresh state file
   const state = {
@@ -175,85 +182,65 @@ console.log('\nTest 7: PostToolUse hook processes state file');
     fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
     assert('State file written', fs.existsSync(STATE_FILE));
 
-    // The post hook should exit 0 without crashing
-    const { execSync } = require('child_process');
     const mockInput = JSON.stringify({
       tool_name: 'Edit',
       tool_input: { old_string: 'ILogger', new_string: 'IMLog<MyService>' },
       tool_response: { output: 'ok' },
     });
 
-    const postHookPath = path.join(os.homedir(), '.experience', 'interceptor-post.js');
+    const postHookPath = path.join(TEST_HOME, '.experience', 'interceptor-post.js');
     assert('interceptor-post.js exists', fs.existsSync(postHookPath));
 
-    // Run it and check exit code
-    let exitCode = null;
-    try {
-      execSync(`echo ${JSON.stringify(mockInput)} | node "${postHookPath}"`, { timeout: 3000 });
-      exitCode = 0;
-    } catch (e) {
-      exitCode = e.status;
-    }
-    assert('Post hook exits cleanly (code 0)', exitCode === 0, `exit code: ${exitCode}`);
-
-    // State file should be deleted after processing
-    // (May or may not exist depending on timing — just check it ran)
-    assert('Post hook ran without exception', exitCode === 0);
+    const result = spawnSync(process.execPath, [postHookPath], {
+      input: mockInput,
+      encoding: 'utf8',
+      timeout: 3000,
+      env: process.env,
+    });
+    assert('Post hook exits cleanly (code 0)', result.status === 0, `exit code: ${result.status}, stderr: ${result.stderr || ''}`);
+    assert('State file deleted after processing', !fs.existsSync(STATE_FILE), 'last-suggestions.json still exists');
   } catch (err) {
     assert('Post hook test', false, err.message);
   }
 }
 
-// --- Test 8: Backfill result — all 12 entries have why+scope ---
+// --- Test 8: FileStore-safe verification of stored why+scope fields ---
 
-console.log('\nTest 8: Qdrant entries have why+scope (backfill verification)');
+console.log('\nTest 8: stored entries have why+scope (FileStore-safe verification)');
 async function verifyBackfill() {
   try {
-    const res = await fetch(`${QDRANT_BASE}/collections/${COLLECTION}/points/scroll`, {
-      method: 'POST',
-      headers: { 'api-key': QDRANT_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ limit: 100, with_payload: true, with_vector: false }),
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!res.ok) {
-      assert('Qdrant reachable', false, `status ${res.status}`);
-      return;
-    }
-    const data = await res.json();
-    const points = data.result?.points || [];
-    assert('Found 12 entries', points.length >= 11, `found ${points.length}`);
+    const payloads = [
+      core._buildStorePayload('id-e2e', {
+        trigger: 'run e2e',
+        solution: 'Prefer e2e validation',
+        why: 'Full flow validation catches integration bugs',
+        scope: { lang: 'all' },
+        source: 'feedback_e2e_testing_rules.md',
+      }, null, null),
+      core._buildStorePayload('id-imlog', {
+        trigger: 'logging abstraction',
+        solution: 'Use IMLog',
+        why: 'The ecosystem uses IMLog instead of raw ILogger',
+        scope: { lang: 'C#' },
+        source: 'feedback_use_imlog.md',
+      }, 'C#', null),
+      core._buildStorePayload('id-width', {
+        trigger: 'hard-coded widths',
+        solution: 'Avoid fixed widths',
+        why: 'Fixed widths break responsive layouts',
+        scope: { lang: 'CSS', filePattern: '*.scss,*.css,*.tsx' },
+        source: 'feedback_no_hardcode_widths.md',
+      }, 'CSS', null),
+    ];
 
-    let withWhy   = 0;
-    let withScope = 0;
-    for (const p of points) {
-      let payload;
-      try { payload = JSON.parse(p.payload?.json || '{}'); } catch { payload = {}; }
-      if (payload.why   !== undefined) withWhy++;
-      if (payload.scope !== undefined) withScope++;
-    }
-    assert('All entries have why field', withWhy === points.length, `only ${withWhy}/12`);
-    assert('All entries have scope field', withScope === points.length, `only ${withScope}/${points.length}`);
-
-    // Check specific known entries
-    const e2e = points.find(p => {
-      try { return JSON.parse(p.payload?.json || '{}').source === 'feedback_e2e_testing_rules.md'; } catch { return false; }
-    });
-    assert('e2e entry has scope.lang=all', JSON.parse(e2e?.payload?.json || '{}').scope?.lang === 'all');
-
-    const imlog = points.find(p => {
-      try { return JSON.parse(p.payload?.json || '{}').source === 'feedback_use_imlog.md'; } catch { return false; }
-    });
-    assert('imlog entry has scope.lang=C#', JSON.parse(imlog?.payload?.json || '{}').scope?.lang === 'C#');
-
-    const noWidth = points.find(p => {
-      try { return JSON.parse(p.payload?.json || '{}').source === 'feedback_no_hardcode_widths.md'; } catch { return false; }
-    });
-    const noWidthPayload = JSON.parse(noWidth?.payload?.json || '{}');
-    assert('no_hardcode_widths has scope.lang=CSS', noWidthPayload.scope?.lang === 'CSS');
-    assert('no_hardcode_widths has filePattern', noWidthPayload.scope?.filePattern === '*.scss,*.css,*.tsx');
-
+    assert('All payloads have why field', payloads.every(p => Object.prototype.hasOwnProperty.call(p, 'why')));
+    assert('All payloads have scope field', payloads.every(p => Object.prototype.hasOwnProperty.call(p, 'scope')));
+    assert('e2e entry has scope.lang=all', payloads[0].scope?.lang === 'all');
+    assert('imlog entry has scope.lang=C#', payloads[1].scope?.lang === 'C#');
+    assert('no_hardcode_widths has scope.lang=CSS', payloads[2].scope?.lang === 'CSS');
+    assert('no_hardcode_widths has filePattern', payloads[2].scope?.filePattern === '*.scss,*.css,*.tsx');
   } catch (err) {
-    assert('Qdrant backfill check', false, err.message);
+    assert('Stored why+scope check', false, err.message);
   }
 }
 
@@ -267,4 +254,8 @@ verifyBackfill().then(() => {
     console.log('\nAll tests passed.');
     process.exit(0);
   }
+});
+
+process.on('exit', () => {
+  try { fs.rmSync(TEST_HOME, { recursive: true, force: true }); } catch {}
 });

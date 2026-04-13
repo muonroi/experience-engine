@@ -40,6 +40,23 @@ function debugLog(event) {
   } catch {}
 }
 
+function activityLog(event) {
+  try {
+    const core = require(path.join(EXP_DIR, 'experience-core.js'));
+    if (typeof core._activityLog === 'function') {
+      core._activityLog({ op: 'hook', hook: 'interceptor-post', ...event });
+    }
+  } catch {}
+}
+
+function buildSourceMeta(data) {
+  return {
+    sourceKind: 'codex-hook',
+    sourceRuntime: process.env.WSL_DISTRO_NAME ? 'codex-wsl' : 'codex-windows',
+    sourceSession: data?.session_id || process.env.CODEX_SESSION_ID || null,
+  };
+}
+
 /**
  * Classify tool outcome for hybrid signal in judge queue.
  * Kept here so judge-worker can record toolOutcome without needing outcome logic.
@@ -76,6 +93,7 @@ process.stdin.on('data', c => { input += c; });
 process.stdin.on('end', async () => {
   clearTimeout(t);
   debugLog({ stage: 'stdin_end', bytes: input.length });
+  activityLog({ stage: 'stdin_end', bytes: input.length });
 
   try {
     // --- Step 1: Orphan cleanup — delete judge-*.json files older than 60s ---
@@ -100,6 +118,7 @@ process.stdin.on('end', async () => {
       state = JSON.parse(raw);
     } catch {
       debugLog({ stage: 'no_state_file' });
+      activityLog({ stage: 'no_state_file' });
       process.exit(0);
     }
 
@@ -107,6 +126,7 @@ process.stdin.on('end', async () => {
     const ageMs = Date.now() - new Date(state.ts).getTime();
     if (ageMs > STALE_MS) {
       debugLog({ stage: 'stale_state', ageMs });
+      activityLog({ stage: 'stale_state', ageMs, tool: state.tool || null });
       try { fs.unlinkSync(STATE_FILE); } catch {}
       process.exit(0);
     }
@@ -114,6 +134,7 @@ process.stdin.on('end', async () => {
     const surfacedIds = state.surfacedIds || [];
     if (surfacedIds.length === 0) {
       debugLog({ stage: 'no_surfaced_ids' });
+      activityLog({ stage: 'no_surfaced_ids', tool: state.tool || null });
       try { fs.unlinkSync(STATE_FILE); } catch {}
       process.exit(0);
     }
@@ -121,11 +142,20 @@ process.stdin.on('end', async () => {
     // Parse PostToolUse input
     let data;
     try { data = JSON.parse(input || '{}'); } catch { data = {}; }
+    const sourceMeta = buildSourceMeta(data);
 
     const toolName   = data.tool_name  || data.toolName  || '';
     const toolInput  = data.tool_input || data.input     || {};
     const toolOutput = data.tool_response || data.output || data.result || {};
     debugLog({ stage: 'parsed', tool: toolName, surfacedCount: surfacedIds.length });
+    activityLog({
+      stage: 'parsed',
+      tool: toolName,
+      surfacedCount: surfacedIds.length,
+      surfaced: surfacedIds.slice(0, 8).map(s => ({ collection: s.collection, pointId: String(s.id || '').slice(0, 8) })),
+      toolOutcome: classifyOutcome(toolName, toolInput, toolOutput),
+      ...sourceMeta
+    });
 
     // --- Step 4: Write judge queue file ---
     const queueFile = path.join(TMP_DIR, `judge-${Date.now()}.json`);
@@ -149,17 +179,36 @@ process.stdin.on('end', async () => {
       worker.unref(); // parent exits immediately, worker continues in background
 
       debugLog({ stage: 'judge_spawned', queueFile, surfacedCount: surfacedIds.length });
+      activityLog({
+        stage: 'judge_spawned',
+        tool: toolName,
+        queueFile: path.basename(queueFile),
+        surfacedCount: surfacedIds.length,
+        surfaced: surfacedIds.slice(0, 8).map(s => ({ collection: s.collection, pointId: String(s.id || '').slice(0, 8) })),
+        toolOutcome: classifyOutcome(toolName, toolInput, toolOutput),
+        ...sourceMeta
+      });
     } catch (spawnErr) {
       // Spawn failure must never block PostToolUse
       debugLog({ stage: 'spawn_error', message: spawnErr?.message });
+      activityLog({ stage: 'spawn_error', tool: toolName, message: spawnErr?.message || String(spawnErr), ...sourceMeta });
     }
 
     // --- Step 6: Delete last-suggestions.json ---
     try { fs.unlinkSync(STATE_FILE); } catch {}
     debugLog({ stage: 'done', processed: surfacedIds.length });
+    activityLog({
+      stage: 'done',
+      tool: toolName,
+      processed: surfacedIds.length,
+      surfaced: surfacedIds.slice(0, 8).map(s => ({ collection: s.collection, pointId: String(s.id || '').slice(0, 8) })),
+      toolOutcome: classifyOutcome(toolName, toolInput, toolOutput),
+      ...sourceMeta
+    });
 
   } catch (error) {
     debugLog({ stage: 'error', message: error?.message || String(error) });
+    activityLog({ stage: 'error', message: error?.message || String(error) });
   }
 
   process.exit(0);

@@ -7,21 +7,18 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-// We test via FileStore mode (Qdrant not available in unit test context)
-// The module uses ~/.experience/store/{user}/ — we'll mock via a temp dir
-// But since checkQdrant() auto-detects, and Qdrant is typically unavailable in CI,
-// the FileStore path will be exercised automatically.
+// Hermetic test home so FileStore writes never touch the real ~/.experience tree.
+const TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'exp-test-home-'));
+process.env.HOME = TEST_HOME;
+process.env.USERPROFILE = TEST_HOME;
+process.env.EXPERIENCE_QDRANT_URL = 'http://127.0.0.1:1';
 
-// Use the default user store path — module reads EXP_USER at load time.
-// We write test data to the actual store dir and clean it up after each test.
-// Using a unique collection name prefix to avoid colliding with real data.
-const STORE_DIR = path.join(os.homedir(), '.experience', 'store', process.env.EXP_USER || 'default');
+const STORE_DIR = path.join(TEST_HOME, '.experience', 'store', process.env.EXP_USER || 'default');
 
 const {
   _updatePointPayload,
   recordFeedback,
   recordHit,
-  incrementIgnoreCount: _incrementIgnoreCount,
   _applyHitUpdate: applyHitUpdate,
   _incrementIgnoreCountData: incrementIgnoreCountData,
 } = require('./experience-core.js');
@@ -53,6 +50,10 @@ function cleanup() {
   }
   testColls = [];
 }
+
+process.on('exit', () => {
+  try { fs.rmSync(TEST_HOME, { recursive: true, force: true }); } catch {}
+});
 
 // ------------------------------------------------------------------
 // Tests

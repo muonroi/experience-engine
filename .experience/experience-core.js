@@ -542,7 +542,18 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
   // P2: Session budget cap — stop surfacing after N unique experiences
   const uniquesSoFar = sessionUniqueCount();
   if (uniquesSoFar >= MAX_SESSION_UNIQUE) {
-    activityLog({ op: 'intercept', query: '(budget-capped)', scores: [], result: null, project: extractProjectPath(toolInput), ...sourceMeta });
+    activityLog({
+      op: 'intercept',
+      stage: 'budget_capped',
+      tool: toolName,
+      query: '(budget-capped)',
+      scores: [],
+      result: null,
+      hasResult: false,
+      surfacedCount: 0,
+      project: extractProjectPath(toolInput),
+      ...sourceMeta
+    });
     return { suggestions: null, surfacedIds: [] };
   }
 
@@ -690,7 +701,20 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
     } catch { /* never block intercept on brain filter failure */ }
   }
 
-  activityLog({ op: 'intercept', query: query.slice(0, 120), scores: [...r0, ...r1, ...r2].map(p => p._effectiveScore ?? p.score).sort((a, b) => b - a).slice(0, 3), result: lines.length > 0 ? 'suggestion' : null, project: extractProjectPath(toolInput), ...(routeResult ? { route: routeResult.tier, routeSource: routeResult.source } : {}), ...sourceMeta });
+  activityLog({
+    op: 'intercept',
+    stage: 'search_done',
+    tool: toolName,
+    query: query.slice(0, 120),
+    scores: [...r0, ...r1, ...r2].map(p => p._effectiveScore ?? p.score).sort((a, b) => b - a).slice(0, 3),
+    result: lines.length > 0 ? 'suggestion' : null,
+    hasResult: lines.length > 0,
+    surfacedCount: surfacedMeta.length,
+    surfaced: surfacedMeta.slice(0, 8).map(s => ({ collection: s.collection, pointId: String(s.id || '').slice(0, 8) })),
+    project: extractProjectPath(toolInput),
+    ...(routeResult ? { route: routeResult.tier, routeModel: routeResult.model, routeSource: routeResult.source } : {}),
+    ...sourceMeta
+  });
 
   return { suggestions: lines.length > 0 ? lines.join('\n---\n') : null, surfacedIds: surfacedMeta, route: routeResult || null };
 }
