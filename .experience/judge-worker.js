@@ -19,6 +19,10 @@ const os   = require('os');
 const EXP_DIR   = path.join(os.homedir(), '.experience');
 const queueFile = process.argv[2];
 
+function shortAction(input) {
+  return String(input || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+}
+
 // Validate path to prevent path traversal (T-b3s-01)
 // Must reside inside ~/.experience/tmp/ and match judge-*.json pattern
 if (!queueFile) process.exit(0);
@@ -62,6 +66,7 @@ if (!fs.existsSync(normalised)) process.exit(0);
 
   // Judge each suggestion in parallel — one LLM call per suggestion
   const VALID_VERDICTS = new Set(['FOLLOWED', 'IGNORED', 'IRRELEVANT', 'UNCLEAR']);
+  const action = shortAction(toolInput);
 
   await Promise.allSettled(surfacedIds.map(async ({ collection, id, solution }) => {
     if (!solution || !id || !collection) return;
@@ -110,7 +115,18 @@ if (!fs.existsSync(normalised)) process.exit(0);
       if (VALID_VERDICTS.has(word)) verdict = word;
     } catch (err) {
       const reason = err?.name === 'AbortError' ? 'timeout' : 'unreachable';
-      if (activityLog) activityLog({ op: 'judge-brain-error', collection, pointId: id.slice(0, 8), reason, verdict: 'UNCLEAR' });
+      if (activityLog) {
+        activityLog({
+          op: 'judge-brain-error',
+          tool: toolName,
+          action,
+          collection,
+          pointId: id.slice(0, 8),
+          reason,
+          verdict: 'UNCLEAR',
+          toolOutcome,
+        });
+      }
     }
 
     // Hybrid signal: error outcome + UNCLEAR → IGNORED
@@ -118,11 +134,32 @@ if (!fs.existsSync(normalised)) process.exit(0);
 
     // UNCLEAR → no feedback (neutral), but log for diagnostics
     if (verdict === 'UNCLEAR') {
-      if (activityLog) activityLog({ op: 'judge-skipped', collection, pointId: id.slice(0, 8), reason: 'unclear' });
+      if (activityLog) {
+        activityLog({
+          op: 'judge-skipped',
+          tool: toolName,
+          action,
+          collection,
+          pointId: id.slice(0, 8),
+          reason: 'unclear',
+          toolOutcome,
+        });
+      }
       return;
     }
 
     try {
+      if (activityLog) {
+        activityLog({
+          op: 'judge-verdict',
+          tool: toolName,
+          action,
+          collection,
+          pointId: id.slice(0, 8),
+          verdict,
+          toolOutcome,
+        });
+      }
       await recordJudgeFeedback(collection, id, verdict);
     } catch {
       // Ignore — feedback failure must not crash worker
