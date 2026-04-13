@@ -7,3 +7,4 @@ Thumbs.db
 config.json
 .stop-marker.json
 /sdk/python/muonroi_experience/__pycache__
+health-check.sh
