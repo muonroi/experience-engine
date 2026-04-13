@@ -122,7 +122,11 @@ async function handleHealth(req, res) {
 async function handleIntercept(req, res) {
   const body = await readBody(req);
   if (!body.toolName) return error(res, 'toolName is required');
-  const result = await intercept(body.toolName, body.toolInput || {});
+  const result = await intercept(body.toolName, body.toolInput || {}, undefined, {
+    sourceKind: body.sourceKind || 'manual-api',
+    sourceRuntime: body.sourceRuntime || 'api',
+    sourceSession: body.sourceSession || null,
+  });
   json(res, { suggestions: result, hasSuggestions: result !== null });
 }
 

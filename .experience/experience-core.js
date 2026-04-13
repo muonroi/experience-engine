@@ -310,6 +310,15 @@ function activityLog(event) {
   } catch { /* never crash the engine */ }
 }
 
+function normalizeSourceMeta(meta) {
+  if (!meta || typeof meta !== 'object') return {};
+  return {
+    ...(meta.sourceKind ? { sourceKind: meta.sourceKind } : {}),
+    ...(meta.sourceRuntime ? { sourceRuntime: meta.sourceRuntime } : {}),
+    ...(meta.sourceSession ? { sourceSession: meta.sourceSession } : {}),
+  };
+}
+
 function extractProjectPath(toolInput) {
   const raw = toolInput?.file_path || toolInput?.path || '';
   if (raw) return raw.replace(/\\/g, '/');
@@ -523,7 +532,8 @@ function isReadOnlyCommand(toolName, toolInput) {
   return parts.every(p => READ_ONLY_CMD.test(p.trim()));
 }
 
-async function interceptWithMeta(toolName, toolInput, signal) {
+async function interceptWithMeta(toolName, toolInput, signal, meta) {
+  const sourceMeta = normalizeSourceMeta(meta);
   // P5: Skip read-only commands — no code mutation = no risk = no warning needed
   if (isReadOnlyCommand(toolName, toolInput)) {
     return { suggestions: null, surfacedIds: [] };
@@ -532,7 +542,7 @@ async function interceptWithMeta(toolName, toolInput, signal) {
   // P2: Session budget cap — stop surfacing after N unique experiences
   const uniquesSoFar = sessionUniqueCount();
   if (uniquesSoFar >= MAX_SESSION_UNIQUE) {
-    activityLog({ op: 'intercept', query: '(budget-capped)', scores: [], result: null, project: extractProjectPath(toolInput) });
+    activityLog({ op: 'intercept', query: '(budget-capped)', scores: [], result: null, project: extractProjectPath(toolInput), ...sourceMeta });
     return { suggestions: null, surfacedIds: [] };
   }
 
@@ -675,20 +685,20 @@ async function interceptWithMeta(toolName, toolInput, signal) {
         const removed = lines.length - kept.length;
         lines.length = 0;
         lines.push(...kept);
-        if (removed > 0) activityLog({ op: 'brain-filter', removed, kept: kept.length });
+        if (removed > 0) activityLog({ op: 'brain-filter', removed, kept: kept.length, ...sourceMeta });
       }
     } catch { /* never block intercept on brain filter failure */ }
   }
 
-  activityLog({ op: 'intercept', query: query.slice(0, 120), scores: [...r0, ...r1, ...r2].map(p => p._effectiveScore ?? p.score).sort((a, b) => b - a).slice(0, 3), result: lines.length > 0 ? 'suggestion' : null, project: extractProjectPath(toolInput), ...(routeResult ? { route: routeResult.tier, routeSource: routeResult.source } : {}) });
+  activityLog({ op: 'intercept', query: query.slice(0, 120), scores: [...r0, ...r1, ...r2].map(p => p._effectiveScore ?? p.score).sort((a, b) => b - a).slice(0, 3), result: lines.length > 0 ? 'suggestion' : null, project: extractProjectPath(toolInput), ...(routeResult ? { route: routeResult.tier, routeSource: routeResult.source } : {}), ...sourceMeta });
 
   return { suggestions: lines.length > 0 ? lines.join('\n---\n') : null, surfacedIds: surfacedMeta, route: routeResult || null };
 }
 
 // --- intercept: backward-compatible wrapper returning string|null ---
 
-async function intercept(toolName, toolInput, signal) {
-  const result = await interceptWithMeta(toolName, toolInput, signal);
+async function intercept(toolName, toolInput, signal, meta) {
+  const result = await interceptWithMeta(toolName, toolInput, signal, meta);
   return result ? result.suggestions : null;
 }
 

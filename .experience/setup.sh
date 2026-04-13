@@ -909,27 +909,66 @@ fi
 cat > "$INSTALL_DIR/interceptor.js" << 'HOOKEOF'
 #!/usr/bin/env node
 'use strict';
-const { intercept } = require(require('os').homedir() + '/.experience/experience-core.js');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const { intercept } = require(path.join(os.homedir(), '.experience', 'experience-core.js'));
+const DEBUG_LOG = process.env.EXPERIENCE_HOOK_DEBUG_LOG || path.join(os.homedir(), '.codex', 'log', 'experience-hook-debug.jsonl');
 let input = '';
-const t = setTimeout(() => process.exit(0), 3000);
+
+function debugLog(event) {
+  try {
+    fs.mkdirSync(path.dirname(DEBUG_LOG), { recursive: true });
+    fs.appendFileSync(DEBUG_LOG, JSON.stringify({ ts: new Date().toISOString(), hook: 'interceptor', ...event }) + '\n');
+  } catch {}
+}
+
+const t = setTimeout(() => {
+  debugLog({ stage: 'timeout_waiting_for_stdin' });
+  process.exit(0);
+}, 3000);
+
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', c => { input += c; });
 process.stdin.on('end', async () => {
   clearTimeout(t);
+  debugLog({ stage: 'stdin_end', bytes: input.length });
   try {
-    const data = JSON.parse(input);
+    const data = JSON.parse(input || '{}');
     const tool = data.tool_name || data.toolName || '';
-    if (!tool.match(/Edit|Write|Bash|shell|replace|write_file|execute_command/i)) process.exit(0);
+    const toolInput = data.tool_input || data.input || {};
+    const matches = /Edit|Write|Bash|shell|replace|write_file|execute_command/i.test(tool);
+    debugLog({ stage: 'parsed', tool, matches, keys: Object.keys(toolInput || {}).slice(0, 12) });
+    if (!matches) process.exit(0);
+
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 2500);
-    const result = await intercept(tool, data.tool_input || data.input || {}, ctrl.signal);
+    const timer = setTimeout(() => {
+      debugLog({ stage: 'intercept_abort', tool });
+      ctrl.abort();
+    }, 2500);
+    const result = await intercept(tool, toolInput, ctrl.signal);
     clearTimeout(timer);
+    debugLog({ stage: 'intercept_done', tool, hasResult: !!result, preview: typeof result === 'string' ? result.slice(0, 240) : null });
+
     if (result) {
-      process.stdout.write(JSON.stringify({
-        hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', additionalContext: result }
-      }));
+      const isGemini = !!(process.env.GEMINI_SESSION_ID || process.env.GEMINI_PROJECT_DIR)
+        || /^(run_shell_command|write_file|edit_file|replace_in_file)$/.test(tool);
+      const isCodex = !isGemini && !!(process.env.CODEX_SESSION_ID);
+
+      if (isGemini) {
+        process.stdout.write(result);
+      } else if (isCodex) {
+        // Codex PreToolUse does not support additionalContext.
+        process.stdout.write(JSON.stringify({ systemMessage: result }));
+      } else {
+        process.stdout.write(JSON.stringify({
+          hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', additionalContext: result }
+        }));
+      }
     }
-  } catch {}
+  } catch (error) {
+    debugLog({ stage: 'error', message: error?.message || String(error), stack: error?.stack || null });
+  }
   process.exit(0);
 });
 HOOKEOF

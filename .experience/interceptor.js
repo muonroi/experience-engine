@@ -15,6 +15,15 @@ function debugLog(event) {
   } catch {}
 }
 
+function buildSourceMeta(data) {
+  const runtime = process.env.WSL_DISTRO_NAME ? 'codex-wsl' : 'codex-windows';
+  return {
+    sourceKind: 'codex-hook',
+    sourceRuntime: runtime,
+    sourceSession: process.env.CODEX_SESSION_ID || data.session_id || null,
+  };
+}
+
 const t = setTimeout(() => {
   debugLog({ stage: 'timeout_waiting_for_stdin' });
   process.exit(0);
@@ -29,8 +38,9 @@ process.stdin.on('end', async () => {
     const data = JSON.parse(input || '{}');
     const tool = data.tool_name || data.toolName || '';
     const toolInput = data.tool_input || data.input || {};
+    const sourceMeta = buildSourceMeta(data);
     const matches = /Edit|Write|Bash|shell|replace|write_file|execute_command/i.test(tool);
-    debugLog({ stage: 'parsed', tool, matches, keys: Object.keys(toolInput || {}).slice(0, 12) });
+    debugLog({ stage: 'parsed', tool, matches, keys: Object.keys(toolInput || {}).slice(0, 12), ...sourceMeta });
     if (!matches) process.exit(0);
 
     const ctrl = new AbortController();
@@ -42,14 +52,14 @@ process.stdin.on('end', async () => {
     const resultMeta = await (async () => {
       // Use interceptWithMeta to get surfacedIds + route alongside suggestions
       const { interceptWithMeta: interceptMeta } = require(path.join(os.homedir(), '.experience', 'experience-core.js'));
-      if (interceptMeta) return interceptMeta(tool, toolInput, ctrl.signal);
-      return { suggestions: await intercept(tool, toolInput, ctrl.signal), surfacedIds: [], route: null };
+      if (interceptMeta) return interceptMeta(tool, toolInput, ctrl.signal, sourceMeta);
+      return { suggestions: await intercept(tool, toolInput, ctrl.signal, sourceMeta), surfacedIds: [], route: null };
     })();
     clearTimeout(timer);
     const result = resultMeta?.suggestions ?? (typeof resultMeta === 'string' ? resultMeta : null);
     const surfacedIds = resultMeta?.surfacedIds || [];
     const routeInfo = resultMeta?.route || null;
-    debugLog({ stage: 'intercept_done', tool, hasResult: !!result, surfacedCount: surfacedIds.length, preview: typeof result === 'string' ? result.slice(0, 240) : null });
+    debugLog({ stage: 'intercept_done', tool, hasResult: !!result, surfacedCount: surfacedIds.length, preview: typeof result === 'string' ? result.slice(0, 240) : null, ...sourceMeta });
 
     // Write last-suggestions state for PostToolUse hook
     if (result && surfacedIds.length > 0) {
