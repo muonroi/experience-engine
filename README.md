@@ -256,7 +256,7 @@ Classify task complexity → route to optimal model tier.
 ```bash
 curl -X POST http://localhost:8082/api/route-model \
   -H "Content-Type: application/json" \
-  -d '{"task": "debug race condition in auth", "runtime": "claude"}'
+  -d '{"task": "debug race condition in auth", "runtime": "codex"}'
 ```
 
 ```json

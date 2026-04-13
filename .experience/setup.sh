@@ -420,17 +420,30 @@ if [ "$NI_MODE" = "true" ] && [ -z "$EMBED_DIM" ]; then
   _DIM_PROBE=$(mktemp /tmp/exp-dim-probe.XXXXXX.js)
   cat > "$_DIM_PROBE" <<JSEOF
 (async () => {
+  try { require('node:dns').setDefaultResultOrder('ipv4first'); } catch {}
   const provider = '$EMBED_PROVIDER';
   const model = '$EMBED_MODEL';
   const key = '$EMBED_KEY';
   const endpoint = '$EMBED_ENDPOINT';
   const ollamaUrl = '$OLLAMA_URL';
   const testInput = 'dimension probe test';
+  async function fetchWithRetry(url, options, attempts = 3) {
+    let lastErr;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return await fetch(url, options);
+      } catch (err) {
+        lastErr = err;
+        await new Promise(r => setTimeout(r, 400 * (i + 1)));
+      }
+    }
+    throw lastErr;
+  }
   try {
     let vec;
     if (provider === 'ollama') {
       const url = ollamaUrl || 'http://localhost:11434';
-      const res = await fetch(url + '/api/embed', {
+      const res = await fetchWithRetry(url + '/api/embed', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model, input: testInput }),
@@ -440,7 +453,7 @@ if [ "$NI_MODE" = "true" ] && [ -z "$EMBED_DIM" ]; then
       const d = await res.json();
       vec = d.embeddings?.[0];
     } else if (provider === 'gemini') {
-      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':embedContent?key=' + key, {
+      const res = await fetchWithRetry('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':embedContent?key=' + key, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: { parts: [{ text: testInput }] } }),
@@ -451,7 +464,7 @@ if [ "$NI_MODE" = "true" ] && [ -z "$EMBED_DIM" ]; then
       vec = d.embedding?.values;
     } else {
       const ep = endpoint || 'https://api.openai.com/v1/embeddings';
-      const res = await fetch(ep, {
+      const res = await fetchWithRetry(ep, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
         body: JSON.stringify({ model, input: testInput }),
@@ -476,7 +489,8 @@ JSEOF
     if [ -s /tmp/exp-dim-err ]; then
       echo "  Error: $(cat /tmp/exp-dim-err)"
     fi
-    echo "  Common: SiliconFlow=2048, OpenAI=1536, Gemini/Ollama=768, VoyageAI=1024"
+    echo "  Common: OpenAI=1536, Gemini/Ollama=768, VoyageAI=1024"
+    echo "  Note:   SiliconFlow dimensions vary by model; Qwen/Qwen3-Embedding-0.6B may return 1024"
     echo "  Fix:   Set EXP_EMBED_DIM=<number> or verify API key/endpoint"
     exit 1
   fi
@@ -764,18 +778,31 @@ if [ "$KEEP_CONFIG" = "false" ] && [ "$NI_MODE" = "false" ]; then
   _DIM_PROBE=$(mktemp /tmp/exp-dim-probe.XXXXXX.js)
   cat > "$_DIM_PROBE" <<JSEOF
 (async () => {
+  try { require('node:dns').setDefaultResultOrder('ipv4first'); } catch {}
   const provider = '$EMBED_PROVIDER';
   const model = '$EMBED_MODEL';
   const key = '$EMBED_KEY';
   const endpoint = '$EMBED_ENDPOINT';
   const ollamaUrl = '$OLLAMA_URL';
   const testInput = 'dimension probe test';
+  async function fetchWithRetry(url, options, attempts = 3) {
+    let lastErr;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return await fetch(url, options);
+      } catch (err) {
+        lastErr = err;
+        await new Promise(r => setTimeout(r, 400 * (i + 1)));
+      }
+    }
+    throw lastErr;
+  }
 
   try {
     let vec;
     if (provider === 'ollama') {
       const url = ollamaUrl || 'http://localhost:11434';
-      const res = await fetch(url + '/api/embed', {
+      const res = await fetchWithRetry(url + '/api/embed', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model, input: testInput }),
@@ -788,7 +815,7 @@ if [ "$KEEP_CONFIG" = "false" ] && [ "$NI_MODE" = "false" ]; then
       const d = await res.json();
       vec = d.embeddings?.[0];
     } else if (provider === 'gemini') {
-      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':embedContent?key=' + key, {
+      const res = await fetchWithRetry('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':embedContent?key=' + key, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: { parts: [{ text: testInput }] } }),
@@ -804,7 +831,7 @@ if [ "$KEEP_CONFIG" = "false" ] && [ "$NI_MODE" = "false" ]; then
     } else {
       // openai / siliconflow / custom / voyageai
       const ep = endpoint || 'https://api.openai.com/v1/embeddings';
-      const res = await fetch(ep, {
+      const res = await fetchWithRetry(ep, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
         body: JSON.stringify({ model, input: testInput }),
@@ -840,8 +867,8 @@ JSEOF
       echo "  Error: $(cat /tmp/exp-dim-err)"
     fi
     echo ""
-    echo "  Common dimensions by provider:"
-    echo "    SiliconFlow (Qwen3-Embedding-0.6B): 2048"
+    echo "  Common dimensions by provider/model:"
+    echo "    SiliconFlow (Qwen/Qwen3-Embedding-0.6B): 1024"
     echo "    SiliconFlow (BAAI/bge-m3):          1024"
     echo "    OpenAI (text-embedding-3-small):     1536"
     echo "    Gemini (text-embedding-004):         768"
@@ -896,7 +923,7 @@ echo "◆ [2/6] Installing to $INSTALL_DIR..."
 
 mkdir -p "$INSTALL_DIR"
 
-# Copy core files — source is always canonical
+# Copy runtime files — source is always canonical
 if ! cp "$SRC_DIR/experience-core.js" "$INSTALL_DIR/experience-core.js"; then
   echo ""
   echo "  [FAIL] Could not copy experience-core.js"
@@ -905,136 +932,28 @@ if ! cp "$SRC_DIR/experience-core.js" "$INSTALL_DIR/experience-core.js"; then
   exit 1
 fi
 
-# Write wrapper hook: interceptor.js
-cat > "$INSTALL_DIR/interceptor.js" << 'HOOKEOF'
-#!/usr/bin/env node
-'use strict';
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const { intercept } = require(path.join(os.homedir(), '.experience', 'experience-core.js'));
-const DEBUG_LOG = process.env.EXPERIENCE_HOOK_DEBUG_LOG || path.join(os.homedir(), '.codex', 'log', 'experience-hook-debug.jsonl');
-let input = '';
+# Copy hook/runtime helpers from source
+for f in interceptor.js stop-extractor.js interceptor-post.js interceptor-prompt.js judge-worker.js activity-watch.js exp-watch exp-open-pane exp-pane-right exp-pane-left exp-pane-bottom; do
+  if [ -f "$SRC_DIR/$f" ]; then
+    cp "$SRC_DIR/$f" "$INSTALL_DIR/$f"
+  fi
+done
 
-function debugLog(event) {
-  try {
-    fs.mkdirSync(path.dirname(DEBUG_LOG), { recursive: true });
-    fs.appendFileSync(DEBUG_LOG, JSON.stringify({ ts: new Date().toISOString(), hook: 'interceptor', ...event }) + '\n');
-  } catch {}
-}
+chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js" "$INSTALL_DIR/interceptor-post.js" "$INSTALL_DIR/interceptor-prompt.js" "$INSTALL_DIR/judge-worker.js" "$INSTALL_DIR/activity-watch.js" "$INSTALL_DIR/exp-watch" "$INSTALL_DIR/exp-open-pane" "$INSTALL_DIR/exp-pane-right" "$INSTALL_DIR/exp-pane-left" "$INSTALL_DIR/exp-pane-bottom" 2>/dev/null
 
-const t = setTimeout(() => {
-  debugLog({ stage: 'timeout_waiting_for_stdin' });
-  process.exit(0);
-}, 3000);
-
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', c => { input += c; });
-process.stdin.on('end', async () => {
-  clearTimeout(t);
-  debugLog({ stage: 'stdin_end', bytes: input.length });
-  try {
-    const data = JSON.parse(input || '{}');
-    const tool = data.tool_name || data.toolName || '';
-    const toolInput = data.tool_input || data.input || {};
-    const matches = /Edit|Write|Bash|shell|replace|write_file|execute_command/i.test(tool);
-    debugLog({ stage: 'parsed', tool, matches, keys: Object.keys(toolInput || {}).slice(0, 12) });
-    if (!matches) process.exit(0);
-
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => {
-      debugLog({ stage: 'intercept_abort', tool });
-      ctrl.abort();
-    }, 2500);
-    const result = await intercept(tool, toolInput, ctrl.signal);
-    clearTimeout(timer);
-    debugLog({ stage: 'intercept_done', tool, hasResult: !!result, preview: typeof result === 'string' ? result.slice(0, 240) : null });
-
-    if (result) {
-      const isGemini = !!(process.env.GEMINI_SESSION_ID || process.env.GEMINI_PROJECT_DIR)
-        || /^(run_shell_command|write_file|edit_file|replace_in_file)$/.test(tool);
-      const isCodex = !isGemini && !!(process.env.CODEX_SESSION_ID);
-
-      if (isGemini) {
-        process.stdout.write(result);
-      } else if (isCodex) {
-        // Codex PreToolUse does not support additionalContext.
-        process.stdout.write(JSON.stringify({ systemMessage: result }));
-      } else {
-        process.stdout.write(JSON.stringify({
-          hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', additionalContext: result }
-        }));
-      }
-    }
-  } catch (error) {
-    debugLog({ stage: 'error', message: error?.message || String(error), stack: error?.stack || null });
-  }
-  process.exit(0);
-});
-HOOKEOF
-
-# Write wrapper hook: stop-extractor.js
-cat > "$INSTALL_DIR/stop-extractor.js" << 'HOOKEOF'
-#!/usr/bin/env node
-'use strict';
-const fs = require('fs'), path = require('path');
-const home = require('os').homedir();
-const { extractFromSession } = require(home + '/.experience/experience-core.js');
-const MARKER = home + '/.experience/.stop-marker.json';
-const MIN_NEW_LINES = 8;
-async function main() {
-  const log = findCurrentSession();
-  if (!log) return;
-  const lines = fs.readFileSync(log, 'utf8').split('\n').filter(Boolean);
-  let marker = {};
-  try { marker = JSON.parse(fs.readFileSync(MARKER, 'utf8')); } catch {}
-  const start = marker.file === log ? (marker.line || 0) : 0;
-  const newLines = lines.slice(start);
-  if (newLines.length < MIN_NEW_LINES) return;
-  const transcript = newLines.map(l => { try { const e = JSON.parse(l); const c = e.content || e.message || ''; return typeof c === 'string' ? c.slice(0, 300) : ''; } catch { return ''; } }).filter(Boolean).join('\n');
-  const count = await extractFromSession(transcript);
-  fs.writeFileSync(MARKER, JSON.stringify({ file: log, line: lines.length }));
-  if (count > 0) process.stderr.write('Experience: +' + count + ' lessons\n');
-  try {
-    const evolveMarker = home + '/.experience/.evolve-marker';
-    let lastEvolve = 0;
-    try { lastEvolve = JSON.parse(fs.readFileSync(evolveMarker, 'utf8')).ts || 0; } catch {}
-    if (Date.now() - lastEvolve > 86400000) {
-      const { evolve } = require(home + '/.experience/experience-core.js');
-      const r = await evolve();
-      fs.writeFileSync(evolveMarker, JSON.stringify({ ts: Date.now() }));
-      const total = r.promoted + r.abstracted + r.demoted + r.archived;
-      if (total > 0) process.stderr.write('Evolution: +' + r.promoted + ' promoted, ' + r.abstracted + ' abstracted, ' + r.demoted + ' demoted, ' + r.archived + ' archived\n');
-    }
-  } catch {}
-}
-function findCurrentSession() {
-  const dir = path.join(home, '.claude', 'projects');
-  if (!fs.existsSync(dir)) return null;
-  let latest = null, t = 0;
-  const walk = d => { try { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, e.name); if (e.isDirectory()) walk(f); else if (e.name.endsWith('.jsonl') && fs.statSync(f).mtimeMs > t) { t = fs.statSync(f).mtimeMs; latest = f; } } } catch {} };
-  walk(dir);
-  return latest && (Date.now() - t) < 600000 ? latest : null;
-}
-main().catch(() => {}).finally(() => process.exit(0));
-HOOKEOF
-
-# Copy interceptor-post.js (PostToolUse feedback hook)
-if [ -f "$SRC_DIR/interceptor-post.js" ]; then
-  cp "$SRC_DIR/interceptor-post.js" "$INSTALL_DIR/interceptor-post.js"
+mkdir -p "$HOME/.local/bin"
+ln -sf "$INSTALL_DIR/exp-watch" "$HOME/.local/bin/exp-watch"
+ln -sf "$INSTALL_DIR/exp-open-pane" "$HOME/.local/bin/exp-open-pane"
+ln -sf "$INSTALL_DIR/exp-pane-right" "$HOME/.local/bin/exp-pane-right"
+ln -sf "$INSTALL_DIR/exp-pane-left" "$HOME/.local/bin/exp-pane-left"
+ln -sf "$INSTALL_DIR/exp-pane-bottom" "$HOME/.local/bin/exp-pane-bottom"
+if [ -f "$HOME/.bashrc" ] && ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.bashrc" 2>/dev/null; then
+  {
+    echo ''
+    echo '# Experience Engine local helpers'
+    echo 'export PATH="$HOME/.local/bin:$PATH"'
+  } >> "$HOME/.bashrc"
 fi
-
-# Copy interceptor-prompt.js (UserPromptSubmit hook for Codex)
-if [ -f "$SRC_DIR/interceptor-prompt.js" ]; then
-  cp "$SRC_DIR/interceptor-prompt.js" "$INSTALL_DIR/interceptor-prompt.js"
-fi
-
-# Copy judge-worker.js (async LLM judge spawned by interceptor-post.js)
-if [ -f "$SRC_DIR/judge-worker.js" ]; then
-  cp "$SRC_DIR/judge-worker.js" "$INSTALL_DIR/judge-worker.js"
-fi
-
-chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js" "$INSTALL_DIR/interceptor-post.js" "$INSTALL_DIR/interceptor-prompt.js" "$INSTALL_DIR/judge-worker.js" 2>/dev/null
 
 # Atomic config write — only when NOT keeping config
 if [ "$KEEP_CONFIG" = "false" ]; then
@@ -1499,7 +1418,52 @@ for MD_FILE in \
 done
 
 # ── GSD Integration: patch Model Router into GSD framework ───────────────
-GSD_DIR="$HOME/.claude/get-shit-done"
+resolve_gsd_install() {
+  local selected_csv="$1"
+  local selected_norm=",${selected_csv},"
+  local -a candidates=()
+  local dir runtime
+
+  # Prefer the agent(s) selected in this setup run so we do not silently
+  # patch Claude when the user is wiring Codex/Gemini/OpenCode.
+  if [[ "$selected_norm" == *",codex,"* ]]; then
+    candidates+=("$HOME/.codex/get-shit-done:codex")
+  fi
+  if [[ "$selected_norm" == *",gemini,"* ]]; then
+    candidates+=("$HOME/.gemini/get-shit-done:gemini")
+  fi
+  if [[ "$selected_norm" == *",opencode,"* ]]; then
+    candidates+=("$HOME/.config/opencode/get-shit-done:opencode")
+  fi
+  if [[ "$selected_norm" == *",claude,"* ]]; then
+    candidates+=("$HOME/.claude/get-shit-done:claude")
+  fi
+
+  # Fallback order stays cross-agent first; Claude is last on purpose.
+  candidates+=(
+    "$HOME/.codex/get-shit-done:codex"
+    "$HOME/.gemini/get-shit-done:gemini"
+    "$HOME/.config/opencode/get-shit-done:opencode"
+    "$HOME/.claude/get-shit-done:claude"
+    "$HOME/get-shit-done:null"
+  )
+
+  for candidate in "${candidates[@]}"; do
+    dir="${candidate%%:*}"
+    runtime="${candidate##*:}"
+    if [ -f "$dir/bin/lib/core.cjs" ]; then
+      GSD_DIR="$dir"
+      GSD_RUNTIME_DEFAULT="$runtime"
+      return 0
+    fi
+  done
+
+  GSD_DIR=""
+  GSD_RUNTIME_DEFAULT=""
+  return 1
+}
+
+resolve_gsd_install "$SELECTED_AGENTS"
 GSD_CORE="$GSD_DIR/bin/lib/core.cjs"
 GSD_CONFIG="$GSD_DIR/bin/lib/config.cjs"
 GSD_TOOLS="$GSD_DIR/bin/gsd-tools.cjs"
@@ -1515,9 +1479,12 @@ else
   _GSD_TOOLS_WIN="$GSD_TOOLS"
 fi
 
-if [ -d "$GSD_DIR" ] && [ -f "$GSD_CORE" ]; then
+if [ -n "$GSD_DIR" ] && [ -d "$GSD_DIR" ] && [ -f "$GSD_CORE" ]; then
   echo ""
-  echo "◆ [5.5/6] GSD framework detected — patching Model Router integration..."
+  echo "◆ [5.5/6] GSD framework detected at $GSD_DIR — patching Model Router integration..."
+  if [ -n "$GSD_RUNTIME_DEFAULT" ] && [ "$GSD_RUNTIME_DEFAULT" != "null" ]; then
+    echo "  Runtime default: $GSD_RUNTIME_DEFAULT"
+  fi
 
   # Patch 1: Add resolveModelWithRouter to core.cjs (if not already patched)
   if ! grep -q 'resolveModelWithRouter' "$GSD_CORE" 2>/dev/null; then
@@ -1525,6 +1492,7 @@ if [ -d "$GSD_DIR" ] && [ -f "$GSD_CORE" ]; then
     node -e "
 const fs = require('fs');
 const corePath = '$_GSD_CORE_WIN';
+const runtimeDefault = '${GSD_RUNTIME_DEFAULT:-}';
 let core = fs.readFileSync(corePath, 'utf8');
 
 // Add resolveModelWithRouter after resolveModelInternal
@@ -1542,7 +1510,7 @@ const routerFn = \`
  * Falls back to resolveModelInternal() when router is unavailable.
  */
 async function resolveModelWithRouter(cwd, agentType, taskDescription, runtime) {
-  runtime = runtime || 'claude';
+  runtime = runtime || runtimeDefault || null;
   const config = loadConfig(cwd);
   const override = config.model_overrides?.[agentType];
   if (override) return { model: override, tier: null, source: 'override' };
@@ -1552,10 +1520,18 @@ async function resolveModelWithRouter(cwd, agentType, taskDescription, runtime) 
     return { model: resolveModelInternal(cwd, agentType), tier: null, source: 'profile' };
   }
   try {
-    const res = await fetch('http://localhost:${EXP_PORT}/api/route-model', {
+    let expCfg = {};
+    try {
+      expCfg = JSON.parse(require('fs').readFileSync(require('path').join(require('os').homedir(), '.experience', 'config.json'), 'utf8'));
+    } catch {}
+    const brainProxyUrl = config.brainProxyUrl || expCfg.brainProxyUrl || '';
+    const routerUrl = brainProxyUrl
+      ? brainProxyUrl.replace(/\/api\/brain\/?$/, '/api/route-model')
+      : 'http://localhost:${EXP_PORT}/api/route-model';
+    const res = await fetch(routerUrl, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ task: taskDescription, runtime, context: { agent: agentType } }),
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(10000),
     });
     if (res.ok) {
       const data = await res.json();
@@ -1588,39 +1564,216 @@ console.log('  Patched: core.cjs (resolveModelWithRouter)');
   fi
 
   # Patch 3: Add route-model command to gsd-tools.cjs
-  if ! grep -q 'route-model' "$GSD_TOOLS" 2>/dev/null; then
-    node -e "
+  if ! grep -q "case 'route-model'" "$GSD_TOOLS" 2>/dev/null; then
+    EXP_GSD_TOOLS_WIN="$_GSD_TOOLS_WIN" EXP_GSD_RUNTIME_DEFAULT="${GSD_RUNTIME_DEFAULT:-}" node <<'NODEEOF'
 const fs = require('fs');
-const toolsPath = '$_GSD_TOOLS_WIN';
+const toolsPath = process.env.EXP_GSD_TOOLS_WIN;
 let tools = fs.readFileSync(toolsPath, 'utf8');
 
-const insertAfter = \"case 'resolve-model': {\\n      commands.cmdResolveModel(cwd, args[1], raw);\\n      break;\\n    }\";
-const routeCmd = \`
+const insertAfter = "case 'resolve-model': {\n      commands.cmdResolveModel(cwd, args[1], raw);\n      break;\n    }";
+const routeCmd = `
 
     case 'route-model': {
       const agentType = args[1];
       const taskDesc = args.slice(2).filter(a => !a.startsWith('--')).join(' ');
       const runtimeIdx = args.indexOf('--runtime');
-      const runtime = runtimeIdx >= 0 ? args[runtimeIdx + 1] : 'claude';
+      const runtime = runtimeIdx >= 0 ? args[runtimeIdx + 1] : '${process.env.EXP_GSD_RUNTIME_DEFAULT}';
       if (!agentType) { core.output({ error: 'agent-type required' }, raw); break; }
       core.resolveModelWithRouter(cwd, agentType, taskDesc || '', runtime)
         .then(result => core.output(result, raw, result.model))
-        .catch(e => core.output({ model: 'sonnet', tier: null, source: 'error', error: e.message }, raw, 'sonnet'));
+        .catch(e => {
+          const fallback = core.resolveModelInternal(cwd, agentType);
+          core.output({ model: fallback, tier: null, source: 'profile-fallback', error: e.message }, raw, fallback);
+        });
       break;
-    }\`;
+    }`;
 
-tools = tools.replace(insertAfter, insertAfter + routeCmd);
-fs.writeFileSync(toolsPath, tools);
+if (!tools.includes("case 'route-model'")) {
+  tools = tools.replace(insertAfter, insertAfter + routeCmd);
+  fs.writeFileSync(toolsPath, tools);
+}
 console.log('  Patched: gsd-tools.cjs (route-model command)');
-"
+NODEEOF
   else
     echo "  gsd-tools.cjs: already patched"
   fi
 
-  echo "  GSD integration complete — run: gsd-tools route-model gsd-executor \"your task\""
+  # Patch 4: Wire workflow init/docs commands to call the router automatically
+  EXP_GSD_CORE_WIN="$_GSD_CORE_WIN" EXP_GSD_TOOLS_WIN="$_GSD_TOOLS_WIN" EXP_GSD_RUNTIME_DEFAULT="${GSD_RUNTIME_DEFAULT:-}" node <<'NODEEOF'
+const fs = require('fs');
+const path = require('path');
+const root = path.dirname(process.env.EXP_GSD_CORE_WIN);
+const initPath = path.join(root, 'init.cjs');
+const docsPath = path.join(root, 'docs.cjs');
+const commandsPath = path.join(root, 'commands.cjs');
+const toolsPath = process.env.EXP_GSD_TOOLS_WIN;
+const runtimeDefault = process.env.EXP_GSD_RUNTIME_DEFAULT || '';
+
+function replaceOnce(text, from, to) {
+  return text.includes(to) ? text : text.replace(from, to);
+}
+
+function replaceInFunctionBlock(text, functionName, pattern, replacement) {
+  const fnStart = text.indexOf(`async function ${functionName}(`);
+  if (fnStart === -1) return text;
+  const nextFn = text.indexOf('\nfunction ', fnStart + 1);
+  const nextAsyncFn = text.indexOf('\nasync function ', fnStart + 1);
+  let fnEnd = text.length;
+  for (const idx of [nextFn, nextAsyncFn]) {
+    if (idx !== -1 && idx > fnStart && idx < fnEnd) fnEnd = idx;
+  }
+  const block = text.slice(fnStart, fnEnd);
+  const patched = block.replace(pattern, replacement);
+  return text.slice(0, fnStart) + patched + text.slice(fnEnd);
+}
+
+function patchInitFile() {
+  if (!fs.existsSync(initPath)) return console.log('  init.cjs: not found');
+  let init = fs.readFileSync(initPath, 'utf8');
+
+  init = replaceOnce(
+    init,
+    "const { loadConfig, resolveModelInternal, findPhaseInternal, getRoadmapPhaseInternal, pathExistsInternal, generateSlugInternal, getMilestoneInfo, getMilestonePhaseFilter, stripShippedMilestones, extractCurrentMilestone, normalizePhaseName, planningPaths, planningDir, planningRoot, toPosixPath, output, error, checkAgentsInstalled, phaseTokenMatches } = require('./core.cjs');",
+    "const { loadConfig, resolveModelInternal, resolveModelWithRouter, findPhaseInternal, getRoadmapPhaseInternal, pathExistsInternal, generateSlugInternal, getMilestoneInfo, getMilestonePhaseFilter, stripShippedMilestones, extractCurrentMilestone, normalizePhaseName, planningPaths, planningDir, planningRoot, toPosixPath, output, error, checkAgentsInstalled, phaseTokenMatches } = require('./core.cjs');"
+  );
+
+  if (!init.includes('async function resolveWorkflowModel')) {
+    init = init.replace(
+      'function getLatestCompletedMilestone(cwd) {',
+      `async function resolveWorkflowModel(cwd, agentType, taskDescription) {
+  const result = await resolveModelWithRouter(cwd, agentType, taskDescription, '${runtimeDefault}');
+  return result?.model || resolveModelInternal(cwd, agentType);
+}
+
+function getLatestCompletedMilestone(cwd) {`
+    );
+  }
+
+  const replacements = [
+    ["function cmdInitExecutePhase(cwd, phase, raw, options = {}) {", "async function cmdInitExecutePhase(cwd, phase, raw, options = {}) {"],
+    ["    executor_model: resolveModelInternal(cwd, 'gsd-executor'),", "    executor_model: await resolveWorkflowModel(cwd, 'gsd-executor', `Execute phase ${phaseInfo?.phase_number || phase || ''} ${phaseInfo?.phase_name || ''}`.trim()),"],
+    ["    verifier_model: resolveModelInternal(cwd, 'gsd-verifier'),", "    verifier_model: await resolveWorkflowModel(cwd, 'gsd-verifier', `Verify phase ${phaseInfo?.phase_number || phase || ''} ${phaseInfo?.phase_name || ''}`.trim()),"],
+    ["function cmdInitPlanPhase(cwd, phase, raw, options = {}) {", "async function cmdInitPlanPhase(cwd, phase, raw, options = {}) {"],
+    ["    researcher_model: resolveModelInternal(cwd, 'gsd-phase-researcher'),", "    researcher_model: await resolveWorkflowModel(cwd, 'gsd-phase-researcher', `Research implementation for phase ${phaseInfo?.phase_number || phase || ''} ${phaseInfo?.phase_name || ''}`.trim()),"],
+    ["    planner_model: resolveModelInternal(cwd, 'gsd-planner'),", "    planner_model: await resolveWorkflowModel(cwd, 'gsd-planner', `Plan phase ${phaseInfo?.phase_number || phase || ''} ${phaseInfo?.phase_name || ''}`.trim()),"],
+    ["    checker_model: resolveModelInternal(cwd, 'gsd-plan-checker'),", "    checker_model: await resolveWorkflowModel(cwd, 'gsd-plan-checker', `Check plan for phase ${phaseInfo?.phase_number || phase || ''} ${phaseInfo?.phase_name || ''}`.trim()),"],
+    ["function cmdInitNewProject(cwd, raw) {", "async function cmdInitNewProject(cwd, raw) {"],
+    ["    researcher_model: resolveModelInternal(cwd, 'gsd-project-researcher'),", "    researcher_model: await resolveWorkflowModel(cwd, 'gsd-project-researcher', 'Research project domain and ecosystem for a new project roadmap'),"],
+    ["    synthesizer_model: resolveModelInternal(cwd, 'gsd-research-synthesizer'),", "    synthesizer_model: await resolveWorkflowModel(cwd, 'gsd-research-synthesizer', 'Synthesize project research into a planning summary'),"],
+    ["    roadmapper_model: resolveModelInternal(cwd, 'gsd-roadmapper'),", "    roadmapper_model: await resolveWorkflowModel(cwd, 'gsd-roadmapper', 'Create roadmap for a new project based on research and requirements'),"],
+    ["function cmdInitNewMilestone(cwd, raw) {", "async function cmdInitNewMilestone(cwd, raw) {"],
+    ["function cmdInitQuick(cwd, description, raw) {", "async function cmdInitQuick(cwd, description, raw) {"],
+    ["    planner_model: resolveModelInternal(cwd, 'gsd-planner'),", "    planner_model: await resolveWorkflowModel(cwd, 'gsd-planner', `Plan quick task ${description || ''}`.trim()),"],
+    ["    executor_model: resolveModelInternal(cwd, 'gsd-executor'),", "    executor_model: await resolveWorkflowModel(cwd, 'gsd-executor', `Execute quick task ${description || ''}`.trim()),"],
+    ["    checker_model: resolveModelInternal(cwd, 'gsd-plan-checker'),", "    checker_model: await resolveWorkflowModel(cwd, 'gsd-plan-checker', `Check quick task plan ${description || ''}`.trim()),"],
+    ["    verifier_model: resolveModelInternal(cwd, 'gsd-verifier'),", "    verifier_model: await resolveWorkflowModel(cwd, 'gsd-verifier', `Verify quick task ${description || ''}`.trim()),"],
+    ["function cmdInitVerifyWork(cwd, phase, raw) {", "async function cmdInitVerifyWork(cwd, phase, raw) {"],
+    ["    planner_model: resolveModelInternal(cwd, 'gsd-planner'),", "    planner_model: await resolveWorkflowModel(cwd, 'gsd-planner', `Plan verification for phase ${phaseInfo?.phase_number || phase || ''} ${phaseInfo?.phase_name || ''}`.trim()),"],
+    ["    checker_model: resolveModelInternal(cwd, 'gsd-plan-checker'),", "    checker_model: await resolveWorkflowModel(cwd, 'gsd-plan-checker', `Check verification plan for phase ${phaseInfo?.phase_number || phase || ''} ${phaseInfo?.phase_name || ''}`.trim()),"],
+    ["function cmdInitMapCodebase(cwd, raw) {", "async function cmdInitMapCodebase(cwd, raw) {"],
+    ["    mapper_model: resolveModelInternal(cwd, 'gsd-codebase-mapper'),", "    mapper_model: await resolveWorkflowModel(cwd, 'gsd-codebase-mapper', 'Map the current codebase structure, architecture, and key concerns'),"],
+    ["function cmdInitProgress(cwd, raw) {", "async function cmdInitProgress(cwd, raw) {"],
+    ["    executor_model: resolveModelInternal(cwd, 'gsd-executor'),", "    executor_model: await resolveWorkflowModel(cwd, 'gsd-executor', 'Assess current project progress and execution readiness'),"],
+    ["    planner_model: resolveModelInternal(cwd, 'gsd-planner'),", "    planner_model: await resolveWorkflowModel(cwd, 'gsd-planner', 'Assess current project progress and planning needs'),"]
+  ];
+  for (const [from, to] of replacements) init = replaceOnce(init, from, to);
+
+  init = replaceInFunctionBlock(
+    init,
+    'cmdInitNewMilestone',
+    /researcher_model:[^\n]+\n\s*synthesizer_model:[^\n]+\n\s*roadmapper_model:[^\n]+/,
+    `researcher_model: await resolveWorkflowModel(cwd, 'gsd-project-researcher', 'Research project domain and ecosystem for a new milestone roadmap'),\n    synthesizer_model: await resolveWorkflowModel(cwd, 'gsd-research-synthesizer', 'Synthesize milestone research into a planning summary'),\n    roadmapper_model: await resolveWorkflowModel(cwd, 'gsd-roadmapper', 'Create roadmap for a new milestone based on research and requirements'),`
+  );
+
+  fs.writeFileSync(initPath, init);
+  console.log('  Patched: init.cjs (auto-routed workflow models)');
+}
+
+function patchDocsFile() {
+  if (!fs.existsSync(docsPath)) return console.log('  docs.cjs: not found');
+  let docs = fs.readFileSync(docsPath, 'utf8');
+  docs = replaceOnce(
+    docs,
+    "const { output, loadConfig, resolveModelInternal, pathExistsInternal, toPosixPath, checkAgentsInstalled } = require('./core.cjs');",
+    "const { output, loadConfig, resolveModelInternal, resolveModelWithRouter, pathExistsInternal, toPosixPath, checkAgentsInstalled } = require('./core.cjs');"
+  );
+  if (!docs.includes('async function resolveDocsModel')) {
+    docs = docs.replace(
+      '// ─── Public commands ──────────────────────────────────────────────────────────\n',
+      `// ─── Public commands ──────────────────────────────────────────────────────────\n\nasync function resolveDocsModel(cwd) {\n  const result = await resolveModelWithRouter(cwd, 'gsd-doc-writer', 'Write or update project documentation based on the current codebase', '${runtimeDefault}');\n  return result?.model || resolveModelInternal(cwd, 'gsd-doc-writer');\n}\n\n`
+    );
+  }
+  docs = replaceOnce(docs, "function cmdDocsInit(cwd, raw) {", "async function cmdDocsInit(cwd, raw) {");
+  docs = replaceOnce(docs, "    doc_writer_model: resolveModelInternal(cwd, 'gsd-doc-writer'),", "    doc_writer_model: await resolveDocsModel(cwd),");
+  fs.writeFileSync(docsPath, docs);
+  console.log('  Patched: docs.cjs (auto-routed docs model)');
+}
+
+function patchCommandsFile() {
+  if (!fs.existsSync(commandsPath)) return console.log('  commands.cjs: not found');
+  let commands = fs.readFileSync(commandsPath, 'utf8');
+  commands = replaceOnce(
+    commands,
+    "const { safeReadFile, loadConfig, isGitIgnored, execGit, normalizePhaseName, comparePhaseNum, getArchivedPhaseDirs, generateSlugInternal, getMilestoneInfo, getMilestonePhaseFilter, resolveModelInternal, stripShippedMilestones, extractCurrentMilestone, planningDir, planningPaths, toPosixPath, output, error, findPhaseInternal, extractOneLinerFromBody, getRoadmapPhaseInternal } = require('./core.cjs');",
+    "const { safeReadFile, loadConfig, isGitIgnored, execGit, normalizePhaseName, comparePhaseNum, getArchivedPhaseDirs, generateSlugInternal, getMilestoneInfo, getMilestonePhaseFilter, resolveModelInternal, resolveModelWithRouter, stripShippedMilestones, extractCurrentMilestone, planningDir, planningPaths, toPosixPath, output, error, findPhaseInternal, extractOneLinerFromBody, getRoadmapPhaseInternal } = require('./core.cjs');"
+  );
+  commands = replaceOnce(commands, "function cmdResolveModel(cwd, agentType, raw) {", "async function cmdResolveModel(cwd, agentType, raw) {");
+  commands = replaceOnce(
+    commands,
+    `  const config = loadConfig(cwd);
+  const profile = config.model_profile || 'balanced';
+  const model = resolveModelInternal(cwd, agentType);
+
+  const agentModels = MODEL_PROFILES[agentType];
+  const result = agentModels
+    ? { model, profile }
+    : { model, profile, unknown_agent: true };
+  output(result, raw, model);`,
+    `  const config = loadConfig(cwd);
+  const profile = config.model_profile || 'balanced';
+  const routed = await resolveModelWithRouter(cwd, agentType, \`Resolve model for \${agentType}\`, '${runtimeDefault}');
+  const model = routed?.model || resolveModelInternal(cwd, agentType);
+
+  const agentModels = MODEL_PROFILES[agentType];
+  const result = agentModels
+    ? { model, profile, tier: routed?.tier || null, source: routed?.source || 'profile-fallback' }
+    : { model, profile, tier: routed?.tier || null, source: routed?.source || 'profile-fallback', unknown_agent: true };
+  output(result, raw, model);`
+  );
+  fs.writeFileSync(commandsPath, commands);
+  console.log('  Patched: commands.cjs (resolve-model now routes via Experience Engine)');
+}
+
+function patchToolsDispatcher() {
+  let tools = fs.readFileSync(toolsPath, 'utf8');
+  const replacements = [
+    ["      commands.cmdResolveModel(cwd, args[1], raw);", "      await commands.cmdResolveModel(cwd, args[1], raw);"],
+    ["          init.cmdInitExecutePhase(cwd, args[2], raw, { validate: epValidate });", "          await init.cmdInitExecutePhase(cwd, args[2], raw, { validate: epValidate });"],
+    ["          init.cmdInitPlanPhase(cwd, args[2], raw, { validate: ppValidate });", "          await init.cmdInitPlanPhase(cwd, args[2], raw, { validate: ppValidate });"],
+    ["          init.cmdInitNewProject(cwd, raw);", "          await init.cmdInitNewProject(cwd, raw);"],
+    ["          init.cmdInitNewMilestone(cwd, raw);", "          await init.cmdInitNewMilestone(cwd, raw);"],
+    ["          init.cmdInitQuick(cwd, description, raw);", "          await init.cmdInitQuick(cwd, description, raw);"],
+    ["          init.cmdInitVerifyWork(cwd, args[2], raw);", "          await init.cmdInitVerifyWork(cwd, args[2], raw);"],
+    ["          init.cmdInitMapCodebase(cwd, raw);", "          await init.cmdInitMapCodebase(cwd, raw);"],
+    ["          init.cmdInitProgress(cwd, raw);", "          await init.cmdInitProgress(cwd, raw);"],
+    ["      docs.cmdDocsInit(cwd, raw);", "      await docs.cmdDocsInit(cwd, raw);"]
+  ];
+  for (const [from, to] of replacements) tools = replaceOnce(tools, from, to);
+  fs.writeFileSync(toolsPath, tools);
+  console.log('  Patched: gsd-tools.cjs (await auto-routed init/docs commands)');
+}
+
+patchInitFile();
+patchDocsFile();
+patchCommandsFile();
+patchToolsDispatcher();
+NODEEOF
+
+  echo "  GSD integration complete — workflow spawns now auto-route models via Experience Engine"
 else
   echo ""
-  echo "  GSD framework not found at $GSD_DIR — skipping Model Router integration"
+  echo "  GSD framework not found in known agent directories — skipping Model Router integration"
+  echo "  Checked: ~/.codex/get-shit-done, ~/.gemini/get-shit-done, ~/.config/opencode/get-shit-done, ~/.claude/get-shit-done, ~/get-shit-done"
   echo "  Install GSD first, then re-run setup.sh to patch"
 fi
 
@@ -1782,6 +1935,23 @@ if [ "$HEALTH_FAIL" -eq 0 ]; then
   echo ""
   echo " Hooks installed: PreToolUse (intercept) + PostToolUse (feedback) + Stop (extract)"
   echo ""
+  echo " Live activity:"
+  echo "   exp-watch"
+  echo "   exp-open-pane --right --percent 33"
+  echo "   exp-pane-right   | exp-pane-left | exp-pane-bottom"
+  echo "   Fallback: ~/.local/bin/exp-open-pane or ~/.experience/exp-open-pane"
+  echo "   If current shell says command not found: source ~/.bashrc"
+  echo ""
+  if [ "${EXP_OPEN_ACTIVITY_PANE:-}" = "1" ] && [ -x "$INSTALL_DIR/exp-open-pane" ]; then
+    if "$INSTALL_DIR/exp-open-pane" --right --percent "${EXP_ACTIVITY_PANE_PERCENT:-33}" >/dev/null 2>&1; then
+      echo "  Opened WezTerm activity pane"
+      echo ""
+    else
+      echo "  Could not auto-open WezTerm activity pane"
+      echo "  Run manually: exp-open-pane --right --percent ${EXP_ACTIVITY_PANE_PERCENT:-33}"
+      echo ""
+    fi
+  fi
 else
   echo "  $HEALTH_FAIL check(s) failed. Fix the issues above, then re-run setup.sh."
 fi
@@ -1815,8 +1985,15 @@ if [ -n "$REMOTE_HOST" ]; then
     "$INSTALL_DIR/experience-core.js"
     "$INSTALL_DIR/interceptor.js"
     "$INSTALL_DIR/interceptor-post.js"
+    "$INSTALL_DIR/interceptor-prompt.js"
     "$INSTALL_DIR/judge-worker.js"
     "$INSTALL_DIR/stop-extractor.js"
+    "$INSTALL_DIR/activity-watch.js"
+    "$INSTALL_DIR/exp-watch"
+    "$INSTALL_DIR/exp-open-pane"
+    "$INSTALL_DIR/exp-pane-right"
+    "$INSTALL_DIR/exp-pane-left"
+    "$INSTALL_DIR/exp-pane-bottom"
   )
   [ -z "$SKIP_REMOTE_CONFIG" ] && REMOTE_FILES+=("$INSTALL_DIR/config.json")
 
