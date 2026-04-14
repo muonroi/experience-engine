@@ -53,7 +53,7 @@ const _cfg = (() => {
 const PORT = _cfg.server?.port || parseInt(process.env.EXP_SERVER_PORT, 10) || 8082;
 const QDRANT_BASE = _cfg.qdrantUrl || process.env.EXPERIENCE_QDRANT_URL || 'http://localhost:6333';
 const QDRANT_API_KEY = _cfg.qdrantKey || process.env.EXPERIENCE_QDRANT_KEY || '';
-const AUTH_TOKEN = _cfg.server?.authToken || null;
+const AUTH_TOKEN = _cfg.server?.authToken || _cfg.serverAuthToken || null;
 const VALID_FEEDBACK_VERDICTS = new Set(['FOLLOWED', 'IGNORED', 'IRRELEVANT']);
 const VALID_NOISE_REASONS = new Set(['wrong_repo', 'wrong_language', 'wrong_task', 'stale_rule']);
 const TMP_DIR = path.join(os.homedir(), '.experience', 'tmp');

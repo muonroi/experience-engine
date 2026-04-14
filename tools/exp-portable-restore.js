@@ -87,6 +87,7 @@ async function restorePortableBackup(options) {
   const config = safeReadJson(path.join(backupDir, 'config.json'));
   const expDir = path.join(options.homeDir, '.experience');
   ensureDir(expDir);
+  const liveConfig = safeReadJson(path.join(expDir, 'config.json'));
 
   if (options.restoreConfig) {
     fs.writeFileSync(path.join(expDir, 'config.json'), JSON.stringify(config, null, 2));
@@ -98,8 +99,8 @@ async function restorePortableBackup(options) {
   copyIfExists(path.join(backupDir, 'state', '.stop-marker.json'), path.join(expDir, '.stop-marker.json'));
   copyDirectory(path.join(backupDir, 'state', 'store'), path.join(expDir, 'store'));
 
-  const qdrantUrl = config.qdrantUrl || manifest.qdrantUrl || 'http://localhost:6333';
-  const qdrantKey = config.qdrantKey || '';
+  const qdrantUrl = config.qdrantUrl || liveConfig.qdrantUrl || manifest.qdrantUrl || 'http://localhost:6333';
+  const qdrantKey = config.qdrantKey || liveConfig.qdrantKey || '';
   const restored = [];
   const collections = Array.isArray(manifest.collections) ? manifest.collections.map((item) => item.name) : [];
   for (const name of collections) {

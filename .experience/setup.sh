@@ -295,6 +295,18 @@ try {
   const fs=require('fs'), path=require('path'), os=require('os');
   const f=path.join(os.homedir(),'.experience','config.json');
   const c=JSON.parse(fs.readFileSync(f,'utf8'));
+  function inferEmbedDim(cfg) {
+    const direct = Number(cfg.embedDim || 0);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+    const model = String(cfg.embedModel || '').toLowerCase();
+    const provider = String(cfg.embedProvider || '').toLowerCase();
+    if (model.includes('qwen3-embedding-0.6b') || model.includes('bge-m3') || model.includes('voyage-code-3')) return 1024;
+    if (model.includes('text-embedding-3-large')) return 3072;
+    if (model.includes('text-embedding-3-small')) return 1536;
+    if (model.includes('text-embedding-004') || model.includes('nomic-embed-text')) return 768;
+    if (provider === 'gemini' || provider === 'ollama') return 768;
+    return 0;
+  }
   const fields=[
     'QDRANT_URL='+  (c.qdrantUrl||''),
     'QDRANT_KEY='+  (c.qdrantKey||''),
@@ -308,7 +320,7 @@ try {
     'EMBED_KEY='+(c.embedKey||''),
     'BRAIN_ENDPOINT='+(c.brainEndpoint||''),
     'BRAIN_KEY='+(c.brainKey||''),
-    'EMBED_DIM='+(c.embedDim||768),
+    'EMBED_DIM='+inferEmbedDim(c),
   ];
   process.stdout.write(fields.join('\n')+'\n');
 } catch(e) { process.stderr.write('LOAD_FAILED: '+e.message+'\n'); process.exit(1); }
@@ -985,6 +997,7 @@ const cfg = {
   brainProxyUrl:  '${BRAIN_PROXY_URL:-}',
   serverBaseUrl:  '${EXP_SERVER_BASE_URL:-}',
   serverAuthToken:'${EXP_SERVER_AUTH_TOKEN:-}',
+  server:         { authToken: '${EXP_SERVER_AUTH_TOKEN:-}' },
   serverTimeoutMs: 5000,
   embedDim:       $EMBED_DIM,
   ollamaUrl:      '$OLLAMA_URL',
@@ -1129,7 +1142,19 @@ echo "◆ [4/6] Verifying Qdrant collections..."
 _node_run -e "
 try {
   const c=JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.experience/config.json','utf8'));
-  process.stdout.write(String(c.embedDim||768));
+  function inferEmbedDim(cfg) {
+    const direct = Number(cfg.embedDim || 0);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+    const model = String(cfg.embedModel || '').toLowerCase();
+    const provider = String(cfg.embedProvider || '').toLowerCase();
+    if (model.includes('qwen3-embedding-0.6b') || model.includes('bge-m3') || model.includes('voyage-code-3')) return 1024;
+    if (model.includes('text-embedding-3-large')) return 3072;
+    if (model.includes('text-embedding-3-small')) return 1536;
+    if (model.includes('text-embedding-004') || model.includes('nomic-embed-text')) return 768;
+    if (provider === 'gemini' || provider === 'ollama') return 768;
+    return 0;
+  }
+  process.stdout.write(String(inferEmbedDim(c) || 768));
 } catch(e) {
   process.stderr.write('Cannot read config: '+e.message+'\n');
   process.stdout.write('768');
@@ -1820,12 +1845,24 @@ HEALTH_FAIL=0
 _node_run -e "
 try {
   const c=JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.experience/config.json','utf8'));
+  function inferEmbedDim(cfg) {
+    const direct = Number(cfg.embedDim || 0);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+    const model = String(cfg.embedModel || '').toLowerCase();
+    const provider = String(cfg.embedProvider || '').toLowerCase();
+    if (model.includes('qwen3-embedding-0.6b') || model.includes('bge-m3') || model.includes('voyage-code-3')) return 1024;
+    if (model.includes('text-embedding-3-large')) return 3072;
+    if (model.includes('text-embedding-3-small')) return 1536;
+    if (model.includes('text-embedding-004') || model.includes('nomic-embed-text')) return 768;
+    if (provider === 'gemini' || provider === 'ollama') return 768;
+    return 0;
+  }
   const fields=[
     'HC_qdrantUrl='+    (c.qdrantUrl||''),
     'HC_qdrantKey='+    (c.qdrantKey||''),
     'HC_embedProvider='+(c.embedProvider||''),
     'HC_brainProvider='+(c.brainProvider||''),
-    'HC_embedDim='+     (c.embedDim||768),
+    'HC_embedDim='+     (inferEmbedDim(c) || 768),
     'HC_tunnelSsh='+    (c.tunnelSsh||''),
   ];
   process.stdout.write(fields.join('\n')+'\n');
