@@ -251,6 +251,44 @@ function shortPointId(pointId) {
   return String(pointId || '').slice(0, 8);
 }
 
+function pointSourceKey(point, fallbackCollection = null) {
+  const collection = point?._collection || fallbackCollection || '';
+  const pointId = String(point?.id || '');
+  return pointId ? `${collection}:${pointId}` : null;
+}
+
+function dedupePointsBySource(points, fallbackCollection = null) {
+  const seen = new Set();
+  const unique = [];
+  for (const point of points || []) {
+    if (!point) continue;
+    const key = pointSourceKey(point, fallbackCollection);
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    if (fallbackCollection && !point._collection) {
+      unique.push({ ...point, _collection: fallbackCollection });
+    } else {
+      unique.push(point);
+    }
+  }
+  return unique;
+}
+
+function dedupeSuggestionLines(lines) {
+  const seen = new Set();
+  const unique = [];
+  for (const line of lines || []) {
+    const normalized = String(line || '').trim();
+    if (!normalized) continue;
+    const idMatch = normalized.match(/\[id:([^\s\]]+)\s+col:([^\]]+)\]/);
+    const key = idMatch ? `${idMatch[2]}:${idMatch[1]}` : normalized;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(line);
+  }
+  return unique;
+}
+
 function normalizeTechLabel(label) {
   const normalized = String(label || '').trim().toLowerCase();
   if (!normalized) return '';
@@ -841,9 +879,9 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
   }
 
   // Rerank by quality score before formatting (Phase 103, 104)
-  const r0 = rerankByQuality(applyScopeFilter(t0), queryDomain, queryProjectSlug);
-  const r1 = rerankByQuality(applyScopeFilter(t1), queryDomain, queryProjectSlug);
-  const r2 = rerankByQuality(applyScopeFilter(t2), queryDomain, queryProjectSlug);
+  const r0 = dedupePointsBySource(rerankByQuality(applyScopeFilter(t0), queryDomain, queryProjectSlug), COLLECTIONS[0].name);
+  const r1 = dedupePointsBySource(rerankByQuality(applyScopeFilter(t1), queryDomain, queryProjectSlug), COLLECTIONS[1].name);
+  const r2 = dedupePointsBySource(rerankByQuality(applyScopeFilter(t2), queryDomain, queryProjectSlug), COLLECTIONS[2].name);
 
   const lines = [
     ...applyBudget(formatPoints(r0), COLLECTIONS[0].budgetChars),
@@ -876,11 +914,11 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
   } catch { /* never block intercept on graph failures */ }
 
   // Fire-and-forget recordHit for each surfaced point (Phase 103)
-  const allReranked = [
-    ...r0.map(p => ({ ...p, _collection: COLLECTIONS[0].name })),
-    ...r1.map(p => ({ ...p, _collection: COLLECTIONS[1].name })),
-    ...r2.map(p => ({ ...p, _collection: COLLECTIONS[2].name })),
-  ];
+  const allReranked = dedupePointsBySource([
+    ...r0,
+    ...r1,
+    ...r2,
+  ]);
   const surfaced = allReranked.filter(p => {
     try {
       const exp = JSON.parse(p.payload?.json || '{}');
@@ -948,6 +986,15 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
         if (removed > 0) activityLog({ op: 'brain-filter', removed, kept: kept.length, ...sourceMeta });
       }
     } catch { /* never block intercept on brain filter failure */ }
+  }
+
+  if (lines.length > 1) {
+    const uniqueLines = dedupeSuggestionLines(lines);
+    if (uniqueLines.length !== lines.length) {
+      activityLog({ op: 'suggestion-dedup', removed: lines.length - uniqueLines.length, kept: uniqueLines.length, ...sourceMeta });
+      lines.length = 0;
+      lines.push(...uniqueLines);
+    }
   }
 
   const shownIds = new Set(
