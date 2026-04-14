@@ -1409,7 +1409,7 @@ echo "  Injecting Experience Engine instructions into agent config files..."
 EXP_INSTRUCTION_BLOCK='<!-- experience-engine:start -->
 ## Experience Engine Hooks
 
-PreToolUse hooks inject experience-based warnings (`⚠️ [Experience]` / `💡 [Suggestion]`) before Edit/Write/Bash calls. Each warning includes a `Why:` line and ends with `[id:xxxx col:name]`.
+PreToolUse hooks inject experience-based warnings (`⚠️ [Experience]` / `💡 [Suggestion]`) before relevant tool calls. In Codex today this means `Bash`; other agent runtimes may surface warnings before `Edit` / `Write` / `Bash`. Each warning includes a `Why:` line and ends with `[id:xxxx col:name]`.
 
 - **Follow** high-confidence warnings — they reflect confirmed patterns.
 - **If a warning is wrong or noisy** — tell the user immediately. Noise degrades ALL agents.

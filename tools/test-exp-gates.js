@@ -8,6 +8,8 @@ const {
   computeDedupAndHygiene,
   computeInterceptionPrecision,
   computeOrganicExtractionStats,
+  computeRecurrenceReduction,
+  computeCostStability,
 } = require('./exp-gates.js');
 
 function pointFrom(data) {
@@ -55,4 +57,40 @@ test('computeOrganicExtractionStats counts only quality organic session-extracto
 
   assert.equal(stats.totalOrganic, 2);
   assert.equal(stats.qualityOrganic, 1);
+});
+
+test('computeRecurrenceReduction compares recent mistakes against the prior week by project and type', () => {
+  const now = new Date('2026-04-14T06:00:00Z').getTime();
+  const activity = [
+    { ts: '2026-04-03T10:00:00Z', op: 'mistake-seen', type: 'test_fail_fix', project: '/repo/a.ts', count: 4 },
+    { ts: '2026-04-05T10:00:00Z', op: 'mistake-seen', type: 'user_correction', project: '/repo/a.ts', count: 2 },
+    { ts: '2026-04-10T10:00:00Z', op: 'mistake-seen', type: 'test_fail_fix', project: '/repo/a.ts', count: 2 },
+    { ts: '2026-04-11T10:00:00Z', op: 'mistake-seen', type: 'user_correction', project: '/repo/a.ts', count: 1 },
+  ];
+
+  const stats = computeRecurrenceReduction(activity, now);
+  assert.equal(stats.sufficient, true);
+  assert.equal(stats.baselineTotal, 6);
+  assert.equal(stats.recentTotal, 3);
+  assert.equal(stats.reductionPct, 50);
+  assert.equal(stats.pass, true);
+});
+
+test('computeCostStability compares average daily cost units across active-day windows', () => {
+  const now = new Date('2026-04-14T06:00:00Z').getTime();
+  const activity = [
+    { ts: '2026-04-02T10:00:00Z', op: 'cost-call', kind: 'embed', units: 100 },
+    { ts: '2026-04-03T10:00:00Z', op: 'cost-call', kind: 'brain', units: 100 },
+    { ts: '2026-04-05T10:00:00Z', op: 'cost-call', kind: 'judge', units: 100 },
+    { ts: '2026-04-09T10:00:00Z', op: 'cost-call', kind: 'embed', units: 90 },
+    { ts: '2026-04-10T10:00:00Z', op: 'cost-call', kind: 'brain', units: 100 },
+    { ts: '2026-04-12T10:00:00Z', op: 'cost-call', kind: 'extract', units: 100 },
+  ];
+
+  const stats = computeCostStability(activity, now);
+  assert.equal(stats.sufficient, true);
+  assert.equal(stats.baselineAvg, 100);
+  assert.equal(stats.recentAvg, 97);
+  assert.equal(stats.deltaPct, -3);
+  assert.equal(stats.pass, true);
 });

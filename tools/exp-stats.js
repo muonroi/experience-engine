@@ -77,6 +77,12 @@ function normalizeProject(projectPath) {
   return normalized.substring(0, lastSlash);
 }
 
+function dayKey(ts) {
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return 'unknown-day';
+  return date.toISOString().slice(0, 10);
+}
+
 /**
  * Compute aggregate stats from events array (single pass).
  * Returns stats object with intercept, extract, evolve counters + per-project breakdown.
@@ -110,6 +116,17 @@ function computeStats(events) {
     noiseByReason: { wrong_repo: 0, wrong_language: 0, wrong_task: 0, stale_rule: 0 },
     implicitUnusedCount: 0,
     implicitUnusedByReason: { wrong_repo: 0, wrong_language: 0, wrong_task: 0, stale_rule: 0 },
+
+    // OBS-04c: Recurrence telemetry
+    mistakeSeenCount: 0,
+    mistakeByType: {},
+    mistakeByProjectType: {},
+
+    // OBS-04d: Cost ledger
+    costCallCount: 0,
+    costByKind: { embed: 0, brain: 0, judge: 0, extract: 0 },
+    costUnitsByKind: { embed: 0, brain: 0, judge: 0, extract: 0 },
+    dailyCostLedger: {},
 
     // OBS-05: Model Router
     routeCount: 0,
@@ -172,6 +189,36 @@ function computeStats(events) {
       stats.implicitUnusedCount++;
       if (e.reason && stats.implicitUnusedByReason[e.reason] !== undefined) {
         stats.implicitUnusedByReason[e.reason]++;
+      }
+    } else if (e.op === 'mistake-seen') {
+      const count = Math.max(0, Number(e.count) || 0);
+      const type = String(e.type || 'unknown');
+      const projectKey = `${normalizeProject(e.project)} :: ${type}`;
+      stats.mistakeSeenCount += count;
+      stats.mistakeByType[type] = (stats.mistakeByType[type] || 0) + count;
+      stats.mistakeByProjectType[projectKey] = (stats.mistakeByProjectType[projectKey] || 0) + count;
+    } else if (e.op === 'cost-call') {
+      const kind = String(e.kind || 'unknown');
+      const units = Math.max(0, Math.round(Number(e.units) || 0));
+      const day = dayKey(e.ts);
+      stats.costCallCount++;
+      if (stats.costByKind[kind] !== undefined) stats.costByKind[kind]++;
+      if (stats.costUnitsByKind[kind] !== undefined) stats.costUnitsByKind[kind] += units;
+      if (!stats.dailyCostLedger[day]) {
+        stats.dailyCostLedger[day] = {
+          calls: 0,
+          units: 0,
+          byKind: { embed: 0, brain: 0, judge: 0, extract: 0 },
+          callsByKind: { embed: 0, brain: 0, judge: 0, extract: 0 },
+        };
+      }
+      stats.dailyCostLedger[day].calls++;
+      stats.dailyCostLedger[day].units += units;
+      if (stats.dailyCostLedger[day].byKind[kind] !== undefined) {
+        stats.dailyCostLedger[day].byKind[kind] += units;
+      }
+      if (stats.dailyCostLedger[day].callsByKind[kind] !== undefined) {
+        stats.dailyCostLedger[day].callsByKind[kind]++;
       }
     } else if (e.op === 'route') {
       stats.routeCount++;
@@ -289,7 +336,7 @@ if (require.main === module) {
   const stats = computeStats(events);
 
   // Check for empty
-  if (stats.totalIntercepts + stats.extractSessions + stats.evolveCount + stats.routeCount === 0) {
+  if (stats.totalIntercepts + stats.extractSessions + stats.evolveCount + stats.routeCount + stats.mistakeSeenCount + stats.costCallCount === 0) {
     console.log(`Experience Engine Stats (${rangeLabel})`);
     console.log('======================================');
     console.log('');
@@ -345,6 +392,16 @@ if (require.main === module) {
   printStat('Stored as lessons:', String(stats.totalStored),
     `(${pct(stats.totalStored, stats.totalMistakes)} extraction rate)`);
   printStat('Warnings ignored:', String(stats.totalMistakes - stats.totalStored));
+  if (stats.mistakeSeenCount > 0) {
+    const topMistakes = Object.entries(stats.mistakeByType)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([type, count]) => `${type}=${count}`);
+    printStat('Mistakes seen:', String(stats.mistakeSeenCount));
+    if (topMistakes.length > 0) {
+      printStat('By type:', topMistakes.join(' '));
+    }
+  }
 
   // Learning Velocity (OBS-03)
   console.log('');
@@ -354,6 +411,22 @@ if (require.main === module) {
   printStat('Abstracted (T1->T0):', String(stats.abstracted));
   printStat('Demoted:', String(stats.demoted));
   printStat('Archived:', String(stats.archived));
+
+  if (stats.costCallCount > 0) {
+    console.log('');
+    console.log('Cost Ledger');
+    printStat('Cost calls:', String(stats.costCallCount));
+    printStat('Calls by kind:', `embed=${stats.costByKind.embed} brain=${stats.costByKind.brain} judge=${stats.costByKind.judge} extract=${stats.costByKind.extract}`);
+    printStat('Units by kind:', `embed=${stats.costUnitsByKind.embed} brain=${stats.costUnitsByKind.brain} judge=${stats.costUnitsByKind.judge} extract=${stats.costUnitsByKind.extract}`);
+    const recentDays = Object.keys(stats.dailyCostLedger).sort().slice(-7);
+    if (recentDays.length > 0) {
+      console.log('  Recent daily units:');
+      for (const day of recentDays) {
+        const row = stats.dailyCostLedger[day];
+        console.log(`    ${day}: total=${row.units} embed=${row.byKind.embed} brain=${row.byKind.brain} judge=${row.byKind.judge} extract=${row.byKind.extract}`);
+      }
+    }
+  }
 
   // Top 5 Experiences (OBS-01)
   console.log('');
@@ -416,5 +489,5 @@ if (require.main === module) {
 // --- Module exports for testing ---
 
 if (typeof module !== 'undefined') {
-  module.exports = { parseSince, loadEvents, filterEvents, normalizeProject, computeStats, loadTop5 };
+  module.exports = { parseSince, loadEvents, filterEvents, normalizeProject, dayKey, computeStats, loadTop5 };
 }

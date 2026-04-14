@@ -19,6 +19,7 @@ const {
   loadEvents,
   filterEvents,
   normalizeProject,
+  dayKey,
   computeStats,
   loadTop5
 } = require('./exp-stats.js');
@@ -100,6 +101,16 @@ describe('normalizeProject', () => {
   });
 });
 
+describe('dayKey', () => {
+  it('returns YYYY-MM-DD for valid timestamps', () => {
+    assert.strictEqual(dayKey('2026-04-14T05:01:02.000Z'), '2026-04-14');
+  });
+
+  it('returns fallback for invalid timestamps', () => {
+    assert.strictEqual(dayKey('not-a-date'), 'unknown-day');
+  });
+});
+
 // --- OBS-01 + OBS-02 + OBS-03: computeStats ---
 
 describe('computeStats', () => {
@@ -111,8 +122,14 @@ describe('computeStats', () => {
       { ts: '2026-04-09T00:02:30Z', op: 'feedback', verdict: 'FOLLOWED' },
       { ts: '2026-04-09T00:02:40Z', op: 'judge-feedback', verdict: 'IRRELEVANT', reason: 'wrong_task' },
       { ts: '2026-04-09T00:02:50Z', op: 'implicit-unused', reason: 'wrong_task' },
+      { ts: '2026-04-09T00:02:55Z', op: 'mistake-seen', type: 'test_fail_fix', count: 2, project: 'D:/proj/c.ts' },
+      { ts: '2026-04-09T00:02:56Z', op: 'mistake-seen', type: 'user_correction', count: 1, project: 'D:/proj/c.ts' },
       { ts: '2026-04-09T00:03:00Z', op: 'extract', mistakes: 3, stored: 2, project: 'D:/proj/c.ts' },
       { ts: '2026-04-09T00:04:00Z', op: 'extract', mistakes: 1, stored: 0, project: null },
+      { ts: '2026-04-09T00:04:10Z', op: 'cost-call', kind: 'embed', units: 120, provider: 'siliconflow', source: 'general' },
+      { ts: '2026-04-09T00:04:20Z', op: 'cost-call', kind: 'brain', units: 240, provider: 'siliconflow', source: 'extract' },
+      { ts: '2026-04-10T00:04:30Z', op: 'cost-call', kind: 'judge', units: 60, provider: 'siliconflow', source: 'judge' },
+      { ts: '2026-04-10T00:04:40Z', op: 'cost-call', kind: 'extract', units: 800, provider: 'local', source: 'session-extract' },
       { ts: '2026-04-09T00:05:00Z', op: 'evolve', promoted: 2, demoted: 1, abstracted: 1, archived: 3 }
     ];
     const s = computeStats(events);
@@ -142,6 +159,14 @@ describe('computeStats', () => {
     assert.strictEqual(s.noiseByReason.wrong_task, 1);
     assert.strictEqual(s.implicitUnusedCount, 1);
     assert.strictEqual(s.implicitUnusedByReason.wrong_task, 1);
+    assert.strictEqual(s.mistakeSeenCount, 3);
+    assert.strictEqual(s.mistakeByType.test_fail_fix, 2);
+    assert.strictEqual(s.mistakeByProjectType['D:/proj :: test_fail_fix'], 2);
+    assert.strictEqual(s.costCallCount, 4);
+    assert.strictEqual(s.costByKind.embed, 1);
+    assert.strictEqual(s.costUnitsByKind.brain, 240);
+    assert.strictEqual(s.dailyCostLedger['2026-04-09'].units, 360);
+    assert.strictEqual(s.dailyCostLedger['2026-04-10'].byKind.extract, 800);
   });
 
   it('returns all zeros for empty array (no NaN)', () => {
@@ -161,6 +186,8 @@ describe('computeStats', () => {
     assert.strictEqual(s.feedbackByVerdict.FOLLOWED, 0);
     assert.strictEqual(s.noiseByReason.wrong_repo, 0);
     assert.strictEqual(s.implicitUnusedCount, 0);
+    assert.strictEqual(s.mistakeSeenCount, 0);
+    assert.strictEqual(s.costCallCount, 0);
     assert.strictEqual(Object.keys(s.projects).length, 0);
   });
 

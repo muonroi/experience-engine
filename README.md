@@ -269,7 +269,7 @@ Expected:
 ```
 YOU write code with any AI agent
   │
-  ├─ BEFORE every Edit/Write/Bash
+  ├─ BEFORE relevant mutating tools (Codex: Bash, other runtimes may include Edit/Write/Bash)
   │   └─ Layer 1: Read-only skip — ls, git log, cat etc. bypass instantly (0ms, $0)
   │   └─ Layer 2: Semantic search — "Have I seen this mistake before?"
   │   └─ Detects language from file being edited (.ts → TypeScript, .cs → C#)
