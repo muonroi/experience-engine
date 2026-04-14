@@ -272,9 +272,9 @@ run_checks() {
   elif [ -f "$ACTIVITY" ]; then
     local total_lines; total_lines=$(wc -l < "$ACTIVITY")
     local last_ts; last_ts=$(tail -1 "$ACTIVITY" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{console.log(JSON.parse(d).ts)}catch{console.log('?')}})" 2>/dev/null)
-    local intercept_count; intercept_count=$(grep -c '"op":"intercept"' "$ACTIVITY" 2>/dev/null || echo "0")
-    local suggestion_count; suggestion_count=$(grep -c '"result":"suggestion"' "$ACTIVITY" 2>/dev/null || echo "0")
-    local route_count; route_count=$(grep -c '"op":"route"' "$ACTIVITY" 2>/dev/null || echo "0")
+    local intercept_count; intercept_count=$(grep -c '"op":"intercept"' "$ACTIVITY" 2>/dev/null || true); intercept_count="${intercept_count:-0}"
+    local suggestion_count; suggestion_count=$(grep -c '"result":"suggestion"' "$ACTIVITY" 2>/dev/null || true); suggestion_count="${suggestion_count:-0}"
+    local route_count; route_count=$(grep -c '"op":"route"' "$ACTIVITY" 2>/dev/null || true); route_count="${route_count:-0}"
 
     if [ -n "$last_ts" ] && [ "$last_ts" != "?" ]; then
       # Check staleness
