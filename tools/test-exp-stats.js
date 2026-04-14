@@ -108,6 +108,9 @@ describe('computeStats', () => {
       { ts: '2026-04-09T00:00:00Z', op: 'intercept', result: 'suggestion', project: 'D:/proj/a.ts', scores: [0.9] },
       { ts: '2026-04-09T00:01:00Z', op: 'intercept', result: null, project: 'D:/proj/b.ts', scores: [0.3] },
       { ts: '2026-04-09T00:02:00Z', op: 'intercept', result: 'suggestion', project: 'D:/proj/a.ts', scores: [0.8] },
+      { ts: '2026-04-09T00:02:30Z', op: 'feedback', verdict: 'FOLLOWED' },
+      { ts: '2026-04-09T00:02:40Z', op: 'judge-feedback', verdict: 'IRRELEVANT', reason: 'wrong_task' },
+      { ts: '2026-04-09T00:02:50Z', op: 'implicit-unused', reason: 'wrong_task' },
       { ts: '2026-04-09T00:03:00Z', op: 'extract', mistakes: 3, stored: 2, project: 'D:/proj/c.ts' },
       { ts: '2026-04-09T00:04:00Z', op: 'extract', mistakes: 1, stored: 0, project: null },
       { ts: '2026-04-09T00:05:00Z', op: 'evolve', promoted: 2, demoted: 1, abstracted: 1, archived: 3 }
@@ -130,6 +133,15 @@ describe('computeStats', () => {
     assert.strictEqual(s.demoted, 1);
     assert.strictEqual(s.abstracted, 1);
     assert.strictEqual(s.archived, 3);
+
+    // Feedback / noise stats
+    assert.strictEqual(s.feedbackCount, 2);
+    assert.strictEqual(s.judgeFeedbackCount, 1);
+    assert.strictEqual(s.feedbackByVerdict.FOLLOWED, 1);
+    assert.strictEqual(s.feedbackByVerdict.IRRELEVANT, 1);
+    assert.strictEqual(s.noiseByReason.wrong_task, 1);
+    assert.strictEqual(s.implicitUnusedCount, 1);
+    assert.strictEqual(s.implicitUnusedByReason.wrong_task, 1);
   });
 
   it('returns all zeros for empty array (no NaN)', () => {
@@ -145,6 +157,10 @@ describe('computeStats', () => {
     assert.strictEqual(s.demoted, 0);
     assert.strictEqual(s.abstracted, 0);
     assert.strictEqual(s.archived, 0);
+    assert.strictEqual(s.feedbackCount, 0);
+    assert.strictEqual(s.feedbackByVerdict.FOLLOWED, 0);
+    assert.strictEqual(s.noiseByReason.wrong_repo, 0);
+    assert.strictEqual(s.implicitUnusedCount, 0);
     assert.strictEqual(Object.keys(s.projects).length, 0);
   });
 
@@ -165,6 +181,17 @@ describe('computeStats', () => {
     assert.ok(s.projects['(unknown project)'], 'unknown project should exist');
     assert.strictEqual(s.projects['(unknown project)'].mistakes, 2);
     assert.strictEqual(s.projects['(unknown project)'].stored, 1);
+  });
+
+  it('maps legacy feedback.followed to verdict buckets', () => {
+    const events = [
+      { ts: '2026-04-09T00:00:00Z', op: 'feedback', followed: true },
+      { ts: '2026-04-09T00:01:00Z', op: 'feedback', followed: false },
+    ];
+    const s = computeStats(events);
+    assert.strictEqual(s.feedbackCount, 2);
+    assert.strictEqual(s.feedbackByVerdict.FOLLOWED, 1);
+    assert.strictEqual(s.feedbackByVerdict.IGNORED, 1);
   });
 });
 

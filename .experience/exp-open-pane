@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+POSITION="right"
+PERCENT="33"
+WATCH_ARGS=()
+FORCE=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --left|--right|--top|--bottom)
+      POSITION="${1#--}"
+      shift
+      ;;
+    --percent)
+      PERCENT="${2:-33}"
+      shift 2
+      ;;
+    --force)
+      FORCE=1
+      shift
+      ;;
+    --all|--json|--compact|--follow)
+      WATCH_ARGS+=("$1")
+      shift
+      ;;
+    --tail|--file)
+      WATCH_ARGS+=("$1" "${2:-}")
+      shift 2
+      ;;
+    *)
+      WATCH_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+find_wezterm() {
+  if command -v wezterm >/dev/null 2>&1; then command -v wezterm; return 0; fi
+  if command -v wezterm.exe >/dev/null 2>&1; then command -v wezterm.exe; return 0; fi
+  local candidates=(
+    "/mnt/c/Program Files/WezTerm/wezterm.exe"
+    "/mnt/c/Users/$USER/scoop/apps/wezterm/current/wezterm.exe"
+  )
+  local c
+  for c in "${candidates[@]}"; do
+    if [ -x "$c" ]; then
+      printf '%s\n' "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
+WEZTERM_BIN="$(find_wezterm || true)"
+if [ -z "$WEZTERM_BIN" ]; then
+  echo "wezterm CLI not found. Run: $HOME/.experience/exp-watch" >&2
+  exit 1
+fi
+
+if [ "$FORCE" -ne 1 ]; then
+  existing="$(ps -eo pid=,args= | grep -F "node $HOME/.experience/activity-watch.js" | grep -v grep || true)"
+  if [ -n "$existing" ]; then
+    echo "activity watcher is already running; not opening another pane" >&2
+    echo "$existing" >&2
+    echo "Use --force to open another pane" >&2
+    exit 0
+  fi
+fi
+
+WATCH_CMD='printf "\033]0;Experience Activity\007"; exec "$HOME/.experience/exp-watch"'
+for arg in "${WATCH_ARGS[@]}"; do
+  printf -v WATCH_CMD '%s %q' "$WATCH_CMD" "$arg"
+done
+
+PANE_ARGS=()
+if [ -n "${WEZTERM_PANE:-}" ]; then
+  PANE_ARGS+=(--pane-id "$WEZTERM_PANE")
+fi
+
+exec "$WEZTERM_BIN" cli split-pane "--$POSITION" --percent "$PERCENT" --cwd "$PWD" "${PANE_ARGS[@]}" -- bash -lc "$WATCH_CMD"

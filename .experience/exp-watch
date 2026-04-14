@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+DEFAULT_ARGS=(--follow --tail 40)
+if [ $# -eq 0 ]; then
+  exec node "$HOME/.experience/activity-watch.js" "${DEFAULT_ARGS[@]}"
+else
+  exec node "$HOME/.experience/activity-watch.js" "$@"
+fi

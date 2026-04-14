@@ -7,21 +7,18 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-// We test via FileStore mode (Qdrant not available in unit test context)
-// The module uses ~/.experience/store/{user}/ — we'll mock via a temp dir
-// But since checkQdrant() auto-detects, and Qdrant is typically unavailable in CI,
-// the FileStore path will be exercised automatically.
+// Hermetic test home so FileStore writes never touch the real ~/.experience tree.
+const TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'exp-test-home-'));
+process.env.HOME = TEST_HOME;
+process.env.USERPROFILE = TEST_HOME;
+process.env.EXPERIENCE_QDRANT_URL = 'http://127.0.0.1:1';
 
-// Use the default user store path — module reads EXP_USER at load time.
-// We write test data to the actual store dir and clean it up after each test.
-// Using a unique collection name prefix to avoid colliding with real data.
-const STORE_DIR = path.join(os.homedir(), '.experience', 'store', process.env.EXP_USER || 'default');
+const STORE_DIR = path.join(TEST_HOME, '.experience', 'store', process.env.EXP_USER || 'default');
 
 const {
   _updatePointPayload,
   recordFeedback,
   recordHit,
-  incrementIgnoreCount: _incrementIgnoreCount,
   _applyHitUpdate: applyHitUpdate,
   _incrementIgnoreCountData: incrementIgnoreCountData,
 } = require('./experience-core.js');
@@ -53,6 +50,10 @@ function cleanup() {
   }
   testColls = [];
 }
+
+process.on('exit', () => {
+  try { fs.rmSync(TEST_HOME, { recursive: true, force: true }); } catch {}
+});
 
 // ------------------------------------------------------------------
 // Tests
@@ -95,7 +96,7 @@ describe('updatePointPayload', () => {
 describe('recordFeedback delegates to updatePointPayload', () => {
   afterEach(cleanup);
 
-  it('recordFeedback(coll, id, true) should behave same as recordHit (increments hitCount)', async () => {
+  it('recordFeedback(coll, id, "FOLLOWED") should behave same as recordHit (increments hitCount)', async () => {
     const coll = `${TEST_COLL_PREFIX}-fb-true`;
     const idA = 'feedback-true-001';
     const idB = 'record-hit-001';
@@ -103,7 +104,7 @@ describe('recordFeedback delegates to updatePointPayload', () => {
     const initialB = { hitCount: 1, ignoreCount: 1, confirmedAt: [] };
     writeTestStore(coll, [makeTestEntry(idA, initialA), makeTestEntry(idB, initialB)]);
 
-    await recordFeedback(coll, idA, true);
+    await recordFeedback(coll, idA, 'FOLLOWED');
     await recordHit(coll, idB);
 
     const entries = readTestStore(coll);
@@ -116,7 +117,7 @@ describe('recordFeedback delegates to updatePointPayload', () => {
     assert.strictEqual(dataA.ignoreCount, dataB.ignoreCount, 'ignoreCount should match recordHit result');
   });
 
-  it('recordFeedback(coll, id, false) should behave same as incrementIgnoreCount (increments ignoreCount)', async () => {
+  it('recordFeedback(coll, id, "IGNORED") should behave same as incrementIgnoreCount (increments ignoreCount)', async () => {
     const coll = `${TEST_COLL_PREFIX}-fb-false`;
     const idA = 'feedback-false-001';
     const idB = 'ignore-count-001';
@@ -124,7 +125,7 @@ describe('recordFeedback delegates to updatePointPayload', () => {
     const initialB = { hitCount: 1, ignoreCount: 0 };
     writeTestStore(coll, [makeTestEntry(idA, initialA), makeTestEntry(idB, initialB)]);
 
-    await recordFeedback(coll, idA, false);
+    await recordFeedback(coll, idA, 'IGNORED');
     // Note: incrementIgnoreCount is not exported directly, so we use updatePointPayload
     await _updatePointPayload(coll, idB, incrementIgnoreCountData);
 
@@ -135,5 +136,21 @@ describe('recordFeedback delegates to updatePointPayload', () => {
     const dataB = JSON.parse(entryB.payload.json);
 
     assert.strictEqual(dataA.ignoreCount, dataB.ignoreCount, 'ignoreCount should match incrementIgnoreCount result');
+  });
+
+  it('recordFeedback(coll, id, "IRRELEVANT", reason) increments irrelevant tracking', async () => {
+    const coll = `${TEST_COLL_PREFIX}-fb-irrelevant`;
+    const idA = 'feedback-irrelevant-001';
+    writeTestStore(coll, [makeTestEntry(idA, { hitCount: 0, ignoreCount: 0, irrelevantCount: 0 })]);
+
+    await recordFeedback(coll, idA, 'IRRELEVANT', 'wrong_repo');
+
+    const entries = readTestStore(coll);
+    const entryA = entries.find(e => e.id === idA);
+    const dataA = JSON.parse(entryA.payload.json);
+
+    assert.strictEqual(dataA.irrelevantCount, 1, 'irrelevantCount should increment');
+    assert.strictEqual(dataA.lastNoiseReason, 'wrong_repo', 'lastNoiseReason should be stored');
+    assert.strictEqual(dataA.noiseReasonCounts.wrong_repo, 1, 'noise reason count should increment');
   });
 });

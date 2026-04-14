@@ -14,51 +14,100 @@
 
 'use strict';
 
+const fs = require('fs');
+const pathMod = require('path');
+const os = require('os');
+
 // --- Native config loader (D-06) ---
 // Reads ~/.experience/config.json BEFORE any other config.
 // setup.sh writes this file. No injection, no env auto-detect.
-const _cfg = (() => {
+// Singleton loader: one cache per process, but refreshes automatically when the file changes.
+const CONFIG_PATH = pathMod.join(os.homedir(), '.experience', 'config.json');
+const configState = { mtimeMs: null, value: {} };
+
+function readConfigFile() {
   try {
-    return JSON.parse(
-      require('fs').readFileSync(
-        require('path').join(require('os').homedir(), '.experience', 'config.json'),
-        'utf8'
-      )
-    );
-  } catch { return {}; }
-})();
+    return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function loadConfig(force = false) {
+  try {
+    const stat = fs.statSync(CONFIG_PATH);
+    if (!force && configState.mtimeMs === stat.mtimeMs) return configState.value;
+    configState.mtimeMs = stat.mtimeMs;
+    configState.value = readConfigFile();
+    return configState.value;
+  } catch {
+    configState.mtimeMs = null;
+    configState.value = {};
+    return configState.value;
+  }
+}
+
+function getConfig() {
+  return loadConfig(false);
+}
+
+function refreshConfig() {
+  return loadConfig(true);
+}
+
+function cfgValue(key, envKey, fallback) {
+  const cfg = getConfig();
+  return cfg[key] ?? process.env[envKey] ?? fallback;
+}
 
 // --- Config (D-07, D-11) ---
 // Priority: config.json > EXPERIENCE_* env vars > defaults
 // NEVER fall back to ambient env (OPENAI_API_KEY, GEMINI_API_KEY, etc.)
 
-const QDRANT_BASE     = _cfg.qdrantUrl     || process.env.EXPERIENCE_QDRANT_URL     || 'http://localhost:6333';
-const QDRANT_API_KEY  = _cfg.qdrantKey     || process.env.EXPERIENCE_QDRANT_KEY     || '';
-const OLLAMA_BASE     = _cfg.ollamaUrl     || process.env.EXPERIENCE_OLLAMA_URL     || 'http://localhost:11434';
-const EMBED_PROVIDER  = _cfg.embedProvider || process.env.EXPERIENCE_EMBED_PROVIDER || 'ollama';
-const BRAIN_PROVIDER  = _cfg.brainProvider || process.env.EXPERIENCE_BRAIN_PROVIDER || 'ollama';
-const EMBED_MODEL     = _cfg.embedModel    || process.env.EXPERIENCE_EMBED_MODEL    || 'nomic-embed-text';
-const BRAIN_MODEL     = _cfg.brainModel    || process.env.EXPERIENCE_BRAIN_MODEL    || 'qwen2.5:3b';
-const EMBED_ENDPOINT  = _cfg.embedEndpoint || process.env.EXPERIENCE_EMBED_ENDPOINT || '';
-const EMBED_KEY       = _cfg.embedKey      || process.env.EXPERIENCE_EMBED_KEY      || '';
-const BRAIN_ENDPOINT  = _cfg.brainEndpoint || process.env.EXPERIENCE_BRAIN_ENDPOINT || '';
-const BRAIN_KEY       = _cfg.brainKey      || process.env.EXPERIENCE_BRAIN_KEY      || '';
-const EMBED_DIM       = _cfg.embedDim      || 768;
-const MIN_CONFIDENCE  = _cfg.minConfidence  || 0.42;
-const HIGH_CONFIDENCE = _cfg.highConfidence || 0.60;
+function getQdrantBase()     { return cfgValue('qdrantUrl', 'EXPERIENCE_QDRANT_URL', 'http://localhost:6333'); }
+function getQdrantApiKey()   { return cfgValue('qdrantKey', 'EXPERIENCE_QDRANT_KEY', ''); }
+function getOllamaBase()     { return cfgValue('ollamaUrl', 'EXPERIENCE_OLLAMA_URL', 'http://localhost:11434'); }
+function getEmbedProvider()  { return cfgValue('embedProvider', 'EXPERIENCE_EMBED_PROVIDER', 'ollama'); }
+function getBrainProvider()  { return cfgValue('brainProvider', 'EXPERIENCE_BRAIN_PROVIDER', 'ollama'); }
+function getEmbedModel()     { return cfgValue('embedModel', 'EXPERIENCE_EMBED_MODEL', 'nomic-embed-text'); }
+function getBrainModel()     { return cfgValue('brainModel', 'EXPERIENCE_BRAIN_MODEL', 'qwen2.5:3b'); }
+function getEmbedEndpoint()  { return cfgValue('embedEndpoint', 'EXPERIENCE_EMBED_ENDPOINT', ''); }
+function getEmbedKey()       { return cfgValue('embedKey', 'EXPERIENCE_EMBED_KEY', ''); }
+function getBrainEndpoint()  { return cfgValue('brainEndpoint', 'EXPERIENCE_BRAIN_ENDPOINT', ''); }
+function getBrainKey()       { return cfgValue('brainKey', 'EXPERIENCE_BRAIN_KEY', ''); }
+function getEmbedDim()       { return cfgValue('embedDim', 'EXPERIENCE_EMBED_DIM', 768); }
+function getMinConfidence()  { return cfgValue('minConfidence', 'EXPERIENCE_MIN_CONFIDENCE', 0.42); }
+function getHighConfidence() { return cfgValue('highConfidence', 'EXPERIENCE_HIGH_CONFIDENCE', 0.60); }
 
 // --- Model Router config ---
-const ROUTER_HISTORY_THRESHOLD = _cfg.routerHistoryThreshold || 0.80;
-const ROUTER_DEFAULT_TIER      = _cfg.routerDefaultTier      || 'balanced';
-const MODEL_TIERS = _cfg.modelTiers || {
-  claude:   { fast: 'haiku',           balanced: 'sonnet',        premium: 'opus' },
-  gemini:   { fast: 'gemini-2.0-flash', balanced: 'gemini-2.5-pro', premium: 'gemini-2.5-pro' },
-  codex:    { fast: 'codex-mini',      balanced: 'o3',            premium: 'o3' },
-  opencode: { fast: 'haiku',           balanced: 'sonnet',        premium: 'opus' },
-};
+function isRouterEnabled() {
+  return getConfig().routing === true;
+}
 
-const OLLAMA_EMBED_URL = `${OLLAMA_BASE}/api/embed`;
-const OLLAMA_GENERATE_URL = `${OLLAMA_BASE}/api/generate`;
+function getRouterHistoryThreshold() {
+  return getConfig().routerHistoryThreshold ?? 0.80;
+}
+
+function getRouterDefaultTier() {
+  return getConfig().routerDefaultTier ?? 'balanced';
+}
+
+function getModelTiers() {
+  return getConfig().modelTiers || {
+    claude:   { fast: 'claude-haiku-4-5',  balanced: 'claude-sonnet-4-6', premium: 'claude-opus-4-6' },
+    gemini:   { fast: 'gemini-3-flash',    balanced: 'gemini-3-pro',      premium: 'gemini-3.1-pro' },
+    codex:    { fast: 'o4-mini',           balanced: 'gpt-5.2',           premium: 'gpt-5.4' },
+    opencode: { fast: 'claude-haiku-4-5',  balanced: 'claude-sonnet-4-6', premium: 'claude-opus-4-6' },
+  };
+}
+
+function getOllamaEmbedUrl() {
+  return `${getOllamaBase()}/api/embed`;
+}
+
+function getOllamaGenerateUrl() {
+  return `${getOllamaBase()}/api/generate`;
+}
 
 const COLLECTIONS = [
   { name: 'experience-principles', topK: 2, budgetChars: 800 },
@@ -72,6 +121,10 @@ const EDGE_COLLECTION = 'experience-edges';
 const DEDUP_THRESHOLD = 0.85;
 const RELATES_TO_THRESHOLD = 0.70;
 const QUERY_MAX_CHARS = 500;
+const VALID_FEEDBACK_VERDICTS = new Set(['FOLLOWED', 'IGNORED', 'IRRELEVANT']);
+const VALID_NOISE_REASONS = new Set(['wrong_repo', 'wrong_language', 'wrong_task', 'stale_rule']);
+const UNUSED_NO_TOUCH_THRESHOLD = 3;
+const PENDING_HINT_TTL_MS = 20 * 60 * 1000;
 
 // --- Session-persistent tracking (file-based, survives process restarts) ---
 // Each hook invocation is a NEW process, so in-memory arrays are useless.
@@ -80,11 +133,27 @@ const QUERY_MAX_CHARS = 500;
 const SESSION_TRACK_DIR = require('path').join(require('os').tmpdir(), 'experience-session');
 const MAX_SESSION_UNIQUE = 8; // P2: max unique experiences surfaced per session
 
-function getSessionTrackFile() {
+function sanitizeSessionToken(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 96);
+}
+
+function getSessionTrackFile(meta) {
   try { fs.mkdirSync(SESSION_TRACK_DIR, { recursive: true }); } catch {}
-  // Stable session key: YYYYMMDD + CWD hash (same day + same project = same session)
-  // This groups all hook calls from the same agent workspace into one tracking file.
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const sessionToken = sanitizeSessionToken(
+    meta?.sourceSession
+    || process.env.CODEX_SESSION_ID
+    || process.env.CLAUDE_SESSION_ID
+    || process.env.GEMINI_SESSION_ID
+  );
+  if (sessionToken) {
+    return pathMod.join(SESSION_TRACK_DIR, `session-${today}-${sessionToken}.json`);
+  }
+  // Fallback: YYYYMMDD + CWD hash when no runtime session id is available.
   const cwd = process.cwd() || '';
   let hash = 0;
   for (let i = 0; i < cwd.length; i++) { hash = ((hash << 5) - hash + cwd.charCodeAt(i)) | 0; }
@@ -92,28 +161,29 @@ function getSessionTrackFile() {
   return pathMod.join(SESSION_TRACK_DIR, `session-${sessionKey}.json`);
 }
 
-function readSessionTrack() {
+function readSessionTrack(meta) {
   try {
-    const raw = fs.readFileSync(getSessionTrackFile(), 'utf8');
+    const raw = fs.readFileSync(getSessionTrackFile(meta), 'utf8');
     const data = JSON.parse(raw);
     // Expire after 2 hours (session likely ended)
-    if (Date.now() - (data.startedAt || 0) > 2 * 60 * 60 * 1000) return { startedAt: Date.now(), seen: {}, counts: {} };
+    if (Date.now() - (data.startedAt || 0) > 2 * 60 * 60 * 1000) return { startedAt: Date.now(), seen: {}, counts: {}, pending: {} };
+    if (!data.pending || typeof data.pending !== 'object' || Array.isArray(data.pending)) data.pending = {};
     return data;
   } catch {
-    return { startedAt: Date.now(), seen: {}, counts: {} };
+    return { startedAt: Date.now(), seen: {}, counts: {}, pending: {} };
   }
 }
 
-function writeSessionTrack(track) {
-  try { fs.writeFileSync(getSessionTrackFile(), JSON.stringify(track)); } catch {}
+function writeSessionTrack(track, meta) {
+  try { fs.writeFileSync(getSessionTrackFile(meta), JSON.stringify(track)); } catch {}
 }
 
 /**
  * Track surfaced suggestions in persistent session file.
  * Returns: { filtered: ids to skip (already shown), flagged: ids with 3+ repeats }
  */
-function trackSuggestions(surfacedPoints) {
-  const track = readSessionTrack();
+function trackSuggestions(surfacedPoints, meta) {
+  const track = readSessionTrack(meta);
   const flagged = [];
   const filtered = [];
 
@@ -134,7 +204,7 @@ function trackSuggestions(surfacedPoints) {
     track.seen[key] = Date.now();
   }
 
-  writeSessionTrack(track);
+  writeSessionTrack(track, meta);
   return { flagged, filtered };
 }
 
@@ -142,8 +212,8 @@ function trackSuggestions(surfacedPoints) {
  * P2: Check if session budget is exhausted (max unique experiences).
  * Returns number of unique experiences already shown.
  */
-function sessionUniqueCount() {
-  const track = readSessionTrack();
+function sessionUniqueCount(meta) {
+  const track = readSessionTrack(meta);
   return Object.keys(track.seen).length;
 }
 
@@ -156,6 +226,256 @@ function incrementIrrelevantData(data) {
   data.irrelevantCount = (data.irrelevantCount || 0) + 1;
   data.lastIrrelevantAt = new Date().toISOString();
   return data;
+}
+
+function incrementUnusedData(data) {
+  data.unusedCount = (data.unusedCount || 0) + 1;
+  data.lastUnusedAt = new Date().toISOString();
+  return data;
+}
+
+function normalizeFeedbackVerdict(verdictOrFollowed) {
+  if (typeof verdictOrFollowed === 'boolean') {
+    return verdictOrFollowed ? 'FOLLOWED' : 'IGNORED';
+  }
+  const verdict = String(verdictOrFollowed || '').trim().toUpperCase();
+  return VALID_FEEDBACK_VERDICTS.has(verdict) ? verdict : null;
+}
+
+function normalizeNoiseReason(reason) {
+  const normalized = String(reason || '').trim().toLowerCase();
+  return VALID_NOISE_REASONS.has(normalized) ? normalized : null;
+}
+
+function shortPointId(pointId) {
+  return String(pointId || '').slice(0, 8);
+}
+
+function pointSourceKey(point, fallbackCollection = null) {
+  const collection = point?._collection || fallbackCollection || '';
+  const pointId = String(point?.id || '');
+  return pointId ? `${collection}:${pointId}` : null;
+}
+
+function dedupePointsBySource(points, fallbackCollection = null) {
+  const seen = new Set();
+  const unique = [];
+  for (const point of points || []) {
+    if (!point) continue;
+    const key = pointSourceKey(point, fallbackCollection);
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    if (fallbackCollection && !point._collection) {
+      unique.push({ ...point, _collection: fallbackCollection });
+    } else {
+      unique.push(point);
+    }
+  }
+  return unique;
+}
+
+function dedupeSuggestionLines(lines) {
+  const seen = new Set();
+  const unique = [];
+  for (const line of lines || []) {
+    const normalized = String(line || '').trim();
+    if (!normalized) continue;
+    const idMatch = normalized.match(/\[id:([^\s\]]+)\s+col:([^\]]+)\]/);
+    const key = idMatch ? `${idMatch[2]}:${idMatch[1]}` : normalized;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(line);
+  }
+  return unique;
+}
+
+function normalizeTechLabel(label) {
+  const normalized = String(label || '').trim().toLowerCase();
+  if (!normalized) return '';
+  if (normalized === 'typescript react' || normalized === 'typescript') return 'typescript';
+  if (normalized === 'javascript react' || normalized === 'javascript') return 'javascript';
+  if (normalized === 'csharp' || normalized === 'c#') return 'c#';
+  if (normalized === 'fsharp' || normalized === 'f#') return 'f#';
+  if (normalized === 'yaml') return 'yaml';
+  return normalized;
+}
+
+const DOMAIN_KEYWORDS = {
+  javascript: ['node', 'npm', 'npx', 'pnpm', 'yarn', 'vite', 'vitest', 'jest', 'tsx', 'ts-node', 'eslint'],
+  typescript: ['node', 'npm', 'npx', 'pnpm', 'yarn', 'tsc', 'vite', 'vitest', 'jest', 'tsx', 'ts-node', 'eslint'],
+  python: ['python', 'pip', 'pytest', 'poetry', 'uv', 'ruff'],
+  'c#': ['dotnet', 'nuget', 'msbuild', 'csc'],
+  java: ['java', 'javac', 'mvn', 'gradle'],
+  rust: ['cargo', 'rustc'],
+  go: ['go test', 'go build', 'gofmt'],
+  ruby: ['bundle', 'bundler', 'rspec', 'ruby'],
+  shell: ['bash', 'sh ', 'zsh'],
+};
+
+function commandSuggestsDomain(actionText, domain) {
+  const keywords = DOMAIN_KEYWORDS[normalizeTechLabel(domain)];
+  if (!keywords || keywords.length === 0) return false;
+  const text = String(actionText || '').toLowerCase();
+  return keywords.some(keyword => text.includes(keyword));
+}
+
+function classifyActionKind(toolName, toolInput, actionPath) {
+  const raw = `${toolName || ''} ${toolInput?.command || toolInput?.cmd || ''} ${toolInput?.file_path || toolInput?.path || ''}`.toLowerCase();
+  const pathText = String(actionPath || '').toLowerCase();
+  if (/(^|\/)(readme|session_start|repo_deep_map|plan|state|agents)\.md$/.test(pathText) || /(^|\/)docs?\//.test(pathText) || /\.md\b/.test(raw)) {
+    return 'docs';
+  }
+  if (/\.(json|ya?ml|toml|ini|env|lock)\b/.test(pathText) || /\b(docker-compose|package-lock|pnpm-lock|poetry\.lock)\b/.test(raw)) {
+    return 'config';
+  }
+  if (/\.(sh|ps1|bat)\b/.test(pathText) || /\b(deploy|docker|kubectl|helm|systemctl)\b/.test(raw)) {
+    return 'ops';
+  }
+  if (detectContext(actionPath || '')) return 'code';
+  return 'unknown';
+}
+
+function inferLanguageMismatch(surface, actionDomain) {
+  const scopeLang = normalizeTechLabel(surface?.scope?.lang);
+  const hintDomain = normalizeTechLabel(surface?.domain);
+  const normalizedAction = normalizeTechLabel(actionDomain);
+  if (!normalizedAction) return false;
+  if (scopeLang === 'all') return false;
+  if (scopeLang && normalizedAction && scopeLang !== normalizedAction) {
+    return true;
+  }
+  if (!scopeLang && hintDomain && normalizedAction && hintDomain !== normalizedAction) {
+    return true;
+  }
+  return false;
+}
+
+function assessHintUsage(surface, toolName, toolInput, runtimeMeta = {}) {
+  const cwdPath = runtimeMeta.cwd || process.cwd() || '';
+  const actionPath = extractProjectPath(toolInput || {}) || cwdPath || '';
+  const actionProject = extractProjectSlug(actionPath || '') || extractProjectSlug(cwdPath || '');
+  const actionDomain = detectContext(actionPath || '') || null;
+  const actionKind = classifyActionKind(toolName, toolInput || {}, actionPath || cwdPath);
+  const actionText = buildQuery(toolName || '', toolInput || {}).toLowerCase();
+  const projectSlug = surface?.projectSlug || null;
+  const scopeLang = normalizeTechLabel(surface?.scope?.lang);
+
+  if (projectSlug && actionProject && projectSlug !== actionProject) {
+    return { touched: false, reason: 'wrong_repo', actionProject, actionDomain, actionKind };
+  }
+  if (inferLanguageMismatch(surface, actionDomain)) {
+    return { touched: false, reason: 'wrong_language', actionProject, actionDomain, actionKind };
+  }
+  if (scopeLang && scopeLang !== 'all') {
+    if (actionDomain && normalizeTechLabel(actionDomain) === scopeLang) {
+      return { touched: true, reason: 'language_match', actionProject, actionDomain, actionKind };
+    }
+    if (commandSuggestsDomain(actionText, scopeLang)) {
+      return { touched: true, reason: 'domain_command_match', actionProject, actionDomain, actionKind };
+    }
+    if (actionKind !== 'code') {
+      return { touched: false, reason: 'wrong_task', actionProject, actionDomain, actionKind };
+    }
+    return { touched: false, reason: 'wrong_task', actionProject, actionDomain, actionKind };
+  }
+  if (actionKind === 'docs' || actionKind === 'config' || actionKind === 'ops') {
+    return { touched: false, reason: 'wrong_task', actionProject, actionDomain, actionKind };
+  }
+  if (projectSlug && actionProject && projectSlug === actionProject) {
+    return { touched: true, reason: 'project_match', actionProject, actionDomain, actionKind };
+  }
+  if (actionProject || actionPath) {
+    return { touched: true, reason: 'path_match', actionProject, actionDomain, actionKind };
+  }
+  return { touched: false, reason: 'wrong_task', actionProject, actionDomain, actionKind };
+}
+
+async function reconcilePendingHints(surfacedPoints, toolName, toolInput, meta = {}) {
+  const track = readSessionTrack();
+  if (!track.pending || typeof track.pending !== 'object' || Array.isArray(track.pending)) track.pending = {};
+  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+  const incoming = Array.isArray(surfacedPoints) ? surfacedPoints : [];
+  const results = { touched: [], pending: [], implicitUnused: [], expired: [] };
+
+  for (const surface of incoming) {
+    if (!surface?.id || !surface?.collection) continue;
+    const key = `${surface.collection}:${surface.id}`;
+    if (!track.pending[key]) {
+      track.pending[key] = {
+        ...surface,
+        surfacedAt: nowIso,
+        noTouchCount: 0,
+      };
+    }
+  }
+
+  for (const [key, pending] of Object.entries(track.pending)) {
+    const surfacedAtMs = pending?.surfacedAt ? new Date(pending.surfacedAt).getTime() : 0;
+    if (surfacedAtMs && (nowMs - surfacedAtMs) > PENDING_HINT_TTL_MS) {
+      delete track.pending[key];
+      results.expired.push({ collection: pending.collection, id: pending.id });
+      continue;
+    }
+
+    const assessment = assessHintUsage(pending, toolName, toolInput, meta);
+    if (assessment.touched) {
+      delete track.pending[key];
+      results.touched.push({ collection: pending.collection, id: pending.id, reason: assessment.reason });
+      continue;
+    }
+
+    pending.noTouchCount = (pending.noTouchCount || 0) + 1;
+    pending.lastNoTouchAt = nowIso;
+    pending.lastNoTouchReason = assessment.reason;
+    pending.lastToolName = toolName || '';
+    track.pending[key] = pending;
+
+    if (pending.noTouchCount >= UNUSED_NO_TOUCH_THRESHOLD) {
+      await updatePointPayload(pending.collection, pending.id, incrementUnusedData);
+      activityLog({
+        op: 'implicit-unused',
+        collection: pending.collection,
+        pointId: shortPointId(pending.id),
+        count: pending.noTouchCount,
+        reason: assessment.reason,
+        tool: toolName,
+        ...normalizeSourceMeta(meta),
+      });
+      delete track.pending[key];
+      results.implicitUnused.push({ collection: pending.collection, id: pending.id, reason: assessment.reason });
+      continue;
+    }
+
+    results.pending.push({
+      collection: pending.collection,
+      id: pending.id,
+      count: pending.noTouchCount,
+      reason: assessment.reason,
+    });
+  }
+
+  writeSessionTrack(track);
+  return results;
+}
+
+function ensureNoiseReasonCounts(data) {
+  if (!data.noiseReasonCounts || typeof data.noiseReasonCounts !== 'object' || Array.isArray(data.noiseReasonCounts)) {
+    data.noiseReasonCounts = {};
+  }
+  return data.noiseReasonCounts;
+}
+
+function incrementIrrelevantWithReasonData(reason) {
+  return function applyIrrelevantWithReason(data) {
+    incrementIrrelevantData(data);
+    const normalized = normalizeNoiseReason(reason);
+    if (!normalized) return data;
+    const counts = ensureNoiseReasonCounts(data);
+    counts[normalized] = (counts[normalized] || 0) + 1;
+    data.lastNoiseReason = normalized;
+    return data;
+  };
 }
 
 /**
@@ -178,8 +498,8 @@ async function updatePointPayload(collection, pointId, updateFn) {
     return;
   }
   try {
-    const res = await fetch(`${QDRANT_BASE}/collections/${collection}/points/${pointId}`, {
-      headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+    const res = await fetch(`${getQdrantBase()}/collections/${collection}/points/${pointId}`, {
+      headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return;
@@ -187,9 +507,9 @@ async function updatePointPayload(collection, pointId, updateFn) {
     if (!point?.payload?.json) return;
     const data = JSON.parse(point.payload.json);
     updateFn(data);
-    await fetch(`${QDRANT_BASE}/collections/${collection}/points/payload`, {
+    await fetch(`${getQdrantBase()}/collections/${collection}/points/payload`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+      headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
       body: JSON.stringify({ points: [pointId], payload: { json: JSON.stringify(data) } }),
       signal: AbortSignal.timeout(5000),
     });
@@ -203,20 +523,28 @@ async function incrementIgnoreCount(collection, pointId) {
 // --- Qdrant availability (per D-14) ---
 let qdrantAvailable = null; // null = unchecked, true/false = checked
 // Phase 109: Multi-user support — user-namespaced store directory
-const EXP_USER = _cfg.user || process.env.EXP_USER || 'default';
-const FILESTORE_BASE = require('path').join(require('os').homedir(), '.experience', 'store');
-const FILESTORE_DIR = require('path').join(FILESTORE_BASE, EXP_USER);
+function getExpUser() {
+  return cfgValue('user', 'EXP_USER', 'default');
+}
+// Backward-compat: many call sites reference EXP_USER directly
+const EXP_USER = getExpUser();
+
+const FILESTORE_BASE = pathMod.join(os.homedir(), '.experience', 'store');
+
+function getFileStoreDir() {
+  return pathMod.join(FILESTORE_BASE, getExpUser());
+}
 
 // Auto-migrate: if old-style files exist at base and user is 'default', move them
 (() => {
-  if (EXP_USER !== 'default') return;
+  if (getExpUser() !== 'default') return;
   try {
     const oldFiles = fs.readdirSync(FILESTORE_BASE).filter(f => f.endsWith('.json') && !f.startsWith('.'));
-    if (oldFiles.length > 0 && !fs.existsSync(FILESTORE_DIR)) {
-      fs.mkdirSync(FILESTORE_DIR, { recursive: true });
+    if (oldFiles.length > 0 && !fs.existsSync(getFileStoreDir())) {
+      fs.mkdirSync(getFileStoreDir(), { recursive: true });
       for (const f of oldFiles) {
         const src = pathMod.join(FILESTORE_BASE, f);
-        const dst = pathMod.join(FILESTORE_DIR, f);
+        const dst = pathMod.join(getFileStoreDir(), f);
         if (!fs.existsSync(dst)) fs.renameSync(src, dst);
       }
     }
@@ -226,8 +554,9 @@ const FILESTORE_DIR = require('path').join(FILESTORE_BASE, EXP_USER);
 async function checkQdrant() {
   if (qdrantAvailable !== null) return qdrantAvailable;
   try {
-    const res = await fetch(`${QDRANT_BASE}/collections`, {
-      headers: QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {},
+    const apiKey = getQdrantApiKey();
+    const res = await fetch(`${getQdrantBase()}/collections`, {
+      headers: apiKey ? { 'api-key': apiKey } : {},
       signal: AbortSignal.timeout(3000),
     });
     qdrantAvailable = res.ok;
@@ -235,12 +564,8 @@ async function checkQdrant() {
   return qdrantAvailable;
 }
 
-// --- FileStore: JSON-based fallback (per D-13) ---
-const fs = require('fs');
-const pathMod = require('path');
-
 // --- Activity logging (Phase 102) ---
-const ACTIVITY_LOG = process.env.EXPERIENCE_ACTIVITY_LOG || pathMod.join(require('os').homedir(), '.experience', 'activity.jsonl');
+const ACTIVITY_LOG = process.env.EXPERIENCE_ACTIVITY_LOG || pathMod.join(os.homedir(), '.experience', 'activity.jsonl');
 const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB
 
 function activityLog(event) {
@@ -256,10 +581,77 @@ function activityLog(event) {
   } catch { /* never crash the engine */ }
 }
 
+function normalizeSourceMeta(meta) {
+  if (!meta || typeof meta !== 'object') return {};
+  return {
+    ...(meta.sourceKind ? { sourceKind: meta.sourceKind } : {}),
+    ...(meta.sourceRuntime ? { sourceRuntime: meta.sourceRuntime } : {}),
+    ...(meta.sourceSession ? { sourceSession: meta.sourceSession } : {}),
+  };
+}
+
 function extractProjectPath(toolInput) {
   const raw = toolInput?.file_path || toolInput?.path || '';
-  if (!raw) return null;
-  return raw.replace(/\\/g, '/');
+  if (raw) return raw.replace(/\\/g, '/');
+
+  // For Bash/Shell commands: extract project path from command text
+  const cmd = toolInput?.command || toolInput?.cmd || '';
+  if (!cmd) return null;
+
+  const extracted = extractPathFromCommand(cmd);
+  return extracted ? extracted.replace(/\\/g, '/') : null;
+}
+
+/**
+ * Extract a meaningful project path from a shell command string.
+ * Handles: cd targets, explicit file paths in arguments.
+ * Supports: Windows (D:\path), Unix (/path), mixed (D:/path), MSYS (/d/path).
+ * Returns first valid absolute path found, or null.
+ */
+function extractPathFromCommand(cmd) {
+  if (!cmd || typeof cmd !== 'string') return null;
+
+  // Strategy 1: Look for "cd <path>" — strongest project signal
+  // Matches: cd "path", cd 'path', cd path (with &&, ||, ; terminators)
+  const cdMatch = cmd.match(/\bcd\s+["']?([^"';&|$\n]+?)["']?\s*(?:[;&|]|\s*$)/);
+  if (cdMatch) {
+    const p = cdMatch[1].trim();
+    if (isAbsolutePath(p)) return p;
+  }
+
+  // Strategy 2: Scan for absolute paths in the command
+  // Collects all candidate paths and picks the best (longest, most specific)
+  const candidates = [];
+
+  // Windows: D:\path or D:/path (drive letter)
+  const winMatches = cmd.matchAll(/[A-Za-z]:[\\/][^\s"';&|$*?<>]+/g);
+  for (const m of winMatches) candidates.push(m[0]);
+
+  // Unix absolute: /path/to/something (at least 2 segments to avoid bare /)
+  const unixMatches = cmd.matchAll(/(?:^|\s|["'=])(\/{1}(?!dev\/null)[A-Za-z][^\s"';&|$*?<>]*\/[^\s"';&|$*?<>]*)/g);
+  for (const m of unixMatches) candidates.push(m[1]);
+
+  // MSYS: /d/Personal/... (single lowercase letter after /)
+  const msysMatches = cmd.matchAll(/\/([a-z])\/[^\s"';&|$*?<>]+/g);
+  for (const m of msysMatches) candidates.push(m[0]);
+
+  if (candidates.length === 0) return null;
+
+  // Pick the longest candidate (most specific path = best project signal)
+  candidates.sort((a, b) => b.length - a.length);
+  return candidates[0];
+}
+
+/**
+ * Check if a path string looks like an absolute path (any OS).
+ */
+function isAbsolutePath(p) {
+  if (!p) return false;
+  // Windows: C:\ or C:/
+  if (/^[A-Za-z]:[\\/]/.test(p)) return true;
+  // Unix/MSYS: starts with /
+  if (p.startsWith('/')) return true;
+  return false;
 }
 
 /**
@@ -289,7 +681,7 @@ function extractProjectSlug(filePath) {
 }
 
 function fileStorePath(collection) {
-  return pathMod.join(FILESTORE_DIR, `${collection}.json`);
+  return pathMod.join(getFileStoreDir(), `${collection}.json`);
 }
 
 function fileStoreRead(collection) {
@@ -338,7 +730,7 @@ function releaseLock(collection) {
 }
 
 function fileStoreWrite(collection, entries) {
-  fs.mkdirSync(FILESTORE_DIR, { recursive: true });
+  fs.mkdirSync(getFileStoreDir(), { recursive: true });
   const locked = acquireLock(collection);
   try {
     const tmp = fileStorePath(collection) + '.tmp';
@@ -384,6 +776,23 @@ function fileStoreUpsert(collection, id, vector, payload) {
 // P5: Read-only command detection — fast-path skip, no embedding/search cost
 const READ_ONLY_CMD = /^(ls|dir|cat|head|tail|wc|file|stat|find|tree|which|where|echo|printf|pwd|whoami|hostname|date|uptime|type|less|more|sort|uniq|tee|realpath|basename|dirname|env|printenv|id|groups|df|du|free|top|htop|lsof|ps|pgrep|mount|uname)\b|^git\s+(log|status|diff|show|branch|tag|remote|stash\s+list|describe|rev-parse|config\s+--get|shortlog|blame|reflog|ls-files|ls-tree|name-rev|cherry)\b|^(grep|rg|ag|ack)\b|^diff\b|^(npm|yarn|pnpm)\s+(list|ls|info|view|outdated|audit|why)\b|^(dotnet)\s+(--list-sdks|--list-runtimes|--info)\b|^(docker|podman)\s+(ps|images|inspect|logs|stats|top|port|volume\s+ls|network\s+ls)\b/;
 
+/**
+ * Detect the agent runtime from tool name patterns and env vars.
+ * Returns 'claude' | 'gemini' | 'codex' | 'opencode' | null.
+ */
+function detectRuntime(toolName) {
+  const tool = (toolName || '').toLowerCase();
+  // Gemini CLI uses run_shell_command, write_file, edit_file, replace_in_file
+  if (process.env.GEMINI_SESSION_ID || process.env.GEMINI_PROJECT_DIR
+    || /^(run_shell_command|write_file|edit_file|replace_in_file)$/.test(tool)) return 'gemini';
+  // Codex CLI
+  if (process.env.CODEX_SESSION_ID) return 'codex';
+  // OpenCode
+  if (process.env.OPENCODE_SESSION_ID) return 'opencode';
+  // Default: Claude Code (Edit, Write, Bash, Shell)
+  return 'claude';
+}
+
 function isReadOnlyCommand(toolName, toolInput) {
   const tool = (toolName || '').toLowerCase();
   if (tool !== 'bash' && tool !== 'shell' && tool !== 'execute_command') return false;
@@ -394,31 +803,49 @@ function isReadOnlyCommand(toolName, toolInput) {
   return parts.every(p => READ_ONLY_CMD.test(p.trim()));
 }
 
-async function interceptWithMeta(toolName, toolInput, signal) {
+async function interceptWithMeta(toolName, toolInput, signal, meta) {
+  const sourceMeta = normalizeSourceMeta(meta);
   // P5: Skip read-only commands — no code mutation = no risk = no warning needed
   if (isReadOnlyCommand(toolName, toolInput)) {
     return { suggestions: null, surfacedIds: [] };
   }
 
   // P2: Session budget cap — stop surfacing after N unique experiences
-  const uniquesSoFar = sessionUniqueCount();
+  const uniquesSoFar = sessionUniqueCount(sourceMeta);
   if (uniquesSoFar >= MAX_SESSION_UNIQUE) {
-    activityLog({ op: 'intercept', query: '(budget-capped)', scores: [], result: null, project: extractProjectPath(toolInput) });
+    activityLog({
+      op: 'intercept',
+      stage: 'budget_capped',
+      tool: toolName,
+      query: '(budget-capped)',
+      scores: [],
+      result: null,
+      hasResult: false,
+      surfacedCount: 0,
+      project: extractProjectPath(toolInput),
+      ...sourceMeta
+    });
     return { suggestions: null, surfacedIds: [] };
   }
 
   const query = buildQuery(toolName, toolInput);
-  const filePath = toolInput?.file_path || toolInput?.path || '';
+  const filePath = toolInput?.file_path || toolInput?.path || extractProjectPath(toolInput) || '';
   const queryDomain = detectContext(filePath);
   // P0: Extract project slug for cross-project penalty
   const queryProjectSlug = extractProjectSlug(filePath);
   const vector = await getEmbedding(query, signal);
   if (!vector) return null;
 
-  const [t0, t1, t2] = await Promise.all([
+  // Route model in parallel with searches when routing is enabled (zero added latency)
+  const routePromise = isRouterEnabled()
+    ? routeModel(query, { files: [filePath].filter(Boolean), domain: queryDomain }, detectRuntime(toolName)).catch(() => null)
+    : Promise.resolve(null);
+
+  const [t0, t1, t2, routeResult] = await Promise.all([
     searchCollection(COLLECTIONS[0].name, vector, COLLECTIONS[0].topK, signal),
     searchCollection(COLLECTIONS[1].name, vector, COLLECTIONS[1].topK, signal),
     searchCollection(COLLECTIONS[2].name, vector, COLLECTIONS[2].topK, signal),
+    routePromise,
   ]);
 
   // v2: Hard scope filter — binary gate before rerank. If scope.lang set and current
@@ -452,9 +879,9 @@ async function interceptWithMeta(toolName, toolInput, signal) {
   }
 
   // Rerank by quality score before formatting (Phase 103, 104)
-  const r0 = rerankByQuality(applyScopeFilter(t0), queryDomain, queryProjectSlug);
-  const r1 = rerankByQuality(applyScopeFilter(t1), queryDomain, queryProjectSlug);
-  const r2 = rerankByQuality(applyScopeFilter(t2), queryDomain, queryProjectSlug);
+  const r0 = dedupePointsBySource(rerankByQuality(applyScopeFilter(t0), queryDomain, queryProjectSlug), COLLECTIONS[0].name);
+  const r1 = dedupePointsBySource(rerankByQuality(applyScopeFilter(t1), queryDomain, queryProjectSlug), COLLECTIONS[1].name);
+  const r2 = dedupePointsBySource(rerankByQuality(applyScopeFilter(t2), queryDomain, queryProjectSlug), COLLECTIONS[2].name);
 
   const lines = [
     ...applyBudget(formatPoints(r0), COLLECTIONS[0].budgetChars),
@@ -487,15 +914,15 @@ async function interceptWithMeta(toolName, toolInput, signal) {
   } catch { /* never block intercept on graph failures */ }
 
   // Fire-and-forget recordHit for each surfaced point (Phase 103)
-  const allReranked = [
-    ...r0.map(p => ({ ...p, _collection: COLLECTIONS[0].name })),
-    ...r1.map(p => ({ ...p, _collection: COLLECTIONS[1].name })),
-    ...r2.map(p => ({ ...p, _collection: COLLECTIONS[2].name })),
-  ];
+  const allReranked = dedupePointsBySource([
+    ...r0,
+    ...r1,
+    ...r2,
+  ]);
   const surfaced = allReranked.filter(p => {
     try {
       const exp = JSON.parse(p.payload?.json || '{}');
-      return exp.solution && computeEffectiveConfidence(exp) >= MIN_CONFIDENCE;
+      return exp.solution && computeEffectiveConfidence(exp) >= getMinConfidence();
     } catch { return false; }
   });
   if (surfaced.length > 0) {
@@ -504,12 +931,28 @@ async function interceptWithMeta(toolName, toolInput, signal) {
 
   // Track suggestions: session dedup + ignore detection (NOISE-04, P4)
   const surfacedMeta = surfaced.map(p => {
-    let solution = null;
-    try { solution = JSON.parse(p.payload?.json || '{}').solution || null; } catch {}
-    return { collection: p._collection, id: p.id, solution };
+    try {
+      const exp = JSON.parse(p.payload?.json || '{}');
+      const superseded = getEdgesForId(p.id).some(edge => edge.type === 'supersedes' && edge.target === p.id);
+      return {
+        collection: p._collection,
+        id: p.id,
+        solution: exp.solution || null,
+        domain: exp.domain || null,
+        projectSlug: exp._projectSlug || null,
+        scope: exp.scope || null,
+        createdAt: exp.createdAt || null,
+        lastHitAt: exp.lastHitAt || null,
+        hitCount: exp.hitCount || 0,
+        ignoreCount: exp.ignoreCount || 0,
+        superseded,
+      };
+    } catch {
+      return { collection: p._collection, id: p.id, solution: null };
+    }
   });
   if (surfacedMeta.length > 0) {
-    const { flagged, filtered } = trackSuggestions(surfacedMeta);
+    const { flagged, filtered } = trackSuggestions(surfacedMeta, sourceMeta);
     // P4: Remove already-shown suggestions from output
     if (filtered.length > 0) {
       const filteredIds = new Set(filtered.map(f => f.id));
@@ -533,27 +976,57 @@ async function interceptWithMeta(toolName, toolInput, signal) {
   }
 
   // P6: Brain relevance filter — ask brain if remaining suggestions are relevant to THIS action
-  if (lines.length > 0 && _cfg.brainFilter !== false) {
+  if (lines.length > 0 && getConfig().brainFilter !== false) {
     try {
       const kept = await brainRelevanceFilter(query, lines, signal, queryProjectSlug);
       if (kept !== null) {
         const removed = lines.length - kept.length;
         lines.length = 0;
         lines.push(...kept);
-        if (removed > 0) activityLog({ op: 'brain-filter', removed, kept: kept.length });
+        if (removed > 0) activityLog({ op: 'brain-filter', removed, kept: kept.length, ...sourceMeta });
       }
     } catch { /* never block intercept on brain filter failure */ }
   }
 
-  activityLog({ op: 'intercept', query: query.slice(0, 120), scores: [...r0, ...r1, ...r2].map(p => p._effectiveScore ?? p.score).sort((a, b) => b - a).slice(0, 3), result: lines.length > 0 ? 'suggestion' : null, project: extractProjectPath(toolInput) });
+  if (lines.length > 1) {
+    const uniqueLines = dedupeSuggestionLines(lines);
+    if (uniqueLines.length !== lines.length) {
+      activityLog({ op: 'suggestion-dedup', removed: lines.length - uniqueLines.length, kept: uniqueLines.length, ...sourceMeta });
+      lines.length = 0;
+      lines.push(...uniqueLines);
+    }
+  }
 
-  return { suggestions: lines.length > 0 ? lines.join('\n---\n') : null, surfacedIds: surfacedMeta };
+  const shownIds = new Set(
+    lines
+      .map(line => line.match(/\[id:([^\s]+)\s+col:/))
+      .map(match => match?.[1] || null)
+      .filter(Boolean)
+  );
+  const shownSurfacedMeta = surfacedMeta.filter(surface => shownIds.has(shortPointId(surface.id)));
+
+  activityLog({
+    op: 'intercept',
+    stage: 'search_done',
+    tool: toolName,
+    query: query.slice(0, 120),
+    scores: [...r0, ...r1, ...r2].map(p => p._effectiveScore ?? p.score).sort((a, b) => b - a).slice(0, 3),
+    result: lines.length > 0 ? 'suggestion' : null,
+    hasResult: lines.length > 0,
+    surfacedCount: shownSurfacedMeta.length,
+    surfaced: shownSurfacedMeta.slice(0, 8).map(s => ({ collection: s.collection, pointId: String(s.id || '').slice(0, 8) })),
+    project: extractProjectPath(toolInput),
+    ...(routeResult ? { route: routeResult.tier, routeModel: routeResult.model, routeSource: routeResult.source } : {}),
+    ...sourceMeta
+  });
+
+  return { suggestions: lines.length > 0 ? lines.join('\n---\n') : null, surfacedIds: shownSurfacedMeta, route: routeResult || null };
 }
 
 // --- intercept: backward-compatible wrapper returning string|null ---
 
-async function intercept(toolName, toolInput, signal) {
-  const result = await interceptWithMeta(toolName, toolInput, signal);
+async function intercept(toolName, toolInput, signal, meta) {
+  const result = await interceptWithMeta(toolName, toolInput, signal, meta);
   return result ? result.suggestions : null;
 }
 
@@ -574,6 +1047,59 @@ function detectTranscriptDomain(transcript) {
   return detectContext(entries[0][0]) || null;
 }
 
+const PLACEHOLDER_EXTRACT_FIELDS = {
+  trigger: new Set([
+    'when this fires',
+    'when this happens',
+    'if this happens',
+    'when it fires',
+    'when it happens',
+  ]),
+  question: new Set([
+    'one line',
+    'one-line',
+    'one line question',
+  ]),
+  solution: new Set([
+    'what to do',
+    'fix it',
+    'do the fix',
+    'apply a fix',
+  ]),
+};
+
+function normalizeExtractText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function isPlaceholderExtractField(field, value) {
+  const normalized = normalizeExtractText(value);
+  if (!normalized) return false;
+  const placeholders = PLACEHOLDER_EXTRACT_FIELDS[field];
+  return !!placeholders && placeholders.has(normalized);
+}
+
+function assessExtractedQaQuality(qa) {
+  if (!qa || typeof qa !== 'object') return { ok: false, reason: 'missing_qa' };
+  const trigger = normalizeExtractText(qa.trigger);
+  const question = normalizeExtractText(qa.question);
+  const solution = normalizeExtractText(qa.solution);
+
+  if (!trigger || !solution) return { ok: false, reason: 'missing_required' };
+  if (isPlaceholderExtractField('trigger', trigger)) return { ok: false, reason: 'placeholder_trigger' };
+  if (isPlaceholderExtractField('question', question)) return { ok: false, reason: 'placeholder_question' };
+  if (isPlaceholderExtractField('solution', solution)) return { ok: false, reason: 'placeholder_solution' };
+  if (/^(session excerpt indicates|execution of commands|deploy fixes?|direct call into)\b/.test(trigger)) {
+    return { ok: false, reason: 'generic_trigger' };
+  }
+  if (/^(implement|update|debug|review)\b/.test(solution) && solution.length < 80) {
+    return { ok: false, reason: 'generic_solution' };
+  }
+  if (trigger.length < 8) return { ok: false, reason: 'trigger_too_short' };
+  if (solution.length < 12) return { ok: false, reason: 'solution_too_short' };
+  return { ok: true, reason: null };
+}
+
 async function extractFromSession(transcript, projectPath) {
   if (!transcript || transcript.length < 100) return 0;
 
@@ -589,8 +1115,23 @@ async function extractFromSession(transcript, projectPath) {
   for (const mistake of mistakes.slice(0, 5)) {
     try {
       const qa = await extractQA(mistake);
-      if (!qa || !qa.trigger || !qa.solution) continue;
-      if (await isDuplicate(qa)) continue;
+      if (!qa) {
+        activityLog({ op: 'extract-skip', reason: 'brain_null', type: mistake.type, project: projectPath || null });
+        continue;
+      }
+      if (qa.skip) {
+        activityLog({ op: 'extract-skip', reason: qa.reason || 'brain_skip', type: mistake.type, project: projectPath || null });
+        continue;
+      }
+      const quality = assessExtractedQaQuality(qa);
+      if (!quality.ok) {
+        activityLog({ op: 'extract-skip', reason: quality.reason, type: mistake.type, project: projectPath || null });
+        continue;
+      }
+      if (await isDuplicate(qa)) {
+        activityLog({ op: 'extract-skip', reason: 'duplicate', type: mistake.type, project: projectPath || null });
+        continue;
+      }
       const projectSlug = extractProjectSlug(projectPath);
       await storeExperience(qa, domain, projectSlug);
       stored++;
@@ -663,6 +1204,70 @@ function buildQuery(toolName, toolInput) {
 
 // --- Mistake detection ---
 
+function parseTranscriptToolCall(line) {
+  const match = String(line || '').match(/^ToolCall\s+([^:]+):\s*([\s\S]*)$/i);
+  if (!match) return null;
+  return {
+    toolName: match[1].trim(),
+    summary: match[2].trim(),
+  };
+}
+
+function isTranscriptReadOnlyToolCall(line) {
+  const parsed = parseTranscriptToolCall(line);
+  if (!parsed) return false;
+  const tool = parsed.toolName.toLowerCase();
+  if (tool !== 'bash' && tool !== 'shell' && tool !== 'execute_command') return false;
+  let normalized = parsed.summary.replace(/\s+/g, ' ').trim();
+  if (!normalized) return false;
+  if (/^ssh\b/i.test(normalized)) return true;
+  normalized = normalized.replace(/^\s*cd\s+["']?[^"';&|]+["']?\s*&&\s*/i, '');
+  const parts = normalized.split(/\s*(?:&&|\|\||;)\s*/);
+  return parts.every((part) => {
+    const trimmed = part.trim();
+    if (!trimmed || /^cd\s+/i.test(trimmed)) return true;
+    return READ_ONLY_CMD.test(trimmed)
+      || /^sed\s+-n\b/.test(trimmed)
+      || /^curl\b(?!.*\b(-X|--request)\s+(POST|PUT|PATCH|DELETE)\b)/i.test(trimmed);
+  });
+}
+
+function isMutatingTranscriptToolCall(line) {
+  const parsed = parseTranscriptToolCall(line);
+  if (!parsed) return false;
+  const tool = parsed.toolName.toLowerCase();
+  if (tool === 'edit' || tool === 'write' || tool === 'replace' || tool === 'write_file' || tool === 'replace_in_file') {
+    return true;
+  }
+  if (tool === 'bash' || tool === 'shell' || tool === 'execute_command') {
+    return !isTranscriptReadOnlyToolCall(line);
+  }
+  return false;
+}
+
+function extractRetryTarget(line) {
+  const parsed = parseTranscriptToolCall(line);
+  if (!parsed) return null;
+  const tool = parsed.toolName.toLowerCase();
+  if (tool === 'edit' || tool === 'write' || tool === 'replace' || tool === 'write_file' || tool === 'replace_in_file') {
+    const target = parsed.summary.split(/\s+/)[0] || '';
+    return target.includes('.') ? `${parsed.toolName}:${target}` : null;
+  }
+  if (tool === 'bash' || tool === 'shell' || tool === 'execute_command') {
+    const target = extractPathFromCommand(parsed.summary);
+    return target ? `${parsed.toolName}:${target}` : null;
+  }
+  return null;
+}
+
+function isTranscriptErrorSignal(line) {
+  const text = String(line || '');
+  if (!text || /^(User|Assistant):/i.test(text)) return false;
+  return /^ToolOutput:/i.test(text)
+    || /^Bash exit\s+[1-9]/i.test(text)
+    || /\b(error|exception|fatal|assertionerror|failed|denied|not found|timeout)\b/i.test(text);
+}
+
 function detectMistakes(transcript) {
   const mistakes = [];
   const lines = transcript.split('\n');
@@ -670,11 +1275,10 @@ function detectMistakes(transcript) {
   // Retry loops
   const toolCalls = {};
   for (const line of lines) {
-    const match = line.match(/(Edit|Write|Bash|shell|replace|write_file).*?([\w./]+\.\w+)/i);
-    if (match) {
-      const key = `${match[1]}:${match[2]}`;
-      toolCalls[key] = (toolCalls[key] || 0) + 1;
-    }
+    if (!isMutatingTranscriptToolCall(line)) continue;
+    const key = extractRetryTarget(line);
+    if (!key) continue;
+    toolCalls[key] = (toolCalls[key] || 0) + 1;
   }
   for (const [key, count] of Object.entries(toolCalls)) {
     if (count >= 3) {
@@ -687,25 +1291,26 @@ function detectMistakes(transcript) {
   }
 
   // Error → fix patterns
-  for (let i = 0; i < lines.length - 1; i++) {
-    if (lines[i].match(/error|Error|ERROR|fail|FAIL|exception/i)
-        && lines[i + 1] && !lines[i + 1].match(/error|Error|fail/i)) {
+  for (let i = 0; i < lines.length; i++) {
+    if (!isTranscriptErrorSignal(lines[i])) continue;
+    for (let j = i + 1; j <= Math.min(i + 6, lines.length - 1); j++) {
+      if (!isMutatingTranscriptToolCall(lines[j])) continue;
       mistakes.push({
         type: 'error_fix',
         context: 'Error followed by correction',
-        excerpt: lines.slice(Math.max(0, i - 2), i + 4).join('\n')
+        excerpt: lines.slice(Math.max(0, i - 2), j + 3).join('\n')
       });
+      break;
     }
   }
 
   // User correction (per D-10, D-12) — proximity window after tool call
-  const toolCallPattern = /Tool(Use|Call)|tool_name|toolName|>\s*(Edit|Write|Bash|Read)/i;
   const correctionPattern = /\b(no[,.]?\s|wrong|don't|instead|not that|stop|undo|revert this)\b/i;
   for (let i = 0; i < lines.length; i++) {
-    if (toolCallPattern.test(lines[i])) {
+    if (isMutatingTranscriptToolCall(lines[i])) {
       // Check next 5 lines for user correction
       for (let j = i + 1; j <= Math.min(i + 5, lines.length - 1); j++) {
-        if (correctionPattern.test(lines[j])) {
+        if (/^User:/i.test(lines[j]) && correctionPattern.test(lines[j])) {
           mistakes.push({
             type: 'user_correction',
             context: `User corrected agent after tool call at line ${i}`,
@@ -719,11 +1324,10 @@ function detectMistakes(transcript) {
 
   // Test fail -> fix (per D-10)
   const testFailPattern = /\bFAIL\b|test\s+failed|AssertionError|AssertError|FAILED|assert\.|expect\(.*\)\.to/i;
-  const fixActionPattern = /(Edit|Write|write_file|replace|replace_in_file)/i;
   for (let i = 0; i < lines.length; i++) {
-    if (testFailPattern.test(lines[i])) {
+    if (isTranscriptErrorSignal(lines[i]) && testFailPattern.test(lines[i])) {
       for (let j = i + 1; j <= Math.min(i + 10, lines.length - 1); j++) {
-        if (fixActionPattern.test(lines[j])) {
+        if (isMutatingTranscriptToolCall(lines[j])) {
           mistakes.push({
             type: 'test_fail_fix',
             context: `Test failure at line ${i} followed by fix at line ${j}`,
@@ -764,20 +1368,24 @@ const BRAIN_FNS = {
 };
 
 // Fallback config: primary provider → fallback provider
-const BRAIN_FALLBACK = _cfg.brainFallback || process.env.EXPERIENCE_BRAIN_FALLBACK || (BRAIN_PROVIDER === 'ollama' ? '' : 'ollama');
+function getBrainFallback() {
+  return cfgValue('brainFallback', 'EXPERIENCE_BRAIN_FALLBACK', getBrainProvider() === 'ollama' ? '' : 'ollama');
+}
 
 async function callBrainWithFallback(prompt) {
-  const primary = BRAIN_FNS[BRAIN_PROVIDER] || BRAIN_FNS.ollama;
+  const brainProvider = getBrainProvider();
+  const fallbackProvider = getBrainFallback();
+  const primary = BRAIN_FNS[brainProvider] || BRAIN_FNS.ollama;
   let result = await primary(prompt);
   if (result) return result;
-  activityLog({ op: 'brain-failure', provider: BRAIN_PROVIDER, phase: 'primary' });
-  if (BRAIN_FALLBACK && BRAIN_FNS[BRAIN_FALLBACK]) {
-    result = await BRAIN_FNS[BRAIN_FALLBACK](prompt);
+  activityLog({ op: 'brain-failure', provider: brainProvider, phase: 'primary' });
+  if (fallbackProvider && BRAIN_FNS[fallbackProvider]) {
+    result = await BRAIN_FNS[fallbackProvider](prompt);
     if (result) {
-      activityLog({ op: 'brain-fallback', provider: BRAIN_FALLBACK });
+      activityLog({ op: 'brain-fallback', provider: fallbackProvider });
       return result;
     }
-    activityLog({ op: 'brain-failure', provider: BRAIN_FALLBACK, phase: 'fallback' });
+    activityLog({ op: 'brain-failure', provider: fallbackProvider, phase: 'fallback' });
   }
   return null;
 }
@@ -787,6 +1395,7 @@ async function callBrainWithFallback(prompt) {
 // Timeout: 3s (tight — fail-open if brain is slow). Cost: ~80 tokens input, ~5 tokens output.
 async function brainRelevanceFilter(actionQuery, suggestionLines, signal, projectSlug) {
   if (!suggestionLines || suggestionLines.length === 0) return null;
+  const hasClearHighConfidenceWarning = suggestionLines.some(line => /Experience - High Confidence \(([-\d.]+)\)/.test(line));
 
   // Extract just the warning text (strip emoji/score prefix for cleaner prompt)
   const warnings = suggestionLines.map((line, i) => {
@@ -813,26 +1422,26 @@ Reply with ONLY the relevant warning numbers separated by commas (e.g. "1,3"), o
 
   // Use a dedicated fast brain call with short timeout
   try {
-    const brainFn = BRAIN_FNS[BRAIN_PROVIDER] || BRAIN_FNS.ollama;
+    const brainProvider = getBrainProvider();
     let response;
 
     // Direct call with tight timeout — bypass callBrainWithFallback to avoid JSON parsing
-    if (BRAIN_PROVIDER === 'ollama') {
-      const res = await fetch(OLLAMA_GENERATE_URL, {
+    if (brainProvider === 'ollama') {
+      const res = await fetch(getOllamaGenerateUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: BRAIN_MODEL, prompt, stream: false, options: { temperature: 0.1, num_predict: 20 } }),
+        body: JSON.stringify({ model: getBrainModel(), prompt, stream: false, options: { temperature: 0.1, num_predict: 20 } }),
         signal: signal || AbortSignal.timeout(3000),
       });
       if (!res.ok) return null;
       response = (await res.json()).response || '';
     } else {
       // OpenAI-compatible / Gemini / Claude — use chat endpoint
-      const endpoint = BRAIN_ENDPOINT || 'https://api.openai.com/v1/chat/completions';
+      const endpoint = getBrainEndpoint() || 'https://api.openai.com/v1/chat/completions';
       const res = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${BRAIN_KEY}` },
-        body: JSON.stringify({ model: BRAIN_MODEL, messages: [{ role: 'user', content: prompt }], temperature: 0.1, max_tokens: 20 }),
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getBrainKey()}` },
+        body: JSON.stringify({ model: getBrainModel(), messages: [{ role: 'user', content: prompt }], temperature: 0.1, max_tokens: 20 }),
         signal: signal || AbortSignal.timeout(3000),
       });
       if (!res.ok) return null;
@@ -840,13 +1449,17 @@ Reply with ONLY the relevant warning numbers separated by commas (e.g. "1,3"), o
     }
 
     const text = response.trim().toLowerCase();
-    if (text === 'none' || text === '0' || text === '') return [];
+    if (text === 'none' || text === '0' || text === '') {
+      return hasClearHighConfidenceWarning ? null : [];
+    }
 
     // Parse comma-separated numbers
     const nums = text.match(/\d+/g);
     if (!nums) return null; // unparseable — fail-open
     const validIndices = nums.map(n => parseInt(n, 10) - 1).filter(i => i >= 0 && i < suggestionLines.length);
-    if (validIndices.length === 0) return [];
+    if (validIndices.length === 0) {
+      return hasClearHighConfidenceWarning ? null : [];
+    }
     return validIndices.map(i => suggestionLines[i]);
   } catch {
     return null; // timeout or error — fail-open, show all suggestions
@@ -854,16 +1467,16 @@ Reply with ONLY the relevant warning numbers separated by commas (e.g. "1,3"), o
 }
 
 async function extractQA(mistake) {
-  const prompt = `Given this session excerpt where something went wrong:\n${mistake.excerpt.slice(0, 1500)}\n\nExtract in JSON (no markdown):\n{"trigger":"when this fires","question":"one line","reasoning":["step1","step2"],"solution":"what to do","why":"root cause or incident that created this rule","scope":{"lang":"C#|JavaScript|all","repos":[],"filePattern":"*.cs"}}`;
+  const prompt = `Given this session excerpt where something went wrong:\n${mistake.excerpt.slice(0, 1500)}\n\nExtract ONE reusable lesson as JSON (no markdown).\nRules:\n- trigger must be a concrete condition rooted in the excerpt, never placeholders like "when this fires"\n- question must briefly name the mistake being prevented\n- solution must be a concrete preventive action, never placeholders like "what to do"\n- if there is no concrete reusable lesson, return {"skip":true,"reason":"no_reusable_lesson"}\n\nReturn JSON only:\n{"trigger":"specific trigger from the excerpt","question":"brief mistake description","reasoning":["step1","step2"],"solution":"specific preventive action","why":"root cause or incident that created this rule","scope":{"lang":"C#|JavaScript|all","repos":[],"filePattern":"*.cs"}}`;
   return callBrainWithFallback(prompt);
 }
 
 async function brainOllama(prompt) {
   try {
-    const res = await fetch(OLLAMA_GENERATE_URL, {
+    const res = await fetch(getOllamaGenerateUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: BRAIN_MODEL, prompt, stream: false, options: { temperature: 0.3 } }),
+      body: JSON.stringify({ model: getBrainModel(), prompt, stream: false, options: { temperature: 0.3 } }),
       signal: AbortSignal.timeout(90000),
     });
     if (!res.ok) return null;
@@ -874,8 +1487,8 @@ async function brainOllama(prompt) {
 
 async function brainOpenAI(prompt) {
   // Reused for any OpenAI-compatible API (OpenAI, SiliconFlow, Together, Groq, etc.)
-  const endpoint = BRAIN_ENDPOINT || 'https://api.openai.com/v1/chat/completions';
-  const body = { model: BRAIN_MODEL || 'gpt-4o-mini', messages: [{ role:'user', content: prompt }], temperature: 0.3 };
+  const endpoint = getBrainEndpoint() || 'https://api.openai.com/v1/chat/completions';
+  const body = { model: getBrainModel() || 'gpt-4o-mini', messages: [{ role:'user', content: prompt }], temperature: 0.3 };
   // Only add json_object mode for known-supporting providers (OpenAI, DeepSeek)
   if (endpoint.includes('openai.com') || endpoint.includes('deepseek.com')) {
     body.response_format = { type: 'json_object' };
@@ -883,7 +1496,7 @@ async function brainOpenAI(prompt) {
   try {
     const res = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${BRAIN_KEY}` },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getBrainKey()}` },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(15000),
     });
@@ -898,8 +1511,8 @@ async function brainOpenAI(prompt) {
 
 async function brainGemini(prompt) {
   try {
-    const model = BRAIN_MODEL || 'gemini-2.0-flash';
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${BRAIN_KEY}`, {
+    const model = getBrainModel() || 'gemini-2.0-flash';
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${getBrainKey()}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0.3 } }),
@@ -915,8 +1528,8 @@ async function brainClaude(prompt) {
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': BRAIN_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: BRAIN_MODEL || 'claude-haiku-4-5-20251001', max_tokens: 512, messages: [{ role:'user', content: prompt }] }),
+      headers: { 'Content-Type': 'application/json', 'x-api-key': getBrainKey(), 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: getBrainModel() || 'claude-haiku-4-5-20251001', max_tokens: 512, messages: [{ role:'user', content: prompt }] }),
       signal: AbortSignal.timeout(15000),
     });
     if (!res.ok) return null;
@@ -930,8 +1543,8 @@ async function brainDeepSeek(prompt) {
   try {
     const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${BRAIN_KEY}` },
-      body: JSON.stringify({ model: BRAIN_MODEL || 'deepseek-chat', messages: [{ role:'user', content: prompt }], temperature: 0.3, response_format: { type:'json_object' } }),
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getBrainKey()}` },
+      body: JSON.stringify({ model: getBrainModel() || 'deepseek-chat', messages: [{ role:'user', content: prompt }], temperature: 0.3, response_format: { type:'json_object' } }),
       signal: AbortSignal.timeout(15000),
     });
     if (!res.ok) return null;
@@ -944,22 +1557,34 @@ async function brainDeepSeek(prompt) {
 async function isDuplicate(qa) {
   const vector = await getEmbedding(`${qa.trigger} ${qa.question}`);
   if (!vector) return false;
+  const exactKey = `${normalizeExtractText(qa.trigger)}||${normalizeExtractText(qa.solution)}`;
 
   if (!(await checkQdrant())) {
-    const results = fileStoreSearch(SELFQA_COLLECTION, vector, 1);
+    const results = fileStoreSearch(SELFQA_COLLECTION, vector, 5);
+    for (const entry of results) {
+      const data = parsePayload(entry);
+      const entryKey = `${normalizeExtractText(data?.trigger)}||${normalizeExtractText(data?.solution)}`;
+      if (entryKey === exactKey) return true;
+    }
     return (results[0]?.score ?? 0) > DEDUP_THRESHOLD;
   }
 
   try {
-    const res = await fetch(`${QDRANT_BASE}/collections/${SELFQA_COLLECTION}/points/query`, {
+    const res = await fetch(`${getQdrantBase()}/collections/${SELFQA_COLLECTION}/points/query`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-      body: JSON.stringify({ query: vector, limit: 1, with_payload: false, filter: { must: [QDRANT_USER_FILTER] } }),
+      headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+      body: JSON.stringify({ query: vector, limit: 5, with_payload: true, filter: { must: [buildQdrantUserFilter()] } }),
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return false;
     const body = await res.json();
-    return (body.result?.points?.[0]?.score ?? 0) > DEDUP_THRESHOLD;
+    const points = body.result?.points || [];
+    for (const entry of points) {
+      const data = parsePayload(entry);
+      const entryKey = `${normalizeExtractText(data?.trigger)}||${normalizeExtractText(data?.solution)}`;
+      if (entryKey === exactKey) return true;
+    }
+    return (points[0]?.score ?? 0) > DEDUP_THRESHOLD;
   } catch { return false; }
 }
 
@@ -974,7 +1599,7 @@ function buildStorePayload(id, qa, domain, projectSlug) {
     why: qa.why || null,    // v2: root cause / incident motivation
     scope: qa.scope || null, // v2: {lang, repos, filePattern} — hard filter gate
     confidence: 0.5, hitCount: 0, tier: 2,
-    lastHitAt: null, ignoreCount: 0,
+    lastHitAt: null, ignoreCount: 0, unusedCount: 0,
     confirmedAt: [],  // Phase 108: temporal trace
     domain: domain || null,
     _projectSlug: projectSlug || null, // P0: project-aware filtering
@@ -991,15 +1616,15 @@ async function storeExperience(qa, domain, projectSlug) {
   const id = crypto.randomUUID();
   const payload = {
     json: JSON.stringify(buildStorePayload(id, qa, domain, projectSlug)),
-    user: EXP_USER,
+    user: getExpUser(),
   };
 
   if (!(await checkQdrant())) {
     fileStoreUpsert(SELFQA_COLLECTION, id, vector, payload);
   } else {
-    await fetch(`${QDRANT_BASE}/collections/${SELFQA_COLLECTION}/points`, {
+    await fetch(`${getQdrantBase()}/collections/${SELFQA_COLLECTION}/points`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+      headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
       body: JSON.stringify({ points: [{ id, vector, payload }] }),
       signal: AbortSignal.timeout(5000),
     });
@@ -1029,7 +1654,7 @@ async function storeExperience(qa, domain, projectSlug) {
 
 // --- Provider abstraction (D-08, D-09, D-10) ---
 // EMBED_PROVIDER / BRAIN_PROVIDER come from config.json (set by setup.sh).
-// Dim is ALWAYS read from config.json (EMBED_DIM constant) — never hardcoded here.
+// Dim is ALWAYS read from config.json via getEmbedDim() — never hardcoded here.
 // siliconflow and custom are first-class providers (reuse OpenAI-compatible fn).
 
 const EMBED_PROVIDERS = {
@@ -1042,16 +1667,16 @@ const EMBED_PROVIDERS = {
 };
 
 async function getEmbedding(text, signal) {
-  const p = EMBED_PROVIDERS[EMBED_PROVIDER] || EMBED_PROVIDERS.ollama;
+  const p = EMBED_PROVIDERS[getEmbedProvider()] || EMBED_PROVIDERS.ollama;
   return p.fn(text, signal);
 }
 
 async function embedOllama(text, signal) {
   try {
-    const res = await fetch(OLLAMA_EMBED_URL, {
+    const res = await fetch(getOllamaEmbedUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: EMBED_MODEL, input: text }),
+      body: JSON.stringify({ model: getEmbedModel(), input: text }),
       signal: signal || AbortSignal.timeout(10000),
     });
     if (!res.ok) return null;
@@ -1061,12 +1686,12 @@ async function embedOllama(text, signal) {
 
 async function embedOpenAI(text, signal) {
   // Supports OpenAI, SiliconFlow, custom, and any OpenAI-compatible embedding API
-  const endpoint = EMBED_ENDPOINT || 'https://api.openai.com/v1/embeddings';
+  const endpoint = getEmbedEndpoint() || 'https://api.openai.com/v1/embeddings';
   try {
     const res = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${EMBED_KEY}` },
-      body: JSON.stringify({ model: EMBED_MODEL || 'text-embedding-3-small', input: text.slice(0, 8000) }),
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getEmbedKey()}` },
+      body: JSON.stringify({ model: getEmbedModel() || 'text-embedding-3-small', input: text.slice(0, 8000) }),
       signal: signal || AbortSignal.timeout(10000),
     });
     if (!res.ok) return null;
@@ -1076,8 +1701,8 @@ async function embedOpenAI(text, signal) {
 
 async function embedGemini(text, signal) {
   try {
-    const model = EMBED_MODEL || 'text-embedding-004';
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${EMBED_KEY}`, {
+    const model = getEmbedModel() || 'text-embedding-004';
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${getEmbedKey()}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: { parts: [{ text: text.slice(0, 8000) }] } }),
@@ -1092,8 +1717,8 @@ async function embedVoyageAI(text, signal) {
   try {
     const res = await fetch('https://api.voyageai.com/v1/embeddings', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${EMBED_KEY}` },
-      body: JSON.stringify({ model: EMBED_MODEL || 'voyage-code-3', input: [text.slice(0, 8000)] }),
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getEmbedKey()}` },
+      body: JSON.stringify({ model: getEmbedModel() || 'voyage-code-3', input: [text.slice(0, 8000)] }),
       signal: signal || AbortSignal.timeout(10000),
     });
     if (!res.ok) return null;
@@ -1110,8 +1735,9 @@ async function fetchPointById(collection, pointId) {
     return found ? { id: found.id, score: 1.0, payload: found.payload } : null;
   }
   try {
-    const res = await fetch(`${QDRANT_BASE}/collections/${collection}/points/${pointId}`, {
-      headers: { 'Content-Type': 'application/json', ...(QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {}) },
+    const apiKey = getQdrantApiKey();
+    const res = await fetch(`${getQdrantBase()}/collections/${collection}/points/${pointId}`, {
+      headers: { 'Content-Type': 'application/json', ...(apiKey ? { 'api-key': apiKey } : {}) },
       signal: AbortSignal.timeout(3000),
     });
     if (!res.ok) return null;
@@ -1121,20 +1747,22 @@ async function fetchPointById(collection, pointId) {
 }
 
 // Qdrant user filter — only return entries owned by current user (or untagged legacy entries)
-const QDRANT_USER_FILTER = {
-  should: [
-    { key: 'user', match: { value: EXP_USER } },
-    { is_empty: { key: 'user' } },  // backward-compat: untagged = accessible by all
-  ],
-};
+function buildQdrantUserFilter() {
+  return {
+    should: [
+      { key: 'user', match: { value: getExpUser() } },
+      { is_empty: { key: 'user' } },  // backward-compat: untagged = accessible by all
+    ],
+  };
+}
 
 async function searchCollection(name, vector, topK, signal) {
   if (!(await checkQdrant())) return fileStoreSearch(name, vector, topK);
   try {
-    const res = await fetch(`${QDRANT_BASE}/collections/${name}/points/query`, {
+    const res = await fetch(`${getQdrantBase()}/collections/${name}/points/query`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-      body: JSON.stringify({ query: vector, limit: topK, with_payload: true, filter: { must: [QDRANT_USER_FILTER] } }),
+      headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+      body: JSON.stringify({ query: vector, limit: topK, with_payload: true, filter: { must: [buildQdrantUserFilter()] } }),
       signal,
     });
     if (!res.ok) return fileStoreSearch(name, vector, topK);
@@ -1161,6 +1789,16 @@ function computeEffectiveScore(point, data, queryDomain, queryProjectSlug) {
     ? Math.min(0.15, (daysSinceHit - 30) / 335 * 0.15)
     : 0;
   const ignorePenalty = Math.min(0.30, (data.ignoreCount || 0) * 0.05);
+  const irrelevantPenalty = Math.min(0.24, (data.irrelevantCount || 0) * 0.04);
+  const unusedPenalty = Math.min(0.18, (data.unusedCount || 0) * 0.03);
+  const noiseReasonCounts = data.noiseReasonCounts || {};
+  const noiseReasonPenalty = Math.min(
+    0.18,
+    ((noiseReasonCounts.wrong_repo || 0) * 0.05)
+      + ((noiseReasonCounts.wrong_language || 0) * 0.04)
+      + ((noiseReasonCounts.wrong_task || 0) * 0.03)
+      + ((noiseReasonCounts.stale_rule || 0) * 0.06)
+  );
   // P3: Heavier domain penalty (was 0.08/0.03, now 0.20/0.05)
   const domainPenalty = (queryDomain && data.domain && queryDomain !== data.domain) ? 0.20
     : (queryDomain && !data.domain) ? 0.05 : 0;
@@ -1184,7 +1822,7 @@ function computeEffectiveScore(point, data, queryDomain, queryProjectSlug) {
   const supersededPenalty = data.superseded ? 0.15 : 0;
   // Wave 3: Confidence weighting — low-confidence entries rank lower
   const confWeight = computeEffectiveConfidence(data);
-  const rawScore = cosine + hitBoost - recencyPenalty - ignorePenalty - domainPenalty - projectPenalty + temporalAdj - supersededPenalty;
+  const rawScore = cosine + hitBoost - recencyPenalty - ignorePenalty - irrelevantPenalty - unusedPenalty - noiseReasonPenalty - domainPenalty - projectPenalty + temporalAdj - supersededPenalty;
   return rawScore * (0.6 + 0.4 * confWeight); // scale: 0.6 floor to avoid zeroing out
 }
 
@@ -1208,11 +1846,11 @@ function formatPoints(points) {
     if (!exp.solution) continue;
     // Use effective confidence for the MIN_CONFIDENCE filter (NOISE-03)
     const effConf = computeEffectiveConfidence(exp);
-    if (effConf < MIN_CONFIDENCE) continue;
+    if (effConf < getMinConfidence()) continue;
     // Use _effectiveScore (from rerankByQuality) for display, fallback to raw score
     const displayScore = point._effectiveScore ?? point.score ?? 0;
     let line;
-    if (displayScore >= HIGH_CONFIDENCE) {
+    if (displayScore >= getHighConfidence()) {
       line = `⚠️ [Experience - High Confidence (${displayScore.toFixed(2)})]: ${exp.solution}`;
     } else {
       line = `💡 [Suggestion (${displayScore.toFixed(2)})]: ${exp.solution}`;
@@ -1247,6 +1885,7 @@ function applyHitUpdate(data) {
   data.hitCount = (data.hitCount || 0) + 1;
   data.lastHitAt = new Date().toISOString();
   data.ignoreCount = 0;
+  data.unusedCount = 0;
   // Phase 108: temporal trace — append to confirmedAt (cap at 50)
   if (!Array.isArray(data.confirmedAt)) data.confirmedAt = [];
   data.confirmedAt.push(data.lastHitAt);
@@ -1260,21 +1899,34 @@ async function recordHit(collection, pointId) {
 
 // --- recordFeedback: explicit agent feedback on surfaced suggestions ---
 
-async function recordFeedback(collection, pointId, followed) {
-  await updatePointPayload(collection, pointId, followed ? applyHitUpdate : incrementIgnoreCountData);
-  activityLog({ op: 'feedback', collection, pointId: pointId.slice(0, 8), followed });
+async function recordFeedback(collection, pointId, verdictOrFollowed, reason = null, options = {}) {
+  const verdict = normalizeFeedbackVerdict(verdictOrFollowed);
+  if (!verdict) return false;
+
+  const normalizedReason = verdict === 'IRRELEVANT' ? normalizeNoiseReason(reason) : null;
+  const updateFn = verdict === 'FOLLOWED'
+    ? applyHitUpdate
+    : verdict === 'IGNORED'
+      ? incrementIgnoreCountData
+      : incrementIrrelevantWithReasonData(normalizedReason);
+
+  await updatePointPayload(collection, pointId, updateFn);
+  activityLog({
+    op: options.source === 'judge' ? 'judge-feedback' : 'feedback',
+    collection,
+    pointId: pointId.slice(0, 8),
+    verdict,
+    ...(normalizedReason ? { reason: normalizedReason } : {}),
+  });
+  return true;
 }
 
 // --- recordJudgeFeedback: LLM judge verdict with IRRELEVANT separation ---
 
-async function recordJudgeFeedback(collection, pointId, verdict) {
-  const updateFn = verdict === 'FOLLOWED' ? applyHitUpdate
-    : verdict === 'IGNORED' ? incrementIgnoreCountData
-    : verdict === 'IRRELEVANT' ? incrementIrrelevantData
-    : null;
-  if (!updateFn) return; // UNCLEAR → no feedback
-  await updatePointPayload(collection, pointId, updateFn);
-  activityLog({ op: 'judge-feedback', collection, pointId: pointId.slice(0, 8), verdict });
+async function recordJudgeFeedback(collection, pointId, verdict, reason = null) {
+  const normalized = normalizeFeedbackVerdict(verdict);
+  if (!normalized) return false; // UNCLEAR → no feedback
+  return recordFeedback(collection, pointId, normalized, reason, { source: 'judge' });
 }
 
 // --- syncToQdrant: migrate FileStore data to Qdrant (per D-17) ---
@@ -1291,9 +1943,9 @@ async function syncToQdrant() {
       const batch = entries.slice(i, i + 50).map(e => ({
         id: e.id, vector: e.vector, payload: e.payload,
       }));
-      await fetch(`${QDRANT_BASE}/collections/${coll}/points`, {
+      await fetch(`${getQdrantBase()}/collections/${coll}/points`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+        headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
         body: JSON.stringify({ points: batch }),
         signal: AbortSignal.timeout(30000),
       });
@@ -1324,7 +1976,7 @@ function createEdge(source, target, type, weight = 1.0, createdBy = 'auto') {
   if (exists) return null;
   // Edges are FileStore-only — no vector search needed, queried by source/target ID.
   // Removed dummy vector: [0] Qdrant upsert (Risk #4: wasted index space).
-  fileStoreUpsert(EDGE_COLLECTION, edge.id, [], { json: JSON.stringify(edge), user: EXP_USER });
+  fileStoreUpsert(EDGE_COLLECTION, edge.id, [], { json: JSON.stringify(edge), user: getExpUser() });
   activityLog({ op: 'edge-create', type, source: source.slice(0, 8), target: target.slice(0, 8) });
   return edge;
 }
@@ -1345,6 +1997,30 @@ function getEdgesOfType(type) {
 
 // --- Evolution Engine (per D-03) ---
 
+const BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD = 20;
+const BEHAVIORAL_TO_PRINCIPLE_MIN_CONFIDENCE = 0.9;
+const BEHAVIORAL_TO_PRINCIPLE_MIN_AGE_MS = 5 * 24 * 60 * 60 * 1000;
+
+function shouldPromoteBehavioralToPrinciple(data, now = Date.now()) {
+  if (!data || data.createdFrom === 'evolution-abstraction') return false;
+  if ((data.hitCount || 0) < BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD) return false;
+  if ((data.confidence || 0) < BEHAVIORAL_TO_PRINCIPLE_MIN_CONFIDENCE) return false;
+  const createdAt = new Date(data.createdAt || 0).getTime();
+  if (!createdAt || Number.isNaN(createdAt)) return false;
+  return (now - createdAt) >= BEHAVIORAL_TO_PRINCIPLE_MIN_AGE_MS;
+}
+
+function buildPrincipleText(data) {
+  if (!data) return '';
+  if (data.principle) return data.principle;
+  if (data.trigger && data.solution) {
+    return /^(when|if|always|never)\b/i.test(data.trigger)
+      ? `${data.trigger} ${data.solution}`.trim()
+      : `When ${data.trigger}, ${data.solution}`;
+  }
+  return data.solution || data.trigger || '';
+}
+
 async function evolve(trigger) {
   const results = { promoted: 0, abstracted: 0, demoted: 0, archived: 0 };
 
@@ -1353,6 +2029,13 @@ async function evolve(trigger) {
   const t2Entries = await getAllEntries('experience-selfqa');
   for (const entry of t2Entries) {
     const data = parsePayload(entry);
+    const quality = assessExtractedQaQuality(data);
+    if (data?.createdFrom === 'session-extractor' && !quality.ok) {
+      await deleteEntry('experience-selfqa', entry.id);
+      results.archived++;
+      activityLog({ op: 'evolve-low-quality-cleanup', id: entry.id.slice(0, 8), reason: quality.reason });
+      continue;
+    }
     if (!data || (data.hitCount || 0) < 3) continue;
     // Wave 1: Minimum 7-day age before promotion — prevent rapid-fire poisoning
     const ageMs = Date.now() - new Date(data.createdAt || 0).getTime();
@@ -1371,16 +2054,19 @@ async function evolve(trigger) {
   const t1PrincipleEntries = await getAllEntries('experience-behavioral');
   for (const entry of t1PrincipleEntries) {
     const data = parsePayload(entry);
-    if (!data || data.createdFrom !== 'evolution-abstraction') continue;
-    if ((data.hitCount || 0) >= 3) {
-      data.tier = 0;
-      data.promotedToT0At = new Date().toISOString();
-      const vector = entry.vector || await getEmbedding(`${data.principle || data.solution}`);
-      if (!vector) continue;
-      await upsertEntry('experience-principles', entry.id, vector, data);
-      await deleteEntry('experience-behavioral', entry.id);
-      results.promoted++;
-    }
+    if (!data) continue;
+    const promoteProbationary = data.createdFrom === 'evolution-abstraction' && (data.hitCount || 0) >= 3;
+    const promoteMatureBehavioral = shouldPromoteBehavioralToPrinciple(data);
+    if (!promoteProbationary && !promoteMatureBehavioral) continue;
+    data.tier = 0;
+    data.principle = buildPrincipleText(data);
+    data.promotedToT0At = new Date().toISOString();
+    if (promoteMatureBehavioral) data.promotedFromBehavioralAt = new Date().toISOString();
+    const vector = entry.vector || await getEmbedding(buildPrincipleText(data));
+    if (!vector) continue;
+    await upsertEntry('experience-principles', entry.id, vector, data);
+    await deleteEntry('experience-behavioral', entry.id);
+    results.promoted++;
   }
 
   // Step 2: Abstract T2 clusters -> T0 (per D-05)
@@ -1461,7 +2147,7 @@ async function evolve(trigger) {
   // Step 3: Demote T1 -> T2 (per D-06)
   // Demotion triggers:
   //   - ignoreCount >= 3: agent repeatedly ignores this suggestion (tracked by NOISE-04)
-  //   - confidence decayed below MIN_CONFIDENCE after aging
+  //   - confidence decayed below getMinConfidence() after aging
   //   - contradiction flag set externally (future: user override)
   const t1Entries = await getAllEntries('experience-behavioral');
   for (const entry of t1Entries) {
@@ -1469,7 +2155,7 @@ async function evolve(trigger) {
     if (!data) continue;
     const shouldDemote = data.contradiction
       || (data.ignoreCount || 0) >= 3
-      || computeEffectiveConfidence(data) < MIN_CONFIDENCE;
+      || computeEffectiveConfidence(data) < getMinConfidence();
     if (shouldDemote) {
       data.tier = 2;
       data.confidence = Math.max(0.1, (data.confidence || 0.5) - 0.2);
@@ -1529,13 +2215,30 @@ async function evolve(trigger) {
       const data = parsePayload(entry);
       if (!data) continue;
       const ignores = data.ignoreCount || 0;
+      const irrelevants = data.irrelevantCount || 0;
+      const unuseds = data.unusedCount || 0;
       const hits = data.hitCount || 0;
       const age = now - new Date(data.createdAt || 0).getTime();
+      const noiseReasonCounts = data.noiseReasonCounts || {};
+      const staleRuleNoise = noiseReasonCounts.stale_rule || 0;
       // Noise criteria: ignoreCount >= 5 AND hit-to-ignore ratio < 0.2 AND age > 30 days
-      if (ignores >= 5 && (hits / Math.max(1, ignores)) < 0.2 && age > THIRTY_DAYS) {
+      const ignoredNoise = ignores >= 5 && (hits / Math.max(1, ignores)) < 0.2 && age > THIRTY_DAYS;
+      const irrelevantNoise = irrelevants >= 4 && (hits / Math.max(1, irrelevants)) < 0.5 && age > (14 * 24 * 60 * 60 * 1000);
+      const unusedNoise = unuseds >= 3 && (hits / Math.max(1, unuseds)) < 0.35 && age > (14 * 24 * 60 * 60 * 1000);
+      const staleNoise = staleRuleNoise >= 2 && age > (7 * 24 * 60 * 60 * 1000);
+      if (ignoredNoise || irrelevantNoise || unusedNoise || staleNoise) {
         await deleteEntry(collCfg.name, entry.id);
         results.archived++;
-        activityLog({ op: 'evolve-noise-cleanup', id: entry.id.slice(0, 8), ignores, hits, age: Math.round(age / (24 * 60 * 60 * 1000)) });
+        activityLog({
+          op: 'evolve-noise-cleanup',
+          id: entry.id.slice(0, 8),
+          ignores,
+          irrelevants,
+          unuseds,
+          hits,
+          staleRuleNoise,
+          age: Math.round(age / (24 * 60 * 60 * 1000)),
+        });
       }
     }
   }
@@ -1592,11 +2295,11 @@ async function getAllEntries(collection) {
   let offset = null;
   do {
     try {
-      const body = { limit: 100, with_payload: true, with_vector: true, filter: { must: [QDRANT_USER_FILTER] } };
+      const body = { limit: 100, with_payload: true, with_vector: true, filter: { must: [buildQdrantUserFilter()] } };
       if (offset) body.offset = offset;
-      const res = await fetch(`${QDRANT_BASE}/collections/${collection}/points/scroll`, {
+      const res = await fetch(`${getQdrantBase()}/collections/${collection}/points/scroll`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+        headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(10000),
       });
@@ -1611,14 +2314,14 @@ async function getAllEntries(collection) {
 }
 
 async function upsertEntry(collection, id, vector, data) {
-  const payload = { json: JSON.stringify(data), user: EXP_USER };
+  const payload = { json: JSON.stringify(data), user: getExpUser() };
   if (!(await checkQdrant())) {
     fileStoreUpsert(collection, id, vector, payload);
     return;
   }
-  await fetch(`${QDRANT_BASE}/collections/${collection}/points`, {
+  await fetch(`${getQdrantBase()}/collections/${collection}/points`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+    headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
     body: JSON.stringify({ points: [{ id, vector, payload }] }),
     signal: AbortSignal.timeout(5000),
   });
@@ -1630,9 +2333,9 @@ async function deleteEntry(collection, id) {
     fileStoreWrite(collection, entries.filter(e => e.id !== id));
     return;
   }
-  await fetch(`${QDRANT_BASE}/collections/${collection}/points/delete`, {
+  await fetch(`${getQdrantBase()}/collections/${collection}/points/delete`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+    headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
     body: JSON.stringify({ points: [id] }),
     signal: AbortSignal.timeout(5000),
   });
@@ -1652,7 +2355,7 @@ function sharePrinciple(principleId) {
     confidence: data.confidence,
     domain: data.domain || null,
     sharedAt: new Date().toISOString(),
-    sharedBy: EXP_USER,
+    sharedBy: getExpUser(),
   };
 }
 
@@ -1680,15 +2383,16 @@ async function getEmbeddingRaw(text, signal) {
   return getEmbedding(text, signal);
 }
 
-// --- Qdrant multi-user migration: tag untagged entries with EXP_USER ---
+// --- Qdrant multi-user migration: tag untagged entries with current user ---
 // Runs once per process, best-effort. Tags existing points that lack a `user` field.
 
 async function migrateQdrantUserTags() {
   // Bypass checkQdrant() cache — migration runs early, cache may not be warm yet.
   // Direct probe instead.
   try {
-    const probe = await fetch(`${QDRANT_BASE}/collections`, {
-      headers: QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {},
+    const apiKey = getQdrantApiKey();
+    const probe = await fetch(`${getQdrantBase()}/collections`, {
+      headers: apiKey ? { 'api-key': apiKey } : {},
       signal: AbortSignal.timeout(3000),
     });
     if (!probe.ok) return;
@@ -1698,9 +2402,9 @@ async function migrateQdrantUserTags() {
   for (const coll of COLLECTIONS) {
     try {
       // Find points without user field
-      const res = await fetch(`${QDRANT_BASE}/collections/${coll.name}/points/scroll`, {
+      const res = await fetch(`${getQdrantBase()}/collections/${coll.name}/points/scroll`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+        headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
         body: JSON.stringify({ limit: 100, with_payload: true, with_vector: false, filter: { must: [{ is_empty: { key: 'user' } }] } }),
         signal: AbortSignal.timeout(10000),
       });
@@ -1708,10 +2412,10 @@ async function migrateQdrantUserTags() {
       const points = (await res.json()).result?.points || [];
       if (points.length === 0) continue;
       // Batch-set user field
-      await fetch(`${QDRANT_BASE}/collections/${coll.name}/points/payload`, {
+      await fetch(`${getQdrantBase()}/collections/${coll.name}/points/payload`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-        body: JSON.stringify({ points: points.map(p => p.id), payload: { user: EXP_USER } }),
+        headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+        body: JSON.stringify({ points: points.map(p => p.id), payload: { user: getExpUser() } }),
         signal: AbortSignal.timeout(10000),
       });
       activityLog({ op: 'migrate-user-tags', collection: coll.name, tagged: points.length });
@@ -1795,14 +2499,14 @@ async function ensureRoutesCollection() {
   if (_routesCollectionReady) return;
   if (!(await checkQdrant())) { _routesCollectionReady = true; return; } // FileStore needs no setup
   try {
-    const check = await fetch(`${QDRANT_BASE}/collections/${ROUTES_COLLECTION}`, {
-      headers: { 'api-key': QDRANT_API_KEY }, signal: AbortSignal.timeout(3000),
+    const check = await fetch(`${getQdrantBase()}/collections/${ROUTES_COLLECTION}`, {
+      headers: { 'api-key': getQdrantApiKey() }, signal: AbortSignal.timeout(3000),
     });
     if (check.ok) { _routesCollectionReady = true; return; }
-    await fetch(`${QDRANT_BASE}/collections/${ROUTES_COLLECTION}`, {
+    await fetch(`${getQdrantBase()}/collections/${ROUTES_COLLECTION}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-      body: JSON.stringify({ vectors: { size: EMBED_DIM, distance: 'Cosine' } }),
+      headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+      body: JSON.stringify({ vectors: { size: getEmbedDim(), distance: 'Cosine' } }),
       signal: AbortSignal.timeout(5000),
     });
     _routesCollectionReady = true;
@@ -1821,18 +2525,21 @@ ensureRoutesCollection().catch(() => {});
  * @returns {Promise<string|null>} raw text response or null on failure
  */
 async function classifyViaBrain(prompt, timeoutMs = 10000) {
-  const key = BRAIN_KEY || '';
+  const brainProvider = getBrainProvider();
+  const endpoint = getBrainEndpoint();
+  const brainModel = getBrainModel();
+  const key = getBrainKey() || '';
 
   // Provider: siliconflow or any OpenAI-compatible endpoint
-  if (BRAIN_PROVIDER === 'siliconflow' || BRAIN_ENDPOINT) {
+  if (brainProvider === 'siliconflow' || endpoint) {
     if (!key) return null;
-    const endpoint = BRAIN_ENDPOINT || 'https://api.siliconflow.com/v1/chat/completions';
+    const targetEndpoint = endpoint || 'https://api.siliconflow.com/v1/chat/completions';
     try {
-      const res = await fetch(endpoint, {
+      const res = await fetch(targetEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
         body: JSON.stringify({
-          model: BRAIN_MODEL || 'Qwen/Qwen2.5-7B-Instruct',
+          model: brainModel || 'Qwen/Qwen2.5-7B-Instruct',
           messages: [{ role: 'user', content: prompt }],
           max_tokens: 10,
           temperature: 0.1,
@@ -1845,13 +2552,13 @@ async function classifyViaBrain(prompt, timeoutMs = 10000) {
   }
 
   // Provider: ollama (generate endpoint, plain text)
-  if (BRAIN_PROVIDER === 'ollama') {
+  if (brainProvider === 'ollama') {
     try {
-      const res = await fetch(`${OLLAMA_BASE}/api/generate`, {
+      const res = await fetch(getOllamaGenerateUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: BRAIN_MODEL || 'qwen2.5:3b',
+          model: brainModel || 'qwen2.5:3b',
           prompt,
           stream: false,
           options: { temperature: 0.1, num_predict: 10 },
@@ -1882,7 +2589,7 @@ function normalizeTierResponse(raw) {
 
 function resolveTierModel(tier, runtime) {
   if (!runtime) return null;
-  const runtimeTiers = MODEL_TIERS[runtime];
+  const runtimeTiers = getModelTiers()[runtime];
   if (!runtimeTiers) return null;
   return runtimeTiers[tier] || runtimeTiers.balanced || null;
 }
@@ -1901,13 +2608,13 @@ async function storeRouteDecision(taskText, taskHash, tier, model, runtime, cont
   };
 
   // Dual-write: FileStore always, Qdrant when available
-  try { fileStoreUpsert(ROUTES_COLLECTION, id, vector, { json: JSON.stringify(routeData), user: EXP_USER }); } catch { /* non-blocking */ }
+  try { fileStoreUpsert(ROUTES_COLLECTION, id, vector, { json: JSON.stringify(routeData), user: getExpUser() }); } catch { /* non-blocking */ }
   if (await checkQdrant()) {
     try {
-      await fetch(`${QDRANT_BASE}/collections/${ROUTES_COLLECTION}/points`, {
+      await fetch(`${getQdrantBase()}/collections/${ROUTES_COLLECTION}/points`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-        body: JSON.stringify({ points: [{ id, vector, payload: { json: JSON.stringify(routeData), user: EXP_USER } }] }),
+        headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+        body: JSON.stringify({ points: [{ id, vector, payload: { json: JSON.stringify(routeData), user: getExpUser() } }] }),
         signal: AbortSignal.timeout(5000),
       });
     } catch { /* non-blocking */ }
@@ -1920,7 +2627,7 @@ async function storeRouteDecision(taskText, taskHash, tier, model, runtime, cont
  * Layer 0: Keyword pre-filter (free, ~0ms) — catches obvious cases
  * Layer 1: History check (semantic search, ~50ms) — reuse/upgrade past decisions
  * Layer 2: Brain classify (LLM call, ~200ms) — only when layers 0+1 miss
- * Fallback: ROUTER_DEFAULT_TIER
+ * Fallback: getRouterDefaultTier()
  *
  * @param {string} task - Task description (any language)
  * @param {object|null} context - { files, domain, phase } optional context
@@ -1930,7 +2637,7 @@ async function storeRouteDecision(taskText, taskHash, tier, model, runtime, cont
 async function routeModel(task, context, runtime) {
   const taskText = (task || '').slice(0, 500);
   if (!taskText) {
-    const tier = ROUTER_DEFAULT_TIER;
+    const tier = getRouterDefaultTier();
     const model = resolveTierModel(tier, runtime);
     printRouteDecision(tier, model, 'empty task', 'default');
     activityLog({ op: 'route', task: '', tier, model, source: 'default', confidence: 0 });
@@ -1960,11 +2667,11 @@ async function routeModel(task, context, runtime) {
     const vector = await getEmbedding(taskText);
     if (vector) {
       const hits = await searchCollection(ROUTES_COLLECTION, vector, 3);
-      const bestHit = hits.find(h => (h.score || 0) >= ROUTER_HISTORY_THRESHOLD);
+      const bestHit = hits.find(h => (h.score || 0) >= getRouterHistoryThreshold());
       if (bestHit) {
         const data = (() => { try { return JSON.parse(bestHit.payload?.json || '{}'); } catch { return {}; } })();
         if (data.outcome) {
-          let tier = data.tier || ROUTER_DEFAULT_TIER;
+          let tier = data.tier || getRouterDefaultTier();
           let source = 'history';
           const tiers = ['fast', 'balanced', 'premium'];
           const isNegative = data.outcome === 'fail' || data.outcome === 'cancelled' || (data.retryCount || 0) >= 2;
@@ -1992,7 +2699,7 @@ async function routeModel(task, context, runtime) {
     const brainResult = await classifyViaBrain(prompt);
     if (brainResult) {
       const normalizedTier = normalizeTierResponse(brainResult);
-      const tier = normalizedTier || ROUTER_DEFAULT_TIER;
+      const tier = normalizedTier || getRouterDefaultTier();
       const model = resolveTierModel(tier, runtime);
       const confidence = normalizedTier ? 0.75 : 0.50;
       const reason = `${tier} complexity task`;
@@ -2011,10 +2718,11 @@ async function routeModel(task, context, runtime) {
   } catch { /* Layer 2 failure — fall through to default */ }
 
   // Fallback: safe default
-  const model = resolveTierModel(ROUTER_DEFAULT_TIER, runtime);
-  printRouteDecision(ROUTER_DEFAULT_TIER, model, 'classification unavailable', 'default');
-  activityLog({ op: 'route', task: taskText.slice(0, 100), tier: ROUTER_DEFAULT_TIER, model, source: 'default', confidence: 0 });
-  return { tier: ROUTER_DEFAULT_TIER, model, confidence: 0, source: 'default', reason: 'fallback — classification unavailable', taskHash };
+  const fallbackTier = getRouterDefaultTier();
+  const model = resolveTierModel(fallbackTier, runtime);
+  printRouteDecision(fallbackTier, model, 'classification unavailable', 'default');
+  activityLog({ op: 'route', task: taskText.slice(0, 100), tier: fallbackTier, model, source: 'default', confidence: 0 });
+  return { tier: fallbackTier, model, confidence: 0, source: 'default', reason: 'fallback — classification unavailable', taskHash };
 }
 
 /**
@@ -2065,10 +2773,10 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
   // Qdrant: scroll and update (always try, not just when FileStore misses)
   if (await checkQdrant()) {
     try {
-      const scrollRes = await fetch(`${QDRANT_BASE}/collections/${ROUTES_COLLECTION}/points/scroll`, {
+      const scrollRes = await fetch(`${getQdrantBase()}/collections/${ROUTES_COLLECTION}/points/scroll`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-        body: JSON.stringify({ limit: 100, with_payload: true, filter: { must: [QDRANT_USER_FILTER] } }),
+        headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+        body: JSON.stringify({ limit: 100, with_payload: true, filter: { must: [buildQdrantUserFilter()] } }),
         signal: AbortSignal.timeout(5000),
       });
       if (scrollRes.ok) {
@@ -2078,10 +2786,10 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
           const data = (() => { try { return JSON.parse(point.payload?.json || '{}'); } catch { return {}; } })();
           if (data.taskHash === taskHash) {
             applyUpdate(data);
-            await fetch(`${QDRANT_BASE}/collections/${ROUTES_COLLECTION}/points/payload`, {
+            await fetch(`${getQdrantBase()}/collections/${ROUTES_COLLECTION}/points/payload`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
-              body: JSON.stringify({ points: [point.id], payload: { json: JSON.stringify(data), user: EXP_USER } }),
+              headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+              body: JSON.stringify({ points: [point.id], payload: { json: JSON.stringify(data), user: getExpUser() } }),
               signal: AbortSignal.timeout(5000),
             });
             found = true;
@@ -2098,4 +2806,4 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
 
 // --- Exports ---
 
-module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter };
+module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _reconcilePendingHints: reconcilePendingHints, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _isRouterEnabled: isRouterEnabled, _assessExtractedQaQuality: assessExtractedQaQuality, _normalizeExtractText: normalizeExtractText, _detectMistakes: detectMistakes, _shouldPromoteBehavioralToPrinciple: shouldPromoteBehavioralToPrinciple, _buildPrincipleText: buildPrincipleText };

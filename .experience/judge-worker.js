@@ -18,6 +18,54 @@ const os   = require('os');
 
 const EXP_DIR   = path.join(os.homedir(), '.experience');
 const queueFile = process.argv[2];
+const VALID_NOISE_REASONS = new Set(['wrong_repo', 'wrong_language', 'wrong_task', 'stale_rule']);
+
+function shortAction(input) {
+  return String(input || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+}
+
+function parseToolInputObject(value) {
+  if (value && typeof value === 'object') return value;
+  try { return JSON.parse(value || '{}'); } catch { return {}; }
+}
+
+function inferLanguageMismatch(surface, actionDomain) {
+  const scopeLang = String(surface?.scope?.lang || '').toLowerCase();
+  const hintDomain = String(surface?.domain || '').toLowerCase();
+  const normalizedAction = String(actionDomain || '').toLowerCase();
+  if (!normalizedAction) return false;
+  if (scopeLang === 'all') return false;
+  if (scopeLang && normalizedAction && !normalizedAction.startsWith(scopeLang) && !scopeLang.startsWith(normalizedAction)) {
+    return true;
+  }
+  if (!scopeLang && hintDomain && normalizedAction && !hintDomain.startsWith(normalizedAction) && !normalizedAction.startsWith(hintDomain)) {
+    return true;
+  }
+  return false;
+}
+
+function inferNoiseReason(surface, toolInputObj, helperFns) {
+  const { extractProjectPath, extractProjectSlug, detectContext } = helperFns;
+  const extractedPath = typeof extractProjectPath === 'function' ? extractProjectPath(toolInputObj || {}) : null;
+  const actionProject = typeof extractProjectSlug === 'function' ? extractProjectSlug(extractedPath || '') : null;
+  const actionDomain = typeof detectContext === 'function' ? detectContext(extractedPath || '') : null;
+
+  if (surface?.projectSlug && actionProject && surface.projectSlug !== actionProject) {
+    return 'wrong_repo';
+  }
+  if (inferLanguageMismatch(surface, actionDomain)) {
+    return 'wrong_language';
+  }
+
+  const createdAt = surface?.createdAt ? new Date(surface.createdAt).getTime() : 0;
+  const lastHitAt = surface?.lastHitAt ? new Date(surface.lastHitAt).getTime() : 0;
+  const ageDays = createdAt ? (Date.now() - createdAt) / 86400000 : 0;
+  const lastHitDays = lastHitAt ? (Date.now() - lastHitAt) / 86400000 : ageDays;
+  if (surface?.superseded || (ageDays > 180 && lastHitDays > 90 && (surface?.hitCount || 0) <= 1)) {
+    return 'stale_rule';
+  }
+  return 'wrong_task';
+}
 
 // Validate path to prevent path traversal (T-b3s-01)
 // Must reside inside ~/.experience/tmp/ and match judge-*.json pattern
@@ -41,15 +89,18 @@ if (!fs.existsSync(normalised)) process.exit(0);
     process.exit(0);
   }
 
-  const { surfacedIds = [], toolName = '', toolInput = '', toolOutcome = null } = data;
+  const { surfacedIds = [], toolName = '', toolInput = '', toolInputObj = {}, toolOutcome = null } = data;
 
   // Load core functions from experience-core.js
-  let classifyViaBrain, recordJudgeFeedback, activityLog;
+  let classifyViaBrain, recordJudgeFeedback, activityLog, extractProjectPath, extractProjectSlug, detectContext;
   try {
     const core = require(path.join(EXP_DIR, 'experience-core.js'));
     classifyViaBrain    = core.classifyViaBrain;
     recordJudgeFeedback = core.recordJudgeFeedback;
     activityLog         = typeof core._activityLog === 'function' ? core._activityLog : null;
+    extractProjectPath  = core._extractProjectPath;
+    extractProjectSlug  = core._extractProjectSlug;
+    detectContext       = core._detectContext;
   } catch {
     try { fs.unlinkSync(normalised); } catch {}
     process.exit(0);
@@ -62,8 +113,11 @@ if (!fs.existsSync(normalised)) process.exit(0);
 
   // Judge each suggestion in parallel — one LLM call per suggestion
   const VALID_VERDICTS = new Set(['FOLLOWED', 'IGNORED', 'IRRELEVANT', 'UNCLEAR']);
+  const action = shortAction(toolInput);
+  const parsedToolInput = parseToolInputObject(toolInputObj || toolInput);
 
-  await Promise.allSettled(surfacedIds.map(async ({ collection, id, solution }) => {
+  await Promise.allSettled(surfacedIds.map(async (surface) => {
+    const { collection, id, solution } = surface || {};
     if (!solution || !id || !collection) return;
 
     const prompt =
@@ -110,20 +164,56 @@ if (!fs.existsSync(normalised)) process.exit(0);
       if (VALID_VERDICTS.has(word)) verdict = word;
     } catch (err) {
       const reason = err?.name === 'AbortError' ? 'timeout' : 'unreachable';
-      if (activityLog) activityLog({ op: 'judge-brain-error', collection, pointId: id.slice(0, 8), reason, verdict: 'UNCLEAR' });
+      if (activityLog) {
+        activityLog({
+          op: 'judge-brain-error',
+          tool: toolName,
+          action,
+          collection,
+          pointId: id.slice(0, 8),
+          reason,
+          verdict: 'UNCLEAR',
+          toolOutcome,
+        });
+      }
     }
 
     // Hybrid signal: error outcome + UNCLEAR → IGNORED
     if (verdict === 'UNCLEAR' && toolOutcome === 'error') verdict = 'IGNORED';
+    const noiseReason = verdict === 'IRRELEVANT'
+      ? inferNoiseReason(surface, parsedToolInput, { extractProjectPath, extractProjectSlug, detectContext })
+      : null;
 
     // UNCLEAR → no feedback (neutral), but log for diagnostics
     if (verdict === 'UNCLEAR') {
-      if (activityLog) activityLog({ op: 'judge-skipped', collection, pointId: id.slice(0, 8), reason: 'unclear' });
+      if (activityLog) {
+        activityLog({
+          op: 'judge-skipped',
+          tool: toolName,
+          action,
+          collection,
+          pointId: id.slice(0, 8),
+          reason: 'unclear',
+          toolOutcome,
+        });
+      }
       return;
     }
 
     try {
-      await recordJudgeFeedback(collection, id, verdict);
+      if (activityLog) {
+        activityLog({
+          op: 'judge-verdict',
+          tool: toolName,
+          action,
+          collection,
+          pointId: id.slice(0, 8),
+          verdict,
+          ...(noiseReason && VALID_NOISE_REASONS.has(noiseReason) ? { reason: noiseReason } : {}),
+          toolOutcome,
+        });
+      }
+      await recordJudgeFeedback(collection, id, verdict, noiseReason);
     } catch {
       // Ignore — feedback failure must not crash worker
     }

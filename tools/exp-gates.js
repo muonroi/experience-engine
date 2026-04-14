@@ -18,39 +18,42 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const HOME = os.homedir();
-const ACTIVITY_LOG = path.join(HOME, '.experience', 'activity.jsonl');
-const CONFIG_FILE = path.join(HOME, '.experience', 'config.json');
 const JSON_MODE = process.argv.includes('--json');
 
-// --- Load config ---
-let cfg = {};
-try { cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch {}
+function resolvePaths(options = {}) {
+  const homeDir = options.homeDir || os.homedir();
+  return {
+    homeDir,
+    activityLog: options.activityLog || path.join(homeDir, '.experience', 'activity.jsonl'),
+    configFile: options.configFile || path.join(homeDir, '.experience', 'config.json'),
+  };
+}
 
-const QDRANT_BASE = cfg.qdrantUrl || 'http://localhost:6333';
-const QDRANT_KEY = cfg.qdrantKey || '';
+function loadConfig(configFile) {
+  try { return JSON.parse(fs.readFileSync(configFile, 'utf8')); } catch { return {}; }
+}
 
 // --- Qdrant helpers ---
-async function qdrantGet(path) {
+async function qdrantGet(baseUrl, apiKey, requestPath) {
   const headers = { 'Content-Type': 'application/json' };
-  if (QDRANT_KEY) headers['api-key'] = QDRANT_KEY;
-  const res = await fetch(`${QDRANT_BASE}${path}`, { headers, signal: AbortSignal.timeout(5000) });
+  if (apiKey) headers['api-key'] = apiKey;
+  const res = await fetch(`${baseUrl}${requestPath}`, { headers, signal: AbortSignal.timeout(5000) });
   if (!res.ok) return null;
   return res.json();
 }
 
-async function collectionCount(name) {
-  const data = await qdrantGet(`/collections/${name}`);
+async function collectionCount(baseUrl, apiKey, name) {
+  const data = await qdrantGet(baseUrl, apiKey, `/collections/${name}`);
   return data?.result?.points_count ?? 0;
 }
 
-async function scrollAll(name) {
-  const data = await qdrantGet(`/collections/${name}/points/scroll`);
+async function scrollAll(baseUrl, apiKey, name) {
+  const data = await qdrantGet(baseUrl, apiKey, `/collections/${name}/points/scroll`);
   // Simple scroll — for small collections (<100 entries)
   const body = JSON.stringify({ limit: 100, with_payload: true });
   const headers = { 'Content-Type': 'application/json' };
-  if (QDRANT_KEY) headers['api-key'] = QDRANT_KEY;
-  const res = await fetch(`${QDRANT_BASE}/collections/${name}/points/scroll`, {
+  if (apiKey) headers['api-key'] = apiKey;
+  const res = await fetch(`${baseUrl}/collections/${name}/points/scroll`, {
     method: 'POST', headers, body, signal: AbortSignal.timeout(10000)
   });
   if (!res.ok) return [];
@@ -59,9 +62,9 @@ async function scrollAll(name) {
 }
 
 // --- Activity log parsing ---
-function readActivityLog() {
+function readActivityLog(activityLogPath) {
   try {
-    return fs.readFileSync(ACTIVITY_LOG, 'utf8')
+    return fs.readFileSync(activityLogPath, 'utf8')
       .split('\n')
       .filter(Boolean)
       .map(line => { try { return JSON.parse(line); } catch { return null; } })
@@ -69,8 +72,97 @@ function readActivityLog() {
   } catch { return []; }
 }
 
+function normalizeText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function isPlaceholderLesson(data) {
+  const trigger = normalizeText(data?.trigger);
+  const solution = normalizeText(data?.solution);
+  const question = normalizeText(data?.question);
+  return (
+    trigger === 'when this fires' ||
+    trigger === 'when this happens' ||
+    question === 'one line' ||
+    solution === 'what to do'
+  );
+}
+
+function computeDedupAndHygiene(points) {
+  const keys = new Set();
+  let duplicateCount = 0;
+  let lowQualityCount = 0;
+
+  for (const point of points) {
+    let data = {};
+    try { data = JSON.parse(point.payload?.json || '{}'); } catch {}
+    if (isPlaceholderLesson(data)) lowQualityCount++;
+    const trigger = normalizeText(data.trigger);
+    const solution = normalizeText(data.solution);
+    if (!trigger || !solution) continue;
+    const key = `${trigger}||${solution}`;
+    if (keys.has(key)) duplicateCount++;
+    else keys.add(key);
+  }
+
+  return { duplicateCount, lowQualityCount };
+}
+
+function computeInterceptionPrecision(activity, now) {
+  const weekAgo = now - 7 * 86400000;
+  const interceptEvents = activity.filter(e => e.op === 'intercept' && new Date(e.ts).getTime() > weekAgo);
+  const surfacedSuggestions = interceptEvents.filter(e => e.result === 'suggestion');
+  const feedbackEvents = activity.filter(e => {
+    if (!e?.ts) return false;
+    if (new Date(e.ts).getTime() <= weekAgo) return false;
+    return e.op === 'feedback' || e.op === 'judge-feedback' || e.op === 'implicit-unused';
+  });
+
+  let relevant = 0;
+  let irrelevant = 0;
+  for (const event of feedbackEvents) {
+    if (event.op === 'implicit-unused') {
+      irrelevant++;
+      continue;
+    }
+    const verdict = event.verdict || (event.followed === true ? 'FOLLOWED' : event.followed === false ? 'IGNORED' : null);
+    if (verdict === 'FOLLOWED' || verdict === 'IGNORED') relevant++;
+    else if (verdict === 'IRRELEVANT') irrelevant++;
+  }
+  const classified = relevant + irrelevant;
+  const precision = classified > 0 ? Math.round(relevant / classified * 100) : 0;
+
+  return {
+    interceptEvents,
+    surfacedSuggestions,
+    classified,
+    relevant,
+    irrelevant,
+    precision,
+  };
+}
+
+function computeOrganicExtractionStats(points, assessQuality) {
+  const stats = {
+    totalOrganic: 0,
+    qualityOrganic: 0,
+  };
+  for (const point of points) {
+    let data = {};
+    try { data = JSON.parse(point.payload?.json || '{}'); } catch {}
+    if (data.createdFrom !== 'session-extractor') continue;
+    stats.totalOrganic++;
+    if (!assessQuality || assessQuality(data)?.ok) stats.qualityOrganic++;
+  }
+  return stats;
+}
+
 // --- Gate checks ---
-async function checkGates() {
+async function checkGates(options = {}) {
+  const { homeDir, activityLog, configFile } = resolvePaths(options);
+  const cfg = loadConfig(configFile);
+  const qdrantBase = options.qdrantBase || cfg.qdrantUrl || 'http://localhost:6333';
+  const qdrantKey = options.qdrantKey || cfg.qdrantKey || '';
   const results = {
     gate1: { name: 'Build', checks: [], pass: true },
     gate2: { name: 'Dogfood', checks: [], pass: true },
@@ -78,15 +170,15 @@ async function checkGates() {
     overall: { percent: 0, verdict: '' }
   };
 
-  const activity = readActivityLog();
-  const now = Date.now();
+  const activity = Array.isArray(options.events) ? options.events : readActivityLog(activityLog);
+  const now = options.now || Date.now();
 
   // ════════════════════════════════════════════
   // GATE 1: Build
   // ════════════════════════════════════════════
 
   // Check 1: experience-core.js exists
-  const coreExists = fs.existsSync(path.join(HOME, '.experience', 'experience-core.js'));
+  const coreExists = fs.existsSync(path.join(homeDir, '.experience', 'experience-core.js'));
   results.gate1.checks.push({
     name: 'Brain installed',
     target: 'experience-core.js exists',
@@ -106,7 +198,7 @@ async function checkGates() {
   // Check 3: Qdrant reachable
   let qdrantOk = false;
   try {
-    const data = await qdrantGet('/collections');
+    const data = await qdrantGet(qdrantBase, qdrantKey, '/collections');
     qdrantOk = !!data?.result?.collections;
   } catch {}
   results.gate1.checks.push({
@@ -116,11 +208,12 @@ async function checkGates() {
     pass: qdrantOk
   });
 
+  const homeCore = require(path.join(homeDir, '.experience', 'experience-core.js'));
+
   // Check 4: Embed works
   let embedOk = false;
   try {
-    const core = require(path.join(HOME, '.experience', 'experience-core.js'));
-    const vec = await core.getEmbeddingRaw('gate check probe');
+    const vec = await homeCore.getEmbeddingRaw('gate check probe');
     embedOk = vec && vec.length > 0;
   } catch {}
   results.gate1.checks.push({
@@ -133,9 +226,11 @@ async function checkGates() {
   // Check 5: Brain works
   let brainOk = false;
   try {
-    const core = require(path.join(HOME, '.experience', 'experience-core.js'));
-    const result = await core._callBrainWithFallback('Return JSON: {"test":"ok"}');
-    brainOk = !!result?.test;
+    for (let attempt = 0; attempt < 3 && !brainOk; attempt++) {
+      const result = await homeCore._callBrainWithFallback('Return strict JSON only: {"test":"ok"}');
+      brainOk = result?.test === 'ok';
+      if (!brainOk && attempt < 2) await new Promise((resolve) => setTimeout(resolve, 350));
+    }
   } catch {}
   results.gate1.checks.push({
     name: 'Brain API works',
@@ -151,42 +246,50 @@ async function checkGates() {
   // ════════════════════════════════════════════
 
   // Metric 1: Extraction works (>= 5 organic T2 entries)
-  const t2Count = await collectionCount('experience-selfqa');
+  const t2Count = await collectionCount(qdrantBase, qdrantKey, 'experience-selfqa');
+  const t2Points = await scrollAll(qdrantBase, qdrantKey, 'experience-selfqa');
+  const t1Count = await collectionCount(qdrantBase, qdrantKey, 'experience-behavioral');
+  const t1Points = await scrollAll(qdrantBase, qdrantKey, 'experience-behavioral');
+  const t0Count = await collectionCount(qdrantBase, qdrantKey, 'experience-principles');
+  const t0Points = await scrollAll(qdrantBase, qdrantKey, 'experience-principles');
   const extractEvents = activity.filter(e => e.op === 'extract' && (e.stored || 0) > 0);
   const totalStored = extractEvents.reduce((sum, e) => sum + (e.stored || 0), 0);
+  const organicStats = computeOrganicExtractionStats(
+    [...t2Points, ...t1Points, ...t0Points],
+    homeCore._assessExtractedQaQuality
+  );
   results.gate2.checks.push({
     name: '1. Extraction works',
     target: '>= 5 organic entries',
-    actual: `${totalStored} stored (${t2Count} in T2)`,
-    pass: totalStored >= 5,
+    actual: `${organicStats.qualityOrganic} live organic (${totalStored} extract-stored events, ${organicStats.totalOrganic} total organic entries)`,
+    pass: organicStats.qualityOrganic >= 5 || totalStored >= 5,
     must: true
   });
 
   // Metric 2: Dedup works (0 exact duplicates)
-  // Simple check: all T2 entries have unique triggers
+  // Also fail if placeholder extractor outputs still pollute T2.
   let dedupOk = true;
+  let dedupStats = { duplicateCount: 0, lowQualityCount: 0 };
   if (t2Count > 0) {
-    const t2Points = await scrollAll('experience-selfqa');
-    const triggers = new Set();
-    for (const p of t2Points) {
-      try {
-        const d = JSON.parse(p.payload?.json || '{}');
-        if (d.trigger && triggers.has(d.trigger)) { dedupOk = false; break; }
-        if (d.trigger) triggers.add(d.trigger);
-      } catch {}
-    }
+    dedupStats = computeDedupAndHygiene(t2Points);
+    dedupOk = dedupStats.duplicateCount === 0 && dedupStats.lowQualityCount === 0;
   }
   results.gate2.checks.push({
-    name: '2. Dedup works',
-    target: '0 exact duplicates',
-    actual: t2Count === 0 ? 'N/A (no T2 entries yet)' : dedupOk ? 'OK' : 'Duplicates found',
+    name: '2. Dedup / hygiene works',
+    target: '0 exact duplicates, 0 placeholder entries',
+    actual: t2Count === 0
+      ? 'N/A (no T2 entries yet)'
+      : dedupOk
+        ? 'OK'
+        : `${dedupStats.duplicateCount} exact duplicates, ${dedupStats.lowQualityCount} low-quality entries`,
     pass: t2Count === 0 || dedupOk,
     must: true
   });
 
   // Metric 3: Interception fires (>= 10 fires/week)
   const weekAgo = now - 7 * 86400000;
-  const interceptEvents = activity.filter(e => e.op === 'intercept' && new Date(e.ts).getTime() > weekAgo);
+  const precisionStats = computeInterceptionPrecision(activity, now);
+  const interceptEvents = precisionStats.interceptEvents;
   results.gate2.checks.push({
     name: '3. Interception fires',
     target: '>= 10/week',
@@ -195,14 +298,16 @@ async function checkGates() {
     must: true
   });
 
-  // Metric 4: Interception accurate (>= 70% have suggestions)
-  const withSuggestions = interceptEvents.filter(e => e.result === 'suggestion');
-  const accuracy = interceptEvents.length > 0 ? Math.round(withSuggestions.length / interceptEvents.length * 100) : 0;
+  // Metric 4: Interception accurate = surfaced hints later classified as relevant, not raw surface coverage.
   results.gate2.checks.push({
     name: '4. Interception accurate',
-    target: '>= 70% relevant',
-    actual: interceptEvents.length > 0 ? `${accuracy}% (${withSuggestions.length}/${interceptEvents.length})` : 'No data',
-    pass: interceptEvents.length === 0 || accuracy >= 70,
+    target: '>= 70% of classified surfaced hints are relevant',
+    actual: precisionStats.classified > 0
+      ? `${precisionStats.precision}% precision (${precisionStats.relevant}/${precisionStats.classified} classified surfaced hints, ${precisionStats.surfacedSuggestions.length}/${interceptEvents.length} surfaced total)`
+      : interceptEvents.length > 0
+        ? `No classified surfaced hints yet (${precisionStats.surfacedSuggestions.length}/${interceptEvents.length} surfaced total)`
+        : 'No data',
+    pass: precisionStats.classified > 0 && precisionStats.precision >= 70,
     must: true
   });
 
@@ -228,10 +333,7 @@ async function checkGates() {
   });
 
   // Metric 7: Evolution works (>= 1 principle created)
-  const t0Count = await collectionCount('experience-principles');
-  const t1Count = await collectionCount('experience-behavioral');
   // Also check T1 entries with createdFrom=evolution-abstraction (probationary principles)
-  const t1Points = await scrollAll('experience-behavioral');
   const probationary = t1Points.filter(p => {
     try { return JSON.parse(p.payload?.json || '{}').createdFrom === 'evolution-abstraction'; } catch { return false; }
   });
@@ -259,7 +361,6 @@ async function checkGates() {
   // Proxy: principles exist AND have hitCount > 0
   let novelCoverage = false;
   if (t0Count > 0) {
-    const t0Points = await scrollAll('experience-principles');
     novelCoverage = t0Points.some(p => {
       try { return (JSON.parse(p.payload?.json || '{}').hitCount || 0) > 0; } catch { return false; }
     });
@@ -298,7 +399,7 @@ async function checkGates() {
   results.gate3.checks.push({
     name: 'Q1: Agent avoids past mistakes?',
     target: 'Extraction + interception pipeline working',
-    actual: q1 ? 'YES — organic lessons stored + hooks firing' : totalStored >= 3 ? 'Partial — stored but hooks unclear' : 'NO — insufficient organic extractions',
+    actual: q1 ? 'YES — organic lessons stored + hooks firing' : organicStats.qualityOrganic >= 3 ? 'Partial — organic lessons exist, still below target' : 'NO — insufficient organic extractions',
     pass: q1
   });
 
@@ -349,6 +450,7 @@ async function checkGates() {
     t1_probationary: probationary.length,
     t2_selfqa: t2Count,
     total_extractions: totalStored,
+    live_organic_extractions: organicStats.qualityOrganic,
     total_intercepts_week: interceptEvents.length,
     evolve_runs: evolveEvents.length,
     first_activity: activity[0]?.ts || 'N/A',
@@ -403,7 +505,7 @@ function display(results) {
   const d = results.data;
   console.log('  ── Data ──');
   console.log(`  T0: ${d.t0_principles} principles | T1: ${d.t1_behavioral} behavioral (${d.t1_probationary} probationary) | T2: ${d.t2_selfqa} selfqa`);
-  console.log(`  Extractions: ${d.total_extractions} stored | Intercepts: ${d.total_intercepts_week}/week | Evolve runs: ${d.evolve_runs}`);
+  console.log(`  Extractions: ${d.total_extractions} stored (${d.live_organic_extractions} live organic) | Intercepts: ${d.total_intercepts_week}/week | Evolve runs: ${d.evolve_runs}`);
   console.log(`  Active since: ${d.first_activity} (${d.days_active} days)`);
   console.log('');
 
@@ -430,7 +532,11 @@ function display(results) {
 }
 
 // --- Main ---
-checkGates().then(display).catch(e => {
-  console.error('Gate check failed:', e.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  checkGates().then(display).catch(e => {
+    console.error('Gate check failed:', e.message);
+    process.exit(1);
+  });
+}
+
+module.exports = { checkGates, display, readActivityLog, computeDedupAndHygiene, computeInterceptionPrecision, computeOrganicExtractionStats, isPlaceholderLesson };
