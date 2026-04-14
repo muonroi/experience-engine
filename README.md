@@ -338,6 +338,16 @@ Supports: `claude` (haiku/sonnet/opus), `gemini` (flash/pro), `codex` (mini/o3),
 
 Report the verdict for a surfaced hint. Supports short ID prefix (8 chars).
 
+Helper command:
+
+```bash
+exp-feedback ignored a1b2c3d4 experience-behavioral
+exp-feedback noise a1b2c3d4 experience-selfqa wrong_task
+exp-feedback followed a1b2c3d4 experience-behavioral
+```
+
+Raw API form:
+
 ```bash
 curl -X POST http://localhost:8082/api/feedback \
   -H "Content-Type: application/json" \

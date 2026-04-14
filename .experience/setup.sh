@@ -933,7 +933,7 @@ if ! cp "$SRC_DIR/experience-core.js" "$INSTALL_DIR/experience-core.js"; then
 fi
 
 # Copy hook/runtime helpers from source
-for f in interceptor.js stop-extractor.js interceptor-post.js interceptor-prompt.js judge-worker.js remote-client.js extract-compact.js exp-client-drain.js activity-watch.js health-check.sh exp-watch exp-open-pane exp-pane-right exp-pane-left exp-pane-bottom; do
+for f in interceptor.js stop-extractor.js interceptor-post.js interceptor-prompt.js judge-worker.js remote-client.js extract-compact.js exp-client-drain.js activity-watch.js health-check.sh exp-watch exp-feedback exp-feedback.js exp-open-pane exp-pane-right exp-pane-left exp-pane-bottom; do
   if [ -f "$SRC_DIR/$f" ]; then
     cp "$SRC_DIR/$f" "$INSTALL_DIR/$f"
   fi
@@ -947,10 +947,11 @@ for f in exp-server-maintain.js exp-portable-backup.js exp-portable-restore.js; 
   fi
 done
 
-chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js" "$INSTALL_DIR/interceptor-post.js" "$INSTALL_DIR/interceptor-prompt.js" "$INSTALL_DIR/judge-worker.js" "$INSTALL_DIR/remote-client.js" "$INSTALL_DIR/extract-compact.js" "$INSTALL_DIR/exp-client-drain.js" "$INSTALL_DIR/activity-watch.js" "$INSTALL_DIR/health-check.sh" "$INSTALL_DIR/exp-server-maintain.js" "$INSTALL_DIR/exp-portable-backup.js" "$INSTALL_DIR/exp-portable-restore.js" "$INSTALL_DIR/exp-watch" "$INSTALL_DIR/exp-open-pane" "$INSTALL_DIR/exp-pane-right" "$INSTALL_DIR/exp-pane-left" "$INSTALL_DIR/exp-pane-bottom" 2>/dev/null
+chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js" "$INSTALL_DIR/interceptor-post.js" "$INSTALL_DIR/interceptor-prompt.js" "$INSTALL_DIR/judge-worker.js" "$INSTALL_DIR/remote-client.js" "$INSTALL_DIR/extract-compact.js" "$INSTALL_DIR/exp-client-drain.js" "$INSTALL_DIR/activity-watch.js" "$INSTALL_DIR/health-check.sh" "$INSTALL_DIR/exp-server-maintain.js" "$INSTALL_DIR/exp-portable-backup.js" "$INSTALL_DIR/exp-portable-restore.js" "$INSTALL_DIR/exp-watch" "$INSTALL_DIR/exp-feedback" "$INSTALL_DIR/exp-feedback.js" "$INSTALL_DIR/exp-open-pane" "$INSTALL_DIR/exp-pane-right" "$INSTALL_DIR/exp-pane-left" "$INSTALL_DIR/exp-pane-bottom" 2>/dev/null
 
 mkdir -p "$HOME/.local/bin"
 ln -sf "$INSTALL_DIR/exp-watch" "$HOME/.local/bin/exp-watch"
+ln -sf "$INSTALL_DIR/exp-feedback" "$HOME/.local/bin/exp-feedback"
 ln -sf "$INSTALL_DIR/exp-open-pane" "$HOME/.local/bin/exp-open-pane"
 ln -sf "$INSTALL_DIR/exp-pane-right" "$HOME/.local/bin/exp-pane-right"
 ln -sf "$INSTALL_DIR/exp-pane-left" "$HOME/.local/bin/exp-pane-left"
@@ -1948,6 +1949,9 @@ if [ "$HEALTH_FAIL" -eq 0 ]; then
   echo ""
   echo " Live activity:"
   echo "   exp-watch"
+  echo " Feedback helper:"
+  echo "   exp-feedback ignored a1b2c3d4 experience-behavioral"
+  echo "   exp-feedback noise a1b2c3d4 experience-selfqa wrong_task"
   echo " Health check:"
   echo "   bash ~/.experience/health-check.sh"
   echo "   exp-open-pane --right --percent 33"
@@ -2006,10 +2010,13 @@ if [ -n "$REMOTE_HOST" ]; then
     "$INSTALL_DIR/stop-extractor.js"
     "$INSTALL_DIR/activity-watch.js"
     "$INSTALL_DIR/health-check.sh"
+    "$INSTALL_DIR/exp-feedback.js"
+    "$INSTALL_DIR/exp-feedback"
     "$INSTALL_DIR/exp-server-maintain.js"
     "$INSTALL_DIR/exp-portable-backup.js"
     "$INSTALL_DIR/exp-portable-restore.js"
     "$INSTALL_DIR/exp-watch"
+    "$INSTALL_DIR/exp-feedback"
     "$INSTALL_DIR/exp-open-pane"
     "$INSTALL_DIR/exp-pane-right"
     "$INSTALL_DIR/exp-pane-left"
