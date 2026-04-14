@@ -41,12 +41,31 @@ function debugLog(event) {
 }
 
 function activityLog(event) {
+  if (isRemoteMode()) return;
   try {
     const core = require(path.join(EXP_DIR, 'experience-core.js'));
     if (typeof core._activityLog === 'function') {
       core._activityLog({ op: 'hook', hook: 'interceptor-post', ...event });
     }
   } catch {}
+}
+
+function getRemoteClient() {
+  try {
+    return require(path.join(EXP_DIR, 'remote-client.js'));
+  } catch {
+    return null;
+  }
+}
+
+function isRemoteMode() {
+  const remote = getRemoteClient();
+  if (!remote) return false;
+  try {
+    return remote.isRemoteEnabled(remote.loadConfig());
+  } catch {
+    return false;
+  }
 }
 
 function buildSourceMeta(data) {
@@ -111,33 +130,12 @@ process.stdin.on('end', async () => {
       }
     } catch { /* tmp dir may not exist yet */ }
 
-    // --- Step 2: Read last-suggestions.json ---
-    let state;
+    // --- Step 2: Read last-suggestions.json if present ---
+    let state = null;
     try {
       const raw = fs.readFileSync(STATE_FILE, 'utf8');
       state = JSON.parse(raw);
-    } catch {
-      debugLog({ stage: 'no_state_file' });
-      activityLog({ stage: 'no_state_file' });
-      process.exit(0);
-    }
-
-    // --- Step 3: Stale check ---
-    const ageMs = Date.now() - new Date(state.ts).getTime();
-    if (ageMs > STALE_MS) {
-      debugLog({ stage: 'stale_state', ageMs });
-      activityLog({ stage: 'stale_state', ageMs, tool: state.tool || null });
-      try { fs.unlinkSync(STATE_FILE); } catch {}
-      process.exit(0);
-    }
-
-    const surfacedIds = state.surfacedIds || [];
-    if (surfacedIds.length === 0) {
-      debugLog({ stage: 'no_surfaced_ids' });
-      activityLog({ stage: 'no_surfaced_ids', tool: state.tool || null });
-      try { fs.unlinkSync(STATE_FILE); } catch {}
-      process.exit(0);
-    }
+    } catch {}
 
     // Parse PostToolUse input
     let data;
@@ -147,6 +145,18 @@ process.stdin.on('end', async () => {
     const toolName   = data.tool_name  || data.toolName  || '';
     const toolInput  = data.tool_input || data.input     || {};
     const toolOutput = data.tool_response || data.output || data.result || {};
+    let surfacedIds = [];
+    if (state?.ts) {
+      const ageMs = Date.now() - new Date(state.ts).getTime();
+      if (ageMs > STALE_MS) {
+        debugLog({ stage: 'stale_state', ageMs });
+        activityLog({ stage: 'stale_state', ageMs, tool: state.tool || null });
+        try { fs.unlinkSync(STATE_FILE); } catch {}
+        state = null;
+      }
+    }
+    if (state?.surfacedIds?.length > 0) surfacedIds = state.surfacedIds;
+
     debugLog({ stage: 'parsed', tool: toolName, surfacedCount: surfacedIds.length });
     activityLog({
       stage: 'parsed',
@@ -157,6 +167,65 @@ process.stdin.on('end', async () => {
       ...sourceMeta
     });
 
+    const remote = getRemoteClient();
+    if (remote) {
+      const config = remote.loadConfig();
+      if (remote.isRemoteEnabled(config)) {
+        try { await remote.flushQueueForHook({ config }); } catch {}
+        const body = {
+          toolName,
+          toolInput,
+          toolOutput,
+          surfacedIds,
+          cwd: data.cwd || process.cwd(),
+          ...sourceMeta,
+        };
+        try {
+          await remote.postJsonForHook('/api/posttool', body, { config });
+          debugLog({ stage: 'remote_posttool_sent', tool: toolName, surfacedCount: surfacedIds.length });
+        } catch (sendErr) {
+          remote.queueRequest('POST', '/api/posttool', body);
+          debugLog({ stage: 'remote_posttool_queued', tool: toolName, surfacedCount: surfacedIds.length, message: sendErr?.message || String(sendErr) });
+        }
+        try { remote.maybeSpawnExtractDrain({ config }); } catch {}
+        try { if (state) fs.unlinkSync(STATE_FILE); } catch {}
+        process.exit(0);
+      }
+    }
+
+    // Reconcile repeated no-touch behavior across pending hints, regardless of whether
+    // this PostToolUse has a fresh last-suggestions state.
+    try {
+      const core = require(path.join(EXP_DIR, 'experience-core.js'));
+      if (typeof core._reconcilePendingHints === 'function') {
+        const pendingResult = await core._reconcilePendingHints(surfacedIds, toolName, toolInput, sourceMeta);
+        debugLog({
+          stage: 'pending_reconciled',
+          tool: toolName,
+          touched: pendingResult.touched.length,
+          pending: pendingResult.pending.length,
+          implicitUnused: pendingResult.implicitUnused.length,
+        });
+        activityLog({
+          stage: 'pending_reconciled',
+          tool: toolName,
+          touched: pendingResult.touched.length,
+          pending: pendingResult.pending.length,
+          implicitUnused: pendingResult.implicitUnused.length,
+          ...sourceMeta,
+        });
+      }
+    } catch (pendingErr) {
+      debugLog({ stage: 'pending_error', message: pendingErr?.message || String(pendingErr) });
+    }
+
+    if (surfacedIds.length === 0) {
+      debugLog({ stage: 'no_surfaced_ids' });
+      activityLog({ stage: 'no_surfaced_ids', tool: toolName || null, ...sourceMeta });
+      try { if (state) fs.unlinkSync(STATE_FILE); } catch {}
+      process.exit(0);
+    }
+
     // --- Step 4: Write judge queue file ---
     const queueFile = path.join(TMP_DIR, `judge-${Date.now()}.json`);
     try {
@@ -165,6 +234,7 @@ process.stdin.on('end', async () => {
         ts:          new Date().toISOString(),
         surfacedIds,
         toolName,
+        toolInputObj: toolInput || {},
         toolInput:   JSON.stringify(toolInput || {}).slice(0, 300),
         toolOutcome: classifyOutcome(toolName, toolInput, toolOutput),
       }));

@@ -115,7 +115,63 @@ Step D — Agent wiring:    Claude Code / Gemini CLI / Codex CLI / OpenCode
 bash .experience/setup.sh --local   # Docker Qdrant + Ollama (100% free, 100% local)
 bash .experience/setup.sh --vps     # VPS Qdrant via SSH tunnel
 bash .experience/setup.sh --remote  # Connect to a remote VPS-hosted experience engine instead of local
-                                    # Uses QDRANT_URL and server URL from config.json
+                                    # Set EXP_SERVER_BASE_URL / EXP_SERVER_AUTH_TOKEN for thin-client mode
+```
+
+### Thin Client Mode
+
+When `serverBaseUrl` is configured, the local machine becomes a thin hook client instead of the
+canonical brain.
+
+- Keep local: `config.json`, `tmp/last-suggestions.json`, offline queue, debug log, stop/evolve markers
+- Move to VPS: intercept activity, post-tool reconciliation, judge queue, extract, evolve, stats, gates, Qdrant-backed brain state
+- Result: switching machines only needs the same VPS URL/token; the brain stays on the server
+
+```json
+{
+  "serverBaseUrl": "http://your-vps:8082",
+  "serverAuthToken": "optional-bearer-token",
+  "serverTimeoutMs": 5000
+}
+```
+
+Queued remote events live under `~/.experience/offline-queue/` and replay automatically on the
+next hook invocation. Lightweight hook traffic is replayed inline; heavier queued `/api/extract`
+events are compacted and drained in the background so PreToolUse/PostToolUse stay fast without
+letting extract payloads grow unbounded.
+
+### Existing Machine → Thin Client
+
+If a workstation already runs an older local/hybrid Experience Engine install, switch it to a
+true thin client with:
+
+```bash
+git pull
+bash .experience/setup-thin-client.sh \
+  --server http://your-vps:8082 \
+  --token YOUR_SERVER_AUTH_TOKEN \
+  --clean
+```
+
+`--clean` backs up old local state under `~/.experience/backup-thin-client/<timestamp>/` and removes
+local `activity.jsonl`, `store/`, and old markers so the machine stops behaving like a local brain.
+
+### Fresh Machine → Thin Client
+
+On a brand-new machine, clone the repo and run:
+
+```bash
+git clone https://github.com/muonroi/experience-engine.git
+cd experience-engine
+bash .experience/setup-thin-client.sh \
+  --server http://your-vps:8082 \
+  --token YOUR_SERVER_AUTH_TOKEN
+```
+
+Then verify:
+
+```bash
+bash ~/.experience/health-check.sh --json
 ```
 
 ## How It Works
@@ -219,15 +275,17 @@ node server.js
 |--------|------|-------------|
 | `GET` | `/health` | Qdrant + FileStore status |
 | `POST` | `/api/intercept` | Query experience before tool call |
+| `POST` | `/api/posttool` | Canonical post-tool reconciliation + judge enqueue |
 | `POST` | `/api/extract` | Extract lessons from session transcript |
 | `POST` | `/api/evolve` | Trigger evolution cycle |
 | `GET` | `/api/stats` | Observability data (`?since=7d`, `?all=true`) |
+| `GET` | `/api/gates` | Server-side readiness / gate report |
 | `GET` | `/api/graph` | Edges for experience ID (`?id={uuid}`) |
 | `GET` | `/api/timeline` | Knowledge evolution for topic (`?topic={text}`) |
 | `GET` | `/api/user` | Current user identity |
 | `POST` | `/api/principles/share` | Export principle as portable JSON |
 | `POST` | `/api/principles/import` | Import shared principle |
-| `POST` | `/api/feedback` | Report if suggestion was followed/ignored |
+| `POST` | `/api/feedback` | Report suggestion verdict (`FOLLOWED`, `IGNORED`, `IRRELEVANT`) |
 | `POST` | `/api/route-model` | Intelligent model tier routing |
 | `POST` | `/api/route-feedback` | Record agent outcome for routing learning |
 | `POST` | `/api/brain` | Proxy LLM brain call through server — enables local agents on firewalled machines to reach brain API | `{ prompt, timeoutMs? }` |
@@ -278,13 +336,21 @@ Supports: `claude` (haiku/sonnet/opus), `gemini` (flash/pro), `codex` (mini/o3),
 
 ### Example: Feedback
 
-Report whether the agent followed or ignored a surfaced hint. Supports short ID prefix (8 chars).
+Report the verdict for a surfaced hint. Supports short ID prefix (8 chars).
 
 ```bash
 curl -X POST http://localhost:8082/api/feedback \
   -H "Content-Type: application/json" \
-  -d '{"pointId": "a1b2c3d4", "collection": "experience-behavioral", "followed": false}'
+  -d '{"pointId": "a1b2c3d4", "collection": "experience-behavioral", "verdict": "IRRELEVANT", "reason": "wrong_repo"}'
 ```
+
+Valid verdicts:
+- `FOLLOWED`
+- `IGNORED`
+- `IRRELEVANT` (requires `reason`: `wrong_repo`, `wrong_language`, `wrong_task`, `stale_rule`)
+
+Legacy compatibility:
+- older clients may still send `followed: true|false`, which maps to `FOLLOWED` / `IGNORED`
 
 ## Python SDK
 
@@ -357,6 +423,10 @@ bash ~/.experience/health-check.sh          # full dashboard
 bash ~/.experience/health-check.sh --json   # machine-readable output
 bash ~/.experience/health-check.sh --watch  # auto-refresh every 30s
 ```
+
+The dashboard now prints a concrete **fix suggestion per unhealthy check**, including thin-client /
+VPS issues such as `serverBaseUrl`, remote `/api/gates`, auth token, offline queue backlog, and
+missing installed helper files.
 
 **What it checks (14 points):**
 
@@ -432,8 +502,9 @@ Fail-open: if brain is unavailable or slow (>3s), all suggestions pass through.
 Configurable: set `brainFilter: false` in `~/.experience/config.json` to disable.
 
 Layer 3 also triggers the judge-worker — a detached LLM process that evaluates whether the hint was
-followed, ignored, or irrelevant. Results are posted back to the experience engine as feedback,
-closing the loop without requiring any agent cooperation.
+followed, ignored, or irrelevant. Irrelevant hints are tagged with a noise reason
+(`wrong_repo`, `wrong_language`, `wrong_task`, or `stale_rule`) before being fed back into the
+experience engine, closing the loop without requiring any agent cooperation.
 
 ## Judge Worker — Auto-Feedback Loop
 
@@ -450,7 +521,7 @@ no agent cooperation required.
    - `IGNORED` — agent had the hint and ignored it → negative feedback
    - `IRRELEVANT` — hint was not applicable to this call → neutral (no feedback)
    - `UNCLEAR` — judge cannot determine → no feedback (abstain)
-4. Verdict is posted to `/api/feedback` on the experience engine server
+4. Verdict is recorded through the same feedback handler used by `/api/feedback`
 
 ### Brain proxy support
 
@@ -481,16 +552,34 @@ Or set manually in `~/.experience/config.json`:
 | Custom (any OpenAI-compatible) | SiliconFlow (Qwen2.5-7B) |
 | | Custom (any OpenAI-compatible) |
 
+## VPS Maintenance And Migration
+
+Run scheduled server-side evolution on the VPS:
+
+```bash
+node tools/exp-server-maintain.js --trigger cron
+```
+
+Portable backup / restore for moving to a new VPS:
+
+```bash
+node tools/exp-portable-backup.js --out /var/backups/experience-$(date +%F)
+node tools/exp-portable-restore.js --from /var/backups/experience-2026-04-14 --restore-config
+```
+
 ## File Structure
 
 ```
 .experience/
   experience-core.js    — engine (1709 LOC, zero deps)
-  stop-extractor.js     — session extraction + evolution trigger
+  stop-extractor.js     — session extraction + evolution trigger (Claude + Codex)
   setup.sh              — guided setup wizard
   interceptor.js        — PreToolUse hook — injects experience hints before agent calls
   interceptor-post.js   — PostToolUse hook — captures tool outcomes for extraction
-  judge-worker.js       — Async LLM judge — evaluates followed/ignored signals
+  judge-worker.js       — Async LLM judge — evaluates verdicts + noise reasons
+  remote-client.js      — thin-client HTTP transport + offline queue
+  extract-compact.js    — transcript compaction for extract payloads
+  exp-client-drain.js   — background drain for queued heavy extract events
 
 server.js               — REST API (282 LOC, zero deps)
 
@@ -499,6 +588,9 @@ sdk/
 
 tools/
   exp-stats.js          — observability CLI
+  exp-server-maintain.js — VPS scheduled maintenance entrypoint
+  exp-portable-backup.js — portable VPS backup export
+  exp-portable-restore.js — portable VPS restore/import
   exp-demote.js         — interactive demote/delete CLI
   exp-gates.js          — v3.0 gate status checker
   experience-bulk-seed.js — bootstrap from existing rules

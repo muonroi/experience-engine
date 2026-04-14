@@ -103,6 +103,14 @@ function computeStats(events) {
     // OBS-04: Per-project
     projects: {},
 
+    // OBS-04b: Feedback / noise
+    feedbackCount: 0,
+    judgeFeedbackCount: 0,
+    feedbackByVerdict: { FOLLOWED: 0, IGNORED: 0, IRRELEVANT: 0 },
+    noiseByReason: { wrong_repo: 0, wrong_language: 0, wrong_task: 0, stale_rule: 0 },
+    implicitUnusedCount: 0,
+    implicitUnusedByReason: { wrong_repo: 0, wrong_language: 0, wrong_task: 0, stale_rule: 0 },
+
     // OBS-05: Model Router
     routeCount: 0,
     routeByTier: { fast: 0, balanced: 0, premium: 0 },
@@ -150,6 +158,21 @@ function computeStats(events) {
       stats.demoted += (e.demoted || 0);
       stats.abstracted += (e.abstracted || 0);
       stats.archived += (e.archived || 0);
+    } else if (e.op === 'feedback' || e.op === 'judge-feedback') {
+      stats.feedbackCount++;
+      if (e.op === 'judge-feedback') stats.judgeFeedbackCount++;
+      const verdict = e.verdict || (e.followed === true ? 'FOLLOWED' : e.followed === false ? 'IGNORED' : null);
+      if (verdict && stats.feedbackByVerdict[verdict] !== undefined) {
+        stats.feedbackByVerdict[verdict]++;
+      }
+      if (verdict === 'IRRELEVANT' && e.reason && stats.noiseByReason[e.reason] !== undefined) {
+        stats.noiseByReason[e.reason]++;
+      }
+    } else if (e.op === 'implicit-unused') {
+      stats.implicitUnusedCount++;
+      if (e.reason && stats.implicitUnusedByReason[e.reason] !== undefined) {
+        stats.implicitUnusedByReason[e.reason]++;
+      }
     } else if (e.op === 'route') {
       stats.routeCount++;
       const tier = e.tier || 'balanced';
@@ -289,6 +312,31 @@ if (require.main === module) {
   printStat('Hit rate:', pct(stats.suggestions, stats.totalIntercepts),
     `(${stats.suggestions}/${stats.totalIntercepts} intercepts)`);
   printStat('Misses:', String(stats.misses));
+  if (stats.feedbackCount > 0) {
+    const irrelevant = stats.feedbackByVerdict.IRRELEVANT;
+    console.log('');
+    console.log('Feedback Loop');
+    printStat('Feedback events:', String(stats.feedbackCount),
+      `(judge=${stats.judgeFeedbackCount} manual=${stats.feedbackCount - stats.judgeFeedbackCount})`);
+    printStat('By verdict:', `followed=${stats.feedbackByVerdict.FOLLOWED} ignored=${stats.feedbackByVerdict.IGNORED} irrelevant=${irrelevant}`);
+    printStat('Noise rate:', pct(irrelevant, stats.feedbackCount),
+      `(${irrelevant}/${stats.feedbackCount} feedback events)`);
+    const noiseParts = Object.entries(stats.noiseByReason)
+      .filter(([, count]) => count > 0)
+      .map(([reason, count]) => `${reason}=${count}`);
+    if (noiseParts.length > 0) {
+      printStat('Noise reasons:', noiseParts.join(' '));
+    }
+  }
+  if (stats.implicitUnusedCount > 0) {
+    const implicitParts = Object.entries(stats.implicitUnusedByReason)
+      .filter(([, count]) => count > 0)
+      .map(([reason, count]) => `${reason}=${count}`);
+    printStat('Implicit unused:', String(stats.implicitUnusedCount));
+    if (implicitParts.length > 0) {
+      printStat('Unused reasons:', implicitParts.join(' '));
+    }
+  }
 
   // Mistakes Avoided (OBS-02)
   console.log('');

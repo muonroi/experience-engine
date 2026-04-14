@@ -96,7 +96,7 @@ describe('updatePointPayload', () => {
 describe('recordFeedback delegates to updatePointPayload', () => {
   afterEach(cleanup);
 
-  it('recordFeedback(coll, id, true) should behave same as recordHit (increments hitCount)', async () => {
+  it('recordFeedback(coll, id, "FOLLOWED") should behave same as recordHit (increments hitCount)', async () => {
     const coll = `${TEST_COLL_PREFIX}-fb-true`;
     const idA = 'feedback-true-001';
     const idB = 'record-hit-001';
@@ -104,7 +104,7 @@ describe('recordFeedback delegates to updatePointPayload', () => {
     const initialB = { hitCount: 1, ignoreCount: 1, confirmedAt: [] };
     writeTestStore(coll, [makeTestEntry(idA, initialA), makeTestEntry(idB, initialB)]);
 
-    await recordFeedback(coll, idA, true);
+    await recordFeedback(coll, idA, 'FOLLOWED');
     await recordHit(coll, idB);
 
     const entries = readTestStore(coll);
@@ -117,7 +117,7 @@ describe('recordFeedback delegates to updatePointPayload', () => {
     assert.strictEqual(dataA.ignoreCount, dataB.ignoreCount, 'ignoreCount should match recordHit result');
   });
 
-  it('recordFeedback(coll, id, false) should behave same as incrementIgnoreCount (increments ignoreCount)', async () => {
+  it('recordFeedback(coll, id, "IGNORED") should behave same as incrementIgnoreCount (increments ignoreCount)', async () => {
     const coll = `${TEST_COLL_PREFIX}-fb-false`;
     const idA = 'feedback-false-001';
     const idB = 'ignore-count-001';
@@ -125,7 +125,7 @@ describe('recordFeedback delegates to updatePointPayload', () => {
     const initialB = { hitCount: 1, ignoreCount: 0 };
     writeTestStore(coll, [makeTestEntry(idA, initialA), makeTestEntry(idB, initialB)]);
 
-    await recordFeedback(coll, idA, false);
+    await recordFeedback(coll, idA, 'IGNORED');
     // Note: incrementIgnoreCount is not exported directly, so we use updatePointPayload
     await _updatePointPayload(coll, idB, incrementIgnoreCountData);
 
@@ -136,5 +136,21 @@ describe('recordFeedback delegates to updatePointPayload', () => {
     const dataB = JSON.parse(entryB.payload.json);
 
     assert.strictEqual(dataA.ignoreCount, dataB.ignoreCount, 'ignoreCount should match incrementIgnoreCount result');
+  });
+
+  it('recordFeedback(coll, id, "IRRELEVANT", reason) increments irrelevant tracking', async () => {
+    const coll = `${TEST_COLL_PREFIX}-fb-irrelevant`;
+    const idA = 'feedback-irrelevant-001';
+    writeTestStore(coll, [makeTestEntry(idA, { hitCount: 0, ignoreCount: 0, irrelevantCount: 0 })]);
+
+    await recordFeedback(coll, idA, 'IRRELEVANT', 'wrong_repo');
+
+    const entries = readTestStore(coll);
+    const entryA = entries.find(e => e.id === idA);
+    const dataA = JSON.parse(entryA.payload.json);
+
+    assert.strictEqual(dataA.irrelevantCount, 1, 'irrelevantCount should increment');
+    assert.strictEqual(dataA.lastNoiseReason, 'wrong_repo', 'lastNoiseReason should be stored');
+    assert.strictEqual(dataA.noiseReasonCounts.wrong_repo, 1, 'noise reason count should increment');
   });
 });

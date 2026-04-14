@@ -18,39 +18,42 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const HOME = os.homedir();
-const ACTIVITY_LOG = path.join(HOME, '.experience', 'activity.jsonl');
-const CONFIG_FILE = path.join(HOME, '.experience', 'config.json');
 const JSON_MODE = process.argv.includes('--json');
 
-// --- Load config ---
-let cfg = {};
-try { cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch {}
+function resolvePaths(options = {}) {
+  const homeDir = options.homeDir || os.homedir();
+  return {
+    homeDir,
+    activityLog: options.activityLog || path.join(homeDir, '.experience', 'activity.jsonl'),
+    configFile: options.configFile || path.join(homeDir, '.experience', 'config.json'),
+  };
+}
 
-const QDRANT_BASE = cfg.qdrantUrl || 'http://localhost:6333';
-const QDRANT_KEY = cfg.qdrantKey || '';
+function loadConfig(configFile) {
+  try { return JSON.parse(fs.readFileSync(configFile, 'utf8')); } catch { return {}; }
+}
 
 // --- Qdrant helpers ---
-async function qdrantGet(path) {
+async function qdrantGet(baseUrl, apiKey, requestPath) {
   const headers = { 'Content-Type': 'application/json' };
-  if (QDRANT_KEY) headers['api-key'] = QDRANT_KEY;
-  const res = await fetch(`${QDRANT_BASE}${path}`, { headers, signal: AbortSignal.timeout(5000) });
+  if (apiKey) headers['api-key'] = apiKey;
+  const res = await fetch(`${baseUrl}${requestPath}`, { headers, signal: AbortSignal.timeout(5000) });
   if (!res.ok) return null;
   return res.json();
 }
 
-async function collectionCount(name) {
-  const data = await qdrantGet(`/collections/${name}`);
+async function collectionCount(baseUrl, apiKey, name) {
+  const data = await qdrantGet(baseUrl, apiKey, `/collections/${name}`);
   return data?.result?.points_count ?? 0;
 }
 
-async function scrollAll(name) {
-  const data = await qdrantGet(`/collections/${name}/points/scroll`);
+async function scrollAll(baseUrl, apiKey, name) {
+  const data = await qdrantGet(baseUrl, apiKey, `/collections/${name}/points/scroll`);
   // Simple scroll — for small collections (<100 entries)
   const body = JSON.stringify({ limit: 100, with_payload: true });
   const headers = { 'Content-Type': 'application/json' };
-  if (QDRANT_KEY) headers['api-key'] = QDRANT_KEY;
-  const res = await fetch(`${QDRANT_BASE}/collections/${name}/points/scroll`, {
+  if (apiKey) headers['api-key'] = apiKey;
+  const res = await fetch(`${baseUrl}/collections/${name}/points/scroll`, {
     method: 'POST', headers, body, signal: AbortSignal.timeout(10000)
   });
   if (!res.ok) return [];
@@ -59,9 +62,9 @@ async function scrollAll(name) {
 }
 
 // --- Activity log parsing ---
-function readActivityLog() {
+function readActivityLog(activityLogPath) {
   try {
-    return fs.readFileSync(ACTIVITY_LOG, 'utf8')
+    return fs.readFileSync(activityLogPath, 'utf8')
       .split('\n')
       .filter(Boolean)
       .map(line => { try { return JSON.parse(line); } catch { return null; } })
@@ -70,7 +73,11 @@ function readActivityLog() {
 }
 
 // --- Gate checks ---
-async function checkGates() {
+async function checkGates(options = {}) {
+  const { homeDir, activityLog, configFile } = resolvePaths(options);
+  const cfg = loadConfig(configFile);
+  const qdrantBase = options.qdrantBase || cfg.qdrantUrl || 'http://localhost:6333';
+  const qdrantKey = options.qdrantKey || cfg.qdrantKey || '';
   const results = {
     gate1: { name: 'Build', checks: [], pass: true },
     gate2: { name: 'Dogfood', checks: [], pass: true },
@@ -78,15 +85,15 @@ async function checkGates() {
     overall: { percent: 0, verdict: '' }
   };
 
-  const activity = readActivityLog();
-  const now = Date.now();
+  const activity = Array.isArray(options.events) ? options.events : readActivityLog(activityLog);
+  const now = options.now || Date.now();
 
   // ════════════════════════════════════════════
   // GATE 1: Build
   // ════════════════════════════════════════════
 
   // Check 1: experience-core.js exists
-  const coreExists = fs.existsSync(path.join(HOME, '.experience', 'experience-core.js'));
+  const coreExists = fs.existsSync(path.join(homeDir, '.experience', 'experience-core.js'));
   results.gate1.checks.push({
     name: 'Brain installed',
     target: 'experience-core.js exists',
@@ -106,7 +113,7 @@ async function checkGates() {
   // Check 3: Qdrant reachable
   let qdrantOk = false;
   try {
-    const data = await qdrantGet('/collections');
+    const data = await qdrantGet(qdrantBase, qdrantKey, '/collections');
     qdrantOk = !!data?.result?.collections;
   } catch {}
   results.gate1.checks.push({
@@ -119,7 +126,7 @@ async function checkGates() {
   // Check 4: Embed works
   let embedOk = false;
   try {
-    const core = require(path.join(HOME, '.experience', 'experience-core.js'));
+    const core = require(path.join(homeDir, '.experience', 'experience-core.js'));
     const vec = await core.getEmbeddingRaw('gate check probe');
     embedOk = vec && vec.length > 0;
   } catch {}
@@ -133,7 +140,7 @@ async function checkGates() {
   // Check 5: Brain works
   let brainOk = false;
   try {
-    const core = require(path.join(HOME, '.experience', 'experience-core.js'));
+    const core = require(path.join(homeDir, '.experience', 'experience-core.js'));
     const result = await core._callBrainWithFallback('Return JSON: {"test":"ok"}');
     brainOk = !!result?.test;
   } catch {}
@@ -151,7 +158,7 @@ async function checkGates() {
   // ════════════════════════════════════════════
 
   // Metric 1: Extraction works (>= 5 organic T2 entries)
-  const t2Count = await collectionCount('experience-selfqa');
+  const t2Count = await collectionCount(qdrantBase, qdrantKey, 'experience-selfqa');
   const extractEvents = activity.filter(e => e.op === 'extract' && (e.stored || 0) > 0);
   const totalStored = extractEvents.reduce((sum, e) => sum + (e.stored || 0), 0);
   results.gate2.checks.push({
@@ -166,7 +173,7 @@ async function checkGates() {
   // Simple check: all T2 entries have unique triggers
   let dedupOk = true;
   if (t2Count > 0) {
-    const t2Points = await scrollAll('experience-selfqa');
+    const t2Points = await scrollAll(qdrantBase, qdrantKey, 'experience-selfqa');
     const triggers = new Set();
     for (const p of t2Points) {
       try {
@@ -228,10 +235,10 @@ async function checkGates() {
   });
 
   // Metric 7: Evolution works (>= 1 principle created)
-  const t0Count = await collectionCount('experience-principles');
-  const t1Count = await collectionCount('experience-behavioral');
+  const t0Count = await collectionCount(qdrantBase, qdrantKey, 'experience-principles');
+  const t1Count = await collectionCount(qdrantBase, qdrantKey, 'experience-behavioral');
   // Also check T1 entries with createdFrom=evolution-abstraction (probationary principles)
-  const t1Points = await scrollAll('experience-behavioral');
+  const t1Points = await scrollAll(qdrantBase, qdrantKey, 'experience-behavioral');
   const probationary = t1Points.filter(p => {
     try { return JSON.parse(p.payload?.json || '{}').createdFrom === 'evolution-abstraction'; } catch { return false; }
   });
@@ -430,7 +437,11 @@ function display(results) {
 }
 
 // --- Main ---
-checkGates().then(display).catch(e => {
-  console.error('Gate check failed:', e.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  checkGates().then(display).catch(e => {
+    console.error('Gate check failed:', e.message);
+    process.exit(1);
+  });
+}
+
+module.exports = { checkGates, display, readActivityLog };

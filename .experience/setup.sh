@@ -933,13 +933,21 @@ if ! cp "$SRC_DIR/experience-core.js" "$INSTALL_DIR/experience-core.js"; then
 fi
 
 # Copy hook/runtime helpers from source
-for f in interceptor.js stop-extractor.js interceptor-post.js interceptor-prompt.js judge-worker.js activity-watch.js exp-watch exp-open-pane exp-pane-right exp-pane-left exp-pane-bottom; do
+for f in interceptor.js stop-extractor.js interceptor-post.js interceptor-prompt.js judge-worker.js remote-client.js extract-compact.js exp-client-drain.js activity-watch.js health-check.sh exp-watch exp-open-pane exp-pane-right exp-pane-left exp-pane-bottom; do
   if [ -f "$SRC_DIR/$f" ]; then
     cp "$SRC_DIR/$f" "$INSTALL_DIR/$f"
   fi
 done
 
-chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js" "$INSTALL_DIR/interceptor-post.js" "$INSTALL_DIR/interceptor-prompt.js" "$INSTALL_DIR/judge-worker.js" "$INSTALL_DIR/activity-watch.js" "$INSTALL_DIR/exp-watch" "$INSTALL_DIR/exp-open-pane" "$INSTALL_DIR/exp-pane-right" "$INSTALL_DIR/exp-pane-left" "$INSTALL_DIR/exp-pane-bottom" 2>/dev/null
+# Copy VPS maintenance / portability helpers from repo tools/
+TOOLS_DIR="$(cd "$SRC_DIR/.." && pwd)/tools"
+for f in exp-server-maintain.js exp-portable-backup.js exp-portable-restore.js; do
+  if [ -f "$TOOLS_DIR/$f" ]; then
+    cp "$TOOLS_DIR/$f" "$INSTALL_DIR/$f"
+  fi
+done
+
+chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js" "$INSTALL_DIR/interceptor-post.js" "$INSTALL_DIR/interceptor-prompt.js" "$INSTALL_DIR/judge-worker.js" "$INSTALL_DIR/remote-client.js" "$INSTALL_DIR/extract-compact.js" "$INSTALL_DIR/exp-client-drain.js" "$INSTALL_DIR/activity-watch.js" "$INSTALL_DIR/health-check.sh" "$INSTALL_DIR/exp-server-maintain.js" "$INSTALL_DIR/exp-portable-backup.js" "$INSTALL_DIR/exp-portable-restore.js" "$INSTALL_DIR/exp-watch" "$INSTALL_DIR/exp-open-pane" "$INSTALL_DIR/exp-pane-right" "$INSTALL_DIR/exp-pane-left" "$INSTALL_DIR/exp-pane-bottom" 2>/dev/null
 
 mkdir -p "$HOME/.local/bin"
 ln -sf "$INSTALL_DIR/exp-watch" "$HOME/.local/bin/exp-watch"
@@ -974,6 +982,9 @@ const cfg = {
   brainEndpoint:  '$BRAIN_ENDPOINT',
   brainKey:       '$BRAIN_KEY',
   brainProxyUrl:  '${BRAIN_PROXY_URL:-}',
+  serverBaseUrl:  '${EXP_SERVER_BASE_URL:-}',
+  serverAuthToken:'${EXP_SERVER_AUTH_TOKEN:-}',
+  serverTimeoutMs: 5000,
   embedDim:       $EMBED_DIM,
   ollamaUrl:      '$OLLAMA_URL',
   tunnelSsh:      '$TUNNEL_SSH',
@@ -1937,6 +1948,8 @@ if [ "$HEALTH_FAIL" -eq 0 ]; then
   echo ""
   echo " Live activity:"
   echo "   exp-watch"
+  echo " Health check:"
+  echo "   bash ~/.experience/health-check.sh"
   echo "   exp-open-pane --right --percent 33"
   echo "   exp-pane-right   | exp-pane-left | exp-pane-bottom"
   echo "   Fallback: ~/.local/bin/exp-open-pane or ~/.experience/exp-open-pane"
@@ -1987,8 +2000,15 @@ if [ -n "$REMOTE_HOST" ]; then
     "$INSTALL_DIR/interceptor-post.js"
     "$INSTALL_DIR/interceptor-prompt.js"
     "$INSTALL_DIR/judge-worker.js"
+    "$INSTALL_DIR/remote-client.js"
+    "$INSTALL_DIR/extract-compact.js"
+    "$INSTALL_DIR/exp-client-drain.js"
     "$INSTALL_DIR/stop-extractor.js"
     "$INSTALL_DIR/activity-watch.js"
+    "$INSTALL_DIR/health-check.sh"
+    "$INSTALL_DIR/exp-server-maintain.js"
+    "$INSTALL_DIR/exp-portable-backup.js"
+    "$INSTALL_DIR/exp-portable-restore.js"
     "$INSTALL_DIR/exp-watch"
     "$INSTALL_DIR/exp-open-pane"
     "$INSTALL_DIR/exp-pane-right"
