@@ -72,6 +72,76 @@ function readActivityLog(activityLogPath) {
   } catch { return []; }
 }
 
+function normalizeText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function isPlaceholderLesson(data) {
+  const trigger = normalizeText(data?.trigger);
+  const solution = normalizeText(data?.solution);
+  const question = normalizeText(data?.question);
+  return (
+    trigger === 'when this fires' ||
+    trigger === 'when this happens' ||
+    question === 'one line' ||
+    solution === 'what to do'
+  );
+}
+
+function computeDedupAndHygiene(points) {
+  const keys = new Set();
+  let duplicateCount = 0;
+  let lowQualityCount = 0;
+
+  for (const point of points) {
+    let data = {};
+    try { data = JSON.parse(point.payload?.json || '{}'); } catch {}
+    if (isPlaceholderLesson(data)) lowQualityCount++;
+    const trigger = normalizeText(data.trigger);
+    const solution = normalizeText(data.solution);
+    if (!trigger || !solution) continue;
+    const key = `${trigger}||${solution}`;
+    if (keys.has(key)) duplicateCount++;
+    else keys.add(key);
+  }
+
+  return { duplicateCount, lowQualityCount };
+}
+
+function computeInterceptionPrecision(activity, now) {
+  const weekAgo = now - 7 * 86400000;
+  const interceptEvents = activity.filter(e => e.op === 'intercept' && new Date(e.ts).getTime() > weekAgo);
+  const surfacedSuggestions = interceptEvents.filter(e => e.result === 'suggestion');
+  const feedbackEvents = activity.filter(e => {
+    if (!e?.ts) return false;
+    if (new Date(e.ts).getTime() <= weekAgo) return false;
+    return e.op === 'feedback' || e.op === 'judge-feedback' || e.op === 'implicit-unused';
+  });
+
+  let relevant = 0;
+  let irrelevant = 0;
+  for (const event of feedbackEvents) {
+    if (event.op === 'implicit-unused') {
+      irrelevant++;
+      continue;
+    }
+    const verdict = event.verdict || (event.followed === true ? 'FOLLOWED' : event.followed === false ? 'IGNORED' : null);
+    if (verdict === 'FOLLOWED' || verdict === 'IGNORED') relevant++;
+    else if (verdict === 'IRRELEVANT') irrelevant++;
+  }
+  const classified = relevant + irrelevant;
+  const precision = classified > 0 ? Math.round(relevant / classified * 100) : 0;
+
+  return {
+    interceptEvents,
+    surfacedSuggestions,
+    classified,
+    relevant,
+    irrelevant,
+    precision,
+  };
+}
+
 // --- Gate checks ---
 async function checkGates(options = {}) {
   const { homeDir, activityLog, configFile } = resolvePaths(options);
@@ -170,30 +240,30 @@ async function checkGates(options = {}) {
   });
 
   // Metric 2: Dedup works (0 exact duplicates)
-  // Simple check: all T2 entries have unique triggers
+  // Also fail if placeholder extractor outputs still pollute T2.
   let dedupOk = true;
+  let dedupStats = { duplicateCount: 0, lowQualityCount: 0 };
   if (t2Count > 0) {
     const t2Points = await scrollAll(qdrantBase, qdrantKey, 'experience-selfqa');
-    const triggers = new Set();
-    for (const p of t2Points) {
-      try {
-        const d = JSON.parse(p.payload?.json || '{}');
-        if (d.trigger && triggers.has(d.trigger)) { dedupOk = false; break; }
-        if (d.trigger) triggers.add(d.trigger);
-      } catch {}
-    }
+    dedupStats = computeDedupAndHygiene(t2Points);
+    dedupOk = dedupStats.duplicateCount === 0 && dedupStats.lowQualityCount === 0;
   }
   results.gate2.checks.push({
-    name: '2. Dedup works',
-    target: '0 exact duplicates',
-    actual: t2Count === 0 ? 'N/A (no T2 entries yet)' : dedupOk ? 'OK' : 'Duplicates found',
+    name: '2. Dedup / hygiene works',
+    target: '0 exact duplicates, 0 placeholder entries',
+    actual: t2Count === 0
+      ? 'N/A (no T2 entries yet)'
+      : dedupOk
+        ? 'OK'
+        : `${dedupStats.duplicateCount} exact duplicates, ${dedupStats.lowQualityCount} low-quality entries`,
     pass: t2Count === 0 || dedupOk,
     must: true
   });
 
   // Metric 3: Interception fires (>= 10 fires/week)
   const weekAgo = now - 7 * 86400000;
-  const interceptEvents = activity.filter(e => e.op === 'intercept' && new Date(e.ts).getTime() > weekAgo);
+  const precisionStats = computeInterceptionPrecision(activity, now);
+  const interceptEvents = precisionStats.interceptEvents;
   results.gate2.checks.push({
     name: '3. Interception fires',
     target: '>= 10/week',
@@ -202,14 +272,16 @@ async function checkGates(options = {}) {
     must: true
   });
 
-  // Metric 4: Interception accurate (>= 70% have suggestions)
-  const withSuggestions = interceptEvents.filter(e => e.result === 'suggestion');
-  const accuracy = interceptEvents.length > 0 ? Math.round(withSuggestions.length / interceptEvents.length * 100) : 0;
+  // Metric 4: Interception accurate = surfaced hints later classified as relevant, not raw surface coverage.
   results.gate2.checks.push({
     name: '4. Interception accurate',
-    target: '>= 70% relevant',
-    actual: interceptEvents.length > 0 ? `${accuracy}% (${withSuggestions.length}/${interceptEvents.length})` : 'No data',
-    pass: interceptEvents.length === 0 || accuracy >= 70,
+    target: '>= 70% of classified surfaced hints are relevant',
+    actual: precisionStats.classified > 0
+      ? `${precisionStats.precision}% precision (${precisionStats.relevant}/${precisionStats.classified} classified surfaced hints, ${precisionStats.surfacedSuggestions.length}/${interceptEvents.length} surfaced total)`
+      : interceptEvents.length > 0
+        ? `No classified surfaced hints yet (${precisionStats.surfacedSuggestions.length}/${interceptEvents.length} surfaced total)`
+        : 'No data',
+    pass: precisionStats.classified > 0 && precisionStats.precision >= 70,
     must: true
   });
 
@@ -266,7 +338,7 @@ async function checkGates(options = {}) {
   // Proxy: principles exist AND have hitCount > 0
   let novelCoverage = false;
   if (t0Count > 0) {
-    const t0Points = await scrollAll('experience-principles');
+    const t0Points = await scrollAll(qdrantBase, qdrantKey, 'experience-principles');
     novelCoverage = t0Points.some(p => {
       try { return (JSON.parse(p.payload?.json || '{}').hitCount || 0) > 0; } catch { return false; }
     });
@@ -444,4 +516,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { checkGates, display, readActivityLog };
+module.exports = { checkGates, display, readActivityLog, computeDedupAndHygiene, computeInterceptionPrecision, isPlaceholderLesson };

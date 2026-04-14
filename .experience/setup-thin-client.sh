@@ -49,7 +49,7 @@ fi
 
 mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/tmp" "$INSTALL_DIR/offline-queue"
 
-for f in interceptor.js interceptor-post.js interceptor-prompt.js stop-extractor.js remote-client.js extract-compact.js exp-client-drain.js health-check.sh; do
+for f in interceptor.js interceptor-post.js interceptor-prompt.js stop-extractor.js remote-client.js extract-compact.js exp-client-drain.js health-check.sh exp-feedback.js exp-feedback; do
   cp "$SRC_DIR/$f" "$INSTALL_DIR/$f"
 done
 
@@ -66,9 +66,14 @@ chmod +x \
   "$INSTALL_DIR/extract-compact.js" \
   "$INSTALL_DIR/exp-client-drain.js" \
   "$INSTALL_DIR/health-check.sh" \
+  "$INSTALL_DIR/exp-feedback.js" \
+  "$INSTALL_DIR/exp-feedback" \
   "$INSTALL_DIR/exp-server-maintain.js" \
   "$INSTALL_DIR/exp-portable-backup.js" \
   "$INSTALL_DIR/exp-portable-restore.js"
+
+mkdir -p "$HOME/.local/bin"
+ln -sf "$INSTALL_DIR/exp-feedback" "$HOME/.local/bin/exp-feedback"
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 if $CLEAN_MODE; then
@@ -100,3 +105,4 @@ if $CLEAN_MODE; then
 fi
 echo
 bash "$INSTALL_DIR/health-check.sh"
+echo "Feedback helper: exp-feedback ignored a1b2c3d4 experience-selfqa"

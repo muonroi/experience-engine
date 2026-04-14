@@ -1047,6 +1047,53 @@ function detectTranscriptDomain(transcript) {
   return detectContext(entries[0][0]) || null;
 }
 
+const PLACEHOLDER_EXTRACT_FIELDS = {
+  trigger: new Set([
+    'when this fires',
+    'when this happens',
+    'if this happens',
+    'when it fires',
+    'when it happens',
+  ]),
+  question: new Set([
+    'one line',
+    'one-line',
+    'one line question',
+  ]),
+  solution: new Set([
+    'what to do',
+    'fix it',
+    'do the fix',
+    'apply a fix',
+  ]),
+};
+
+function normalizeExtractText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function isPlaceholderExtractField(field, value) {
+  const normalized = normalizeExtractText(value);
+  if (!normalized) return false;
+  const placeholders = PLACEHOLDER_EXTRACT_FIELDS[field];
+  return !!placeholders && placeholders.has(normalized);
+}
+
+function assessExtractedQaQuality(qa) {
+  if (!qa || typeof qa !== 'object') return { ok: false, reason: 'missing_qa' };
+  const trigger = normalizeExtractText(qa.trigger);
+  const question = normalizeExtractText(qa.question);
+  const solution = normalizeExtractText(qa.solution);
+
+  if (!trigger || !solution) return { ok: false, reason: 'missing_required' };
+  if (isPlaceholderExtractField('trigger', trigger)) return { ok: false, reason: 'placeholder_trigger' };
+  if (isPlaceholderExtractField('question', question)) return { ok: false, reason: 'placeholder_question' };
+  if (isPlaceholderExtractField('solution', solution)) return { ok: false, reason: 'placeholder_solution' };
+  if (trigger.length < 8) return { ok: false, reason: 'trigger_too_short' };
+  if (solution.length < 12) return { ok: false, reason: 'solution_too_short' };
+  return { ok: true, reason: null };
+}
+
 async function extractFromSession(transcript, projectPath) {
   if (!transcript || transcript.length < 100) return 0;
 
@@ -1062,7 +1109,12 @@ async function extractFromSession(transcript, projectPath) {
   for (const mistake of mistakes.slice(0, 5)) {
     try {
       const qa = await extractQA(mistake);
-      if (!qa || !qa.trigger || !qa.solution) continue;
+      if (!qa || qa.skip) continue;
+      const quality = assessExtractedQaQuality(qa);
+      if (!quality.ok) {
+        activityLog({ op: 'extract-skip', reason: quality.reason, type: mistake.type, project: projectPath || null });
+        continue;
+      }
       if (await isDuplicate(qa)) continue;
       const projectSlug = extractProjectSlug(projectPath);
       await storeExperience(qa, domain, projectSlug);
@@ -1336,7 +1388,7 @@ Reply with ONLY the relevant warning numbers separated by commas (e.g. "1,3"), o
 }
 
 async function extractQA(mistake) {
-  const prompt = `Given this session excerpt where something went wrong:\n${mistake.excerpt.slice(0, 1500)}\n\nExtract in JSON (no markdown):\n{"trigger":"when this fires","question":"one line","reasoning":["step1","step2"],"solution":"what to do","why":"root cause or incident that created this rule","scope":{"lang":"C#|JavaScript|all","repos":[],"filePattern":"*.cs"}}`;
+  const prompt = `Given this session excerpt where something went wrong:\n${mistake.excerpt.slice(0, 1500)}\n\nExtract ONE reusable lesson as JSON (no markdown).\nRules:\n- trigger must be a concrete condition rooted in the excerpt, never placeholders like "when this fires"\n- question must briefly name the mistake being prevented\n- solution must be a concrete preventive action, never placeholders like "what to do"\n- if there is no concrete reusable lesson, return {"skip":true,"reason":"no_reusable_lesson"}\n\nReturn JSON only:\n{"trigger":"specific trigger from the excerpt","question":"brief mistake description","reasoning":["step1","step2"],"solution":"specific preventive action","why":"root cause or incident that created this rule","scope":{"lang":"C#|JavaScript|all","repos":[],"filePattern":"*.cs"}}`;
   return callBrainWithFallback(prompt);
 }
 
@@ -1426,9 +1478,15 @@ async function brainDeepSeek(prompt) {
 async function isDuplicate(qa) {
   const vector = await getEmbedding(`${qa.trigger} ${qa.question}`);
   if (!vector) return false;
+  const exactKey = `${normalizeExtractText(qa.trigger)}||${normalizeExtractText(qa.solution)}`;
 
   if (!(await checkQdrant())) {
-    const results = fileStoreSearch(SELFQA_COLLECTION, vector, 1);
+    const results = fileStoreSearch(SELFQA_COLLECTION, vector, 5);
+    for (const entry of results) {
+      const data = parsePayload(entry);
+      const entryKey = `${normalizeExtractText(data?.trigger)}||${normalizeExtractText(data?.solution)}`;
+      if (entryKey === exactKey) return true;
+    }
     return (results[0]?.score ?? 0) > DEDUP_THRESHOLD;
   }
 
@@ -1436,12 +1494,18 @@ async function isDuplicate(qa) {
     const res = await fetch(`${getQdrantBase()}/collections/${SELFQA_COLLECTION}/points/query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
-      body: JSON.stringify({ query: vector, limit: 1, with_payload: false, filter: { must: [buildQdrantUserFilter()] } }),
+      body: JSON.stringify({ query: vector, limit: 5, with_payload: true, filter: { must: [buildQdrantUserFilter()] } }),
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return false;
     const body = await res.json();
-    return (body.result?.points?.[0]?.score ?? 0) > DEDUP_THRESHOLD;
+    const points = body.result?.points || [];
+    for (const entry of points) {
+      const data = parsePayload(entry);
+      const entryKey = `${normalizeExtractText(data?.trigger)}||${normalizeExtractText(data?.solution)}`;
+      if (entryKey === exactKey) return true;
+    }
+    return (points[0]?.score ?? 0) > DEDUP_THRESHOLD;
   } catch { return false; }
 }
 
@@ -1862,6 +1926,13 @@ async function evolve(trigger) {
   const t2Entries = await getAllEntries('experience-selfqa');
   for (const entry of t2Entries) {
     const data = parsePayload(entry);
+    const quality = assessExtractedQaQuality(data);
+    if (data?.createdFrom === 'session-extractor' && !quality.ok) {
+      await deleteEntry('experience-selfqa', entry.id);
+      results.archived++;
+      activityLog({ op: 'evolve-low-quality-cleanup', id: entry.id.slice(0, 8), reason: quality.reason });
+      continue;
+    }
     if (!data || (data.hitCount || 0) < 3) continue;
     // Wave 1: Minimum 7-day age before promotion — prevent rapid-fire poisoning
     const ageMs = Date.now() - new Date(data.createdAt || 0).getTime();
@@ -2629,4 +2700,4 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
 
 // --- Exports ---
 
-module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _reconcilePendingHints: reconcilePendingHints, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _isRouterEnabled: isRouterEnabled };
+module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _reconcilePendingHints: reconcilePendingHints, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _isRouterEnabled: isRouterEnabled, _assessExtractedQaQuality: assessExtractedQaQuality, _normalizeExtractText: normalizeExtractText };
