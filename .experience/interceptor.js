@@ -3,7 +3,6 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { intercept } = require(path.join(os.homedir(), '.experience', 'experience-core.js'));
 
 const DEBUG_LOG = process.env.EXPERIENCE_HOOK_DEBUG_LOG || path.join(os.homedir(), '.codex', 'log', 'experience-hook-debug.jsonl');
 let input = '';
@@ -16,12 +15,31 @@ function debugLog(event) {
 }
 
 function activityLog(event) {
+  if (isRemoteMode()) return;
   try {
     const core = require(path.join(os.homedir(), '.experience', 'experience-core.js'));
     if (typeof core._activityLog === 'function') {
       core._activityLog({ op: 'hook', hook: 'interceptor', ...event });
     }
   } catch {}
+}
+
+function getRemoteClient() {
+  try {
+    return require(path.join(os.homedir(), '.experience', 'remote-client.js'));
+  } catch {
+    return null;
+  }
+}
+
+function isRemoteMode() {
+  const remote = getRemoteClient();
+  if (!remote) return false;
+  try {
+    return remote.isRemoteEnabled(remote.loadConfig());
+  } catch {
+    return false;
+  }
 }
 
 function buildSourceMeta(data) {
@@ -76,15 +94,33 @@ process.stdin.on('end', async () => {
     }, 2500);
 
     const resultMeta = await (async () => {
-      // Use interceptWithMeta to get surfacedIds + route alongside suggestions
-      const { interceptWithMeta: interceptMeta } = require(path.join(os.homedir(), '.experience', 'experience-core.js'));
+      const remote = getRemoteClient();
+      if (remote) {
+        const config = remote.loadConfig();
+        if (remote.isRemoteEnabled(config)) {
+          try { await remote.flushQueueForHook({ config }); } catch {}
+          return remote.postJsonForHook('/api/intercept', {
+          toolName: tool,
+          toolInput,
+          cwd: data.cwd || process.cwd(),
+          ...sourceMeta,
+          }, { config });
+        }
+      }
+
+      const corePath = path.join(os.homedir(), '.experience', 'experience-core.js');
+      const { interceptWithMeta: interceptMeta, intercept: localIntercept } = require(corePath);
       if (interceptMeta) return interceptMeta(tool, toolInput, ctrl.signal, sourceMeta);
-      return { suggestions: await intercept(tool, toolInput, ctrl.signal, sourceMeta), surfacedIds: [], route: null };
+      return { suggestions: await localIntercept(tool, toolInput, ctrl.signal, sourceMeta), surfacedIds: [], route: null };
     })();
     clearTimeout(timer);
     const result = resultMeta?.suggestions ?? (typeof resultMeta === 'string' ? resultMeta : null);
     const surfacedIds = resultMeta?.surfacedIds || [];
     const routeInfo = resultMeta?.route || null;
+    try {
+      const remote = getRemoteClient();
+      if (remote) remote.maybeSpawnExtractDrain();
+    } catch {}
     debugLog({ stage: 'intercept_done', tool, hasResult: !!result, surfacedCount: surfacedIds.length, preview: typeof result === 'string' ? result.slice(0, 240) : null, ...sourceMeta });
     activityLog({
       stage: 'intercept_done',

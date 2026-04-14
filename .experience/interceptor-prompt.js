@@ -27,12 +27,31 @@ function debugLog(event) {
 }
 
 function activityLog(event) {
+  if (isRemoteMode()) return;
   try {
     const core = require(path.join(EXP_DIR, 'experience-core.js'));
     if (typeof core._activityLog === 'function') {
       core._activityLog({ op: 'hook', hook: 'interceptor-prompt', ...event });
     }
   } catch {}
+}
+
+function getRemoteClient() {
+  try {
+    return require(path.join(EXP_DIR, 'remote-client.js'));
+  } catch {
+    return null;
+  }
+}
+
+function isRemoteMode() {
+  const remote = getRemoteClient();
+  if (!remote) return false;
+  try {
+    return remote.isRemoteEnabled(remote.loadConfig());
+  } catch {
+    return false;
+  }
 }
 
 function buildSourceMeta(data) {
@@ -87,21 +106,6 @@ process.stdin.on('end', async () => {
       process.exit(0);
     }
 
-    // Load experience engine
-    const corePath = path.join(EXP_DIR, 'experience-core.js');
-    if (!fs.existsSync(corePath)) {
-      debugLog({ stage: 'skip', reason: 'experience-core.js not found' });
-      activityLog({ stage: 'skip', reason: 'experience-core.js not found', ...sourceMeta });
-      process.exit(0);
-    }
-
-    const { interceptWithMeta } = require(corePath);
-    if (!interceptWithMeta) {
-      debugLog({ stage: 'skip', reason: 'interceptWithMeta not exported' });
-      activityLog({ stage: 'skip', reason: 'interceptWithMeta not exported', ...sourceMeta });
-      process.exit(0);
-    }
-
     const ctrl = new AbortController();
     const timer = setTimeout(() => {
       debugLog({ stage: 'abort' });
@@ -112,11 +116,45 @@ process.stdin.on('end', async () => {
     // Use the prompt as the query — treat it like a generic tool call
     // This searches all experience collections for relevant warnings
     const toolInput = { command: prompt, _promptHook: true };
-    const resultMeta = await interceptWithMeta('UserPrompt', toolInput, ctrl.signal, sourceMeta);
+    const resultMeta = await (async () => {
+      const remote = getRemoteClient();
+      if (remote) {
+        const config = remote.loadConfig();
+        if (remote.isRemoteEnabled(config)) {
+          try { await remote.flushQueueForHook({ config }); } catch {}
+          return remote.postJsonForHook('/api/intercept', {
+          toolName: 'UserPrompt',
+          toolInput,
+          cwd: data.cwd || process.cwd(),
+          ...sourceMeta,
+          }, { config });
+        }
+      }
+
+      const corePath = path.join(EXP_DIR, 'experience-core.js');
+      if (!fs.existsSync(corePath)) {
+        debugLog({ stage: 'skip', reason: 'experience-core.js not found' });
+        activityLog({ stage: 'skip', reason: 'experience-core.js not found', ...sourceMeta });
+        return null;
+      }
+
+      const { interceptWithMeta } = require(corePath);
+      if (!interceptWithMeta) {
+        debugLog({ stage: 'skip', reason: 'interceptWithMeta not exported' });
+        activityLog({ stage: 'skip', reason: 'interceptWithMeta not exported', ...sourceMeta });
+        return null;
+      }
+      return interceptWithMeta('UserPrompt', toolInput, ctrl.signal, sourceMeta);
+    })();
     clearTimeout(timer);
+    if (!resultMeta) process.exit(0);
 
     const suggestions = resultMeta?.suggestions || null;
     const routeInfo = resultMeta?.route || null;
+    try {
+      const remote = getRemoteClient();
+      if (remote) remote.maybeSpawnExtractDrain();
+    } catch {}
     debugLog({ stage: 'done', hasSuggestions: !!suggestions, hasRoute: !!routeInfo });
     activityLog({
       stage: 'done',

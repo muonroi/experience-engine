@@ -15,6 +15,7 @@ const {
   _trackSuggestions: trackSuggestions,
   _sessionUniqueCount: sessionUniqueCount,
   _incrementIgnoreCountData: incrementIgnoreCountData,
+  _incrementUnusedData: incrementUnusedData,
   _detectNaturalLang: detectNaturalLang,
 } = require('./experience-core.js');
 
@@ -152,6 +153,30 @@ describe('NOISE-04: graduated ignore penalty', () => {
   });
 });
 
+describe('NOISE-04b: irrelevant penalty', () => {
+  it('irrelevantCount penalizes score', () => {
+    const clean = computeEffectiveScore({ score: 0.7 }, { irrelevantCount: 0 });
+    const noisy = computeEffectiveScore({ score: 0.7 }, { irrelevantCount: 3 });
+    assert.ok(noisy < clean, `expected irrelevant penalty: ${noisy} < ${clean}`);
+  });
+
+  it('stale_rule noise reason penalizes more than generic wrong_task noise', () => {
+    const wrongTask = computeEffectiveScore({ score: 0.7 }, { noiseReasonCounts: { wrong_task: 2 } });
+    const staleRule = computeEffectiveScore({ score: 0.7 }, { noiseReasonCounts: { stale_rule: 2 } });
+    assert.ok(staleRule < wrongTask, `expected stale_rule (${staleRule}) < wrong_task (${wrongTask})`);
+  });
+});
+
+describe('NOISE-04c: unused penalty', () => {
+  it('unusedCount penalizes score more softly than irrelevantCount', () => {
+    const clean = computeEffectiveScore({ score: 0.7 }, { unusedCount: 0, irrelevantCount: 0 });
+    const unused = computeEffectiveScore({ score: 0.7 }, { unusedCount: 2, irrelevantCount: 0 });
+    const irrelevant = computeEffectiveScore({ score: 0.7 }, { unusedCount: 0, irrelevantCount: 2 });
+    assert.ok(unused < clean, 'unused should penalize the score');
+    assert.ok(unused > irrelevant, `expected unused (${unused}) > irrelevant (${irrelevant})`);
+  });
+});
+
 // --- rerankByQuality ---
 
 describe('rerankByQuality', () => {
@@ -244,6 +269,7 @@ describe('storeExperience payload initialization', () => {
     });
     assert.strictEqual(payload.lastHitAt, null, 'lastHitAt should init to null');
     assert.strictEqual(payload.ignoreCount, 0, 'ignoreCount should init to 0');
+    assert.strictEqual(payload.unusedCount, 0, 'unusedCount should init to 0');
   });
 
   it('still includes original fields', () => {
@@ -329,6 +355,21 @@ describe('incrementIgnoreCountData', () => {
     const data = {};
     incrementIgnoreCountData(data);
     assert.strictEqual(data.ignoreCount, 1);
+  });
+});
+
+describe('incrementUnusedData', () => {
+  it('increments unusedCount on data object', () => {
+    const data = { unusedCount: 1 };
+    incrementUnusedData(data);
+    assert.strictEqual(data.unusedCount, 2);
+    assert.ok(data.lastUnusedAt, 'lastUnusedAt should be set');
+  });
+
+  it('initializes unusedCount if missing', () => {
+    const data = {};
+    incrementUnusedData(data);
+    assert.strictEqual(data.unusedCount, 1);
   });
 });
 

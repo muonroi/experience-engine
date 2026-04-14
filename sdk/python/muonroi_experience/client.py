@@ -98,6 +98,28 @@ class Client:
             body["projectPath"] = project_path
         return self._request("POST", "/api/extract", body)
 
+    def posttool(self, tool_name, tool_input=None, tool_output=None, surfaced_ids=None, **meta):
+        """POST /api/posttool — Canonical post-tool reconciliation + judge enqueue.
+
+        Args:
+            tool_name: Tool name such as Edit, Write, Bash
+            tool_input: Tool input dict
+            tool_output: Tool output/result dict
+            surfaced_ids: List of surfaced hint objects from /api/intercept
+            **meta: Optional sourceKind/sourceRuntime/sourceSession/cwd
+
+        Returns:
+            dict with ok/reconcile/judgeQueued/toolOutcome
+        """
+        body = {
+            "toolName": tool_name,
+            "toolInput": tool_input or {},
+            "toolOutput": tool_output or {},
+            "surfacedIds": surfaced_ids or [],
+        }
+        body.update({k: v for k, v in meta.items() if v is not None})
+        return self._request("POST", "/api/posttool", body)
+
     def evolve(self, trigger="api"):
         """POST /api/evolve — Trigger evolution cycle.
 
@@ -125,6 +147,14 @@ class Client:
         else:
             params["since"] = since
         return self._request("GET", "/api/stats", params=params)
+
+    def gates(self):
+        """GET /api/gates — Server-side readiness report.
+
+        Returns:
+            dict with gate1, gate2, gate3, overall
+        """
+        return self._request("GET", "/api/gates")
 
     def graph(self, experience_id):
         """GET /api/graph — Edges for a given experience ID.
@@ -180,19 +210,28 @@ class Client:
         """
         return self._request("POST", "/api/principles/import", shared)
 
-    def feedback(self, collection, point_id, followed):
-        """POST /api/feedback — Record agent feedback on a surfaced suggestion.
+    def feedback(self, collection, point_id, verdict, reason=None):
+        """POST /api/feedback — Record agent feedback verdict on a surfaced suggestion.
 
         Args:
             collection: Collection name (e.g., 'experience-behavioral')
             point_id: UUID of the experience point
-            followed: True if agent followed the suggestion, False if ignored
+            verdict: 'FOLLOWED', 'IGNORED', or 'IRRELEVANT'
+                Legacy bools are still accepted and mapped to FOLLOWED/IGNORED.
+            reason: Optional noise reason when verdict is 'IRRELEVANT'
+                ('wrong_repo', 'wrong_language', 'wrong_task', 'stale_rule')
 
         Returns:
             dict with 'ok' (bool)
         """
-        return self._request("POST", "/api/feedback", {
+        payload = {
             "collection": collection,
             "pointId": point_id,
-            "followed": followed,
-        })
+        }
+        if isinstance(verdict, bool):
+            payload["followed"] = verdict
+        else:
+            payload["verdict"] = verdict
+        if reason is not None:
+            payload["reason"] = reason
+        return self._request("POST", "/api/feedback", payload)

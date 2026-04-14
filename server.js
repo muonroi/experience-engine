@@ -6,12 +6,14 @@
  * Endpoints:
  *   GET  /health                    — Qdrant + FileStore status
  *   POST /api/intercept             — Query experience before tool call
+ *   POST /api/posttool              — Canonical post-tool reconciliation + judge enqueue
  *   POST /api/extract               — Extract lessons from session transcript
  *   POST /api/evolve                — Trigger evolution cycle
  *   GET  /api/stats                 — Observability data (?since=7d, ?all=true)
+ *   GET  /api/gates                 — Server-side readiness / gate report
  *   GET  /api/timeline?topic=...    — Semantic timeline for a topic
  *   GET  /api/graph?id=...          — Experience graph edges
- *   POST /api/feedback              — Record agent feedback on suggestion
+ *   POST /api/feedback              — Record agent feedback verdict on suggestion
  *   POST /api/principles/share      — Export a principle
  *   POST /api/principles/import     — Import a principle
  *   GET  /api/user                  — Current user identity
@@ -26,14 +28,18 @@
 'use strict';
 
 const http = require('node:http');
+const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
 const { intercept, extractFromSession, evolve, getEdgesForId, getEdgesOfType,
         getEmbeddingRaw, searchCollection, sharePrinciple, importPrinciple,
-        EXP_USER, recordFeedback, routeModel, routeFeedback } = require('./.experience/experience-core');
+        EXP_USER, recordFeedback, routeModel, routeFeedback,
+        _reconcilePendingHints: reconcilePendingHints,
+        _activityLog: activityLog } = require('./.experience/experience-core');
 const { parseSince, loadEvents, filterEvents, computeStats, loadTop5 } = require('./tools/exp-stats');
+const { checkGates } = require('./tools/exp-gates');
 
 // --- Config ---
 const _cfg = (() => {
@@ -48,12 +54,15 @@ const PORT = _cfg.server?.port || parseInt(process.env.EXP_SERVER_PORT, 10) || 8
 const QDRANT_BASE = _cfg.qdrantUrl || process.env.EXPERIENCE_QDRANT_URL || 'http://localhost:6333';
 const QDRANT_API_KEY = _cfg.qdrantKey || process.env.EXPERIENCE_QDRANT_KEY || '';
 const AUTH_TOKEN = _cfg.server?.authToken || null;
+const VALID_FEEDBACK_VERDICTS = new Set(['FOLLOWED', 'IGNORED', 'IRRELEVANT']);
+const VALID_NOISE_REASONS = new Set(['wrong_repo', 'wrong_language', 'wrong_task', 'stale_rule']);
+const TMP_DIR = path.join(os.homedir(), '.experience', 'tmp');
 
 // --- CORS headers ---
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
 // --- Auth middleware ---
@@ -122,12 +131,107 @@ async function handleHealth(req, res) {
 async function handleIntercept(req, res) {
   const body = await readBody(req);
   if (!body.toolName) return error(res, 'toolName is required');
-  const result = await intercept(body.toolName, body.toolInput || {}, undefined, {
+  const meta = {
     sourceKind: body.sourceKind || 'manual-api',
     sourceRuntime: body.sourceRuntime || 'api',
     sourceSession: body.sourceSession || null,
+    cwd: body.cwd || null,
+  };
+  const corePath = path.join(os.homedir(), '.experience', 'experience-core.js');
+  const { interceptWithMeta } = require(corePath);
+  const resultMeta = typeof interceptWithMeta === 'function'
+    ? await interceptWithMeta(body.toolName, body.toolInput || {}, undefined, meta)
+    : {
+      suggestions: await intercept(body.toolName, body.toolInput || {}, undefined, meta),
+      surfacedIds: [],
+      route: null,
+    };
+  const result = resultMeta?.suggestions ?? null;
+  json(res, {
+    suggestions: result,
+    hasSuggestions: result !== null,
+    surfacedIds: resultMeta?.surfacedIds || [],
+    route: resultMeta?.route || null,
   });
-  json(res, { suggestions: result, hasSuggestions: result !== null });
+}
+
+function classifyPostToolOutcome(toolName, toolOutput) {
+  const tool = (toolName || '').toLowerCase();
+  const isMutatingTool = /edit|write|bash|shell|replace|execute_command/i.test(tool);
+  if (!isMutatingTool) return null;
+  const exitCode = toolOutput?.exit_code ?? toolOutput?.exitCode ?? null;
+  if (exitCode !== null && exitCode !== 0) return 'error';
+  const hasError = !!(
+    toolOutput?.error ||
+    toolOutput?.is_error ||
+    (typeof toolOutput === 'string' && /^error:/i.test(toolOutput)) ||
+    (toolOutput?.output && /error|Error|ERROR|FAIL|fatal|exception/i.test(String(toolOutput.output).slice(0, 500)))
+  );
+  return hasError ? 'error' : 'success';
+}
+
+async function handlePostTool(req, res) {
+  const body = await readBody(req);
+  const toolName = body.toolName || '';
+  const toolInput = body.toolInput || {};
+  const toolOutput = body.toolOutput || body.output || body.result || {};
+  const surfacedIds = Array.isArray(body.surfacedIds) ? body.surfacedIds : [];
+  const meta = {
+    sourceKind: body.sourceKind || 'manual-api',
+    sourceRuntime: body.sourceRuntime || 'api',
+    sourceSession: body.sourceSession || null,
+    cwd: body.cwd || null,
+  };
+
+  let reconcile = { touched: [], pending: [], implicitUnused: [], expired: [] };
+  if (typeof reconcilePendingHints === 'function') {
+    reconcile = await reconcilePendingHints(surfacedIds, toolName, toolInput, meta);
+  }
+
+  const toolOutcome = classifyPostToolOutcome(toolName, toolOutput);
+  if (typeof activityLog === 'function') {
+    activityLog({
+      op: 'posttool',
+      tool: toolName,
+      surfacedCount: surfacedIds.length,
+      toolOutcome,
+      sourceKind: meta.sourceKind,
+      sourceRuntime: meta.sourceRuntime,
+      sourceSession: meta.sourceSession,
+    });
+  }
+
+  if (surfacedIds.length > 0) {
+    try {
+      fs.mkdirSync(TMP_DIR, { recursive: true });
+      const queueFile = path.join(TMP_DIR, `judge-${Date.now()}.json`);
+      fs.writeFileSync(queueFile, JSON.stringify({
+        ts: new Date().toISOString(),
+        surfacedIds,
+        toolName,
+        toolInputObj: toolInput || {},
+        toolInput: JSON.stringify(toolInput || {}).slice(0, 300),
+        toolOutcome,
+      }));
+      const workerPath = path.join(os.homedir(), '.experience', 'judge-worker.js');
+      const worker = childProcess.spawn(process.execPath, [workerPath, queueFile], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      worker.unref();
+    } catch (spawnErr) {
+      if (typeof activityLog === 'function') {
+        activityLog({
+          op: 'posttool-spawn-error',
+          tool: toolName,
+          message: spawnErr?.message || String(spawnErr),
+          sourceRuntime: meta.sourceRuntime,
+        });
+      }
+    }
+  }
+
+  json(res, { ok: true, reconcile, judgeQueued: surfacedIds.length > 0, toolOutcome });
 }
 
 async function handleExtract(req, res) {
@@ -161,6 +265,11 @@ async function handleStats(req, res, url) {
   const top5 = loadTop5(storeDir);
 
   json(res, { since: allTime ? 'all' : (sinceParam || '7d'), ...stats, top5 });
+}
+
+async function handleGates(req, res) {
+  const results = await checkGates({ homeDir: os.homedir() });
+  json(res, results);
 }
 
 async function handleGraph(req, res, url) {
@@ -197,7 +306,20 @@ async function handleFeedback(req, res) {
   const body = await readBody(req);
   if (!body.pointId) return error(res, 'pointId is required');
   if (!body.collection) return error(res, 'collection is required');
-  if (typeof body.followed !== 'boolean') return error(res, 'followed (boolean) is required');
+  const verdict = typeof body.verdict === 'string' ? body.verdict.trim().toUpperCase() : null;
+  const followed = typeof body.followed === 'boolean' ? body.followed : null;
+  if (!verdict && followed === null) return error(res, 'verdict is required (or legacy followed boolean)');
+  if (verdict && !VALID_FEEDBACK_VERDICTS.has(verdict)) {
+    return error(res, `verdict must be one of: ${[...VALID_FEEDBACK_VERDICTS].join(', ')}`);
+  }
+  const normalizedReason = body.reason == null ? null : String(body.reason).trim().toLowerCase();
+  if (normalizedReason && !VALID_NOISE_REASONS.has(normalizedReason)) {
+    return error(res, `reason must be one of: ${[...VALID_NOISE_REASONS].join(', ')}`);
+  }
+  const resolvedVerdict = verdict || (followed ? 'FOLLOWED' : 'IGNORED');
+  if (resolvedVerdict === 'IRRELEVANT' && !normalizedReason) {
+    return error(res, 'reason is required when verdict is IRRELEVANT');
+  }
 
   let pointId = body.pointId;
   // Support short ID prefix (8 chars) — resolve to full UUID via Qdrant scroll
@@ -222,8 +344,8 @@ async function handleFeedback(req, res) {
     }
   }
 
-  await recordFeedback(body.collection, pointId, body.followed);
-  json(res, { ok: true, resolvedId: pointId });
+  await recordFeedback(body.collection, pointId, resolvedVerdict, normalizedReason);
+  json(res, { ok: true, resolvedId: pointId, verdict: resolvedVerdict, ...(normalizedReason ? { reason: normalizedReason } : {}) });
 }
 
 function handleUser(req, res) {
@@ -338,6 +460,7 @@ const server = http.createServer(async (req, res) => {
     // GET endpoints — open (no auth required)
     if (p === '/health' && req.method === 'GET') return await handleHealth(req, res);
     if (p === '/api/stats' && req.method === 'GET') return await handleStats(req, res, url);
+    if (p === '/api/gates' && req.method === 'GET') return await handleGates(req, res);
     if (p === '/api/graph' && req.method === 'GET') return await handleGraph(req, res, url);
     if (p === '/api/timeline' && req.method === 'GET') return await handleTimeline(req, res, url);
     if (p === '/api/user' && req.method === 'GET') return handleUser(req, res);
@@ -346,6 +469,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST') {
       if (!requireAuth(req, res)) return;
       if (p === '/api/intercept') return await handleIntercept(req, res);
+      if (p === '/api/posttool') return await handlePostTool(req, res);
       if (p === '/api/extract') return await handleExtract(req, res);
       if (p === '/api/evolve') return await handleEvolve(req, res);
       if (p === '/api/principles/share') return await handleShare(req, res);
@@ -377,4 +501,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { server, handleHealth, handleIntercept, handleExtract, handleEvolve, handleStats, handleGraph, handleTimeline, handleShare, handleImport, handleFeedback, handleUser, handleRouteModel, handleRouteFeedback };
+module.exports = { server, handleHealth, handleIntercept, handlePostTool, handleExtract, handleEvolve, handleStats, handleGates, handleGraph, handleTimeline, handleShare, handleImport, handleFeedback, handleUser, handleRouteModel, handleRouteFeedback };

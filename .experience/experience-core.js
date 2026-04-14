@@ -121,6 +121,10 @@ const EDGE_COLLECTION = 'experience-edges';
 const DEDUP_THRESHOLD = 0.85;
 const RELATES_TO_THRESHOLD = 0.70;
 const QUERY_MAX_CHARS = 500;
+const VALID_FEEDBACK_VERDICTS = new Set(['FOLLOWED', 'IGNORED', 'IRRELEVANT']);
+const VALID_NOISE_REASONS = new Set(['wrong_repo', 'wrong_language', 'wrong_task', 'stale_rule']);
+const UNUSED_NO_TOUCH_THRESHOLD = 3;
+const PENDING_HINT_TTL_MS = 20 * 60 * 1000;
 
 // --- Session-persistent tracking (file-based, survives process restarts) ---
 // Each hook invocation is a NEW process, so in-memory arrays are useless.
@@ -146,10 +150,11 @@ function readSessionTrack() {
     const raw = fs.readFileSync(getSessionTrackFile(), 'utf8');
     const data = JSON.parse(raw);
     // Expire after 2 hours (session likely ended)
-    if (Date.now() - (data.startedAt || 0) > 2 * 60 * 60 * 1000) return { startedAt: Date.now(), seen: {}, counts: {} };
+    if (Date.now() - (data.startedAt || 0) > 2 * 60 * 60 * 1000) return { startedAt: Date.now(), seen: {}, counts: {}, pending: {} };
+    if (!data.pending || typeof data.pending !== 'object' || Array.isArray(data.pending)) data.pending = {};
     return data;
   } catch {
-    return { startedAt: Date.now(), seen: {}, counts: {} };
+    return { startedAt: Date.now(), seen: {}, counts: {}, pending: {} };
   }
 }
 
@@ -205,6 +210,218 @@ function incrementIrrelevantData(data) {
   data.irrelevantCount = (data.irrelevantCount || 0) + 1;
   data.lastIrrelevantAt = new Date().toISOString();
   return data;
+}
+
+function incrementUnusedData(data) {
+  data.unusedCount = (data.unusedCount || 0) + 1;
+  data.lastUnusedAt = new Date().toISOString();
+  return data;
+}
+
+function normalizeFeedbackVerdict(verdictOrFollowed) {
+  if (typeof verdictOrFollowed === 'boolean') {
+    return verdictOrFollowed ? 'FOLLOWED' : 'IGNORED';
+  }
+  const verdict = String(verdictOrFollowed || '').trim().toUpperCase();
+  return VALID_FEEDBACK_VERDICTS.has(verdict) ? verdict : null;
+}
+
+function normalizeNoiseReason(reason) {
+  const normalized = String(reason || '').trim().toLowerCase();
+  return VALID_NOISE_REASONS.has(normalized) ? normalized : null;
+}
+
+function shortPointId(pointId) {
+  return String(pointId || '').slice(0, 8);
+}
+
+function normalizeTechLabel(label) {
+  const normalized = String(label || '').trim().toLowerCase();
+  if (!normalized) return '';
+  if (normalized === 'typescript react' || normalized === 'typescript') return 'typescript';
+  if (normalized === 'javascript react' || normalized === 'javascript') return 'javascript';
+  if (normalized === 'csharp' || normalized === 'c#') return 'c#';
+  if (normalized === 'fsharp' || normalized === 'f#') return 'f#';
+  if (normalized === 'yaml') return 'yaml';
+  return normalized;
+}
+
+const DOMAIN_KEYWORDS = {
+  javascript: ['node', 'npm', 'npx', 'pnpm', 'yarn', 'vite', 'vitest', 'jest', 'tsx', 'ts-node', 'eslint'],
+  typescript: ['node', 'npm', 'npx', 'pnpm', 'yarn', 'tsc', 'vite', 'vitest', 'jest', 'tsx', 'ts-node', 'eslint'],
+  python: ['python', 'pip', 'pytest', 'poetry', 'uv', 'ruff'],
+  'c#': ['dotnet', 'nuget', 'msbuild', 'csc'],
+  java: ['java', 'javac', 'mvn', 'gradle'],
+  rust: ['cargo', 'rustc'],
+  go: ['go test', 'go build', 'gofmt'],
+  ruby: ['bundle', 'bundler', 'rspec', 'ruby'],
+  shell: ['bash', 'sh ', 'zsh'],
+};
+
+function commandSuggestsDomain(actionText, domain) {
+  const keywords = DOMAIN_KEYWORDS[normalizeTechLabel(domain)];
+  if (!keywords || keywords.length === 0) return false;
+  const text = String(actionText || '').toLowerCase();
+  return keywords.some(keyword => text.includes(keyword));
+}
+
+function classifyActionKind(toolName, toolInput, actionPath) {
+  const raw = `${toolName || ''} ${toolInput?.command || toolInput?.cmd || ''} ${toolInput?.file_path || toolInput?.path || ''}`.toLowerCase();
+  const pathText = String(actionPath || '').toLowerCase();
+  if (/(^|\/)(readme|session_start|repo_deep_map|plan|state|agents)\.md$/.test(pathText) || /(^|\/)docs?\//.test(pathText) || /\.md\b/.test(raw)) {
+    return 'docs';
+  }
+  if (/\.(json|ya?ml|toml|ini|env|lock)\b/.test(pathText) || /\b(docker-compose|package-lock|pnpm-lock|poetry\.lock)\b/.test(raw)) {
+    return 'config';
+  }
+  if (/\.(sh|ps1|bat)\b/.test(pathText) || /\b(deploy|docker|kubectl|helm|systemctl)\b/.test(raw)) {
+    return 'ops';
+  }
+  if (detectContext(actionPath || '')) return 'code';
+  return 'unknown';
+}
+
+function inferLanguageMismatch(surface, actionDomain) {
+  const scopeLang = normalizeTechLabel(surface?.scope?.lang);
+  const hintDomain = normalizeTechLabel(surface?.domain);
+  const normalizedAction = normalizeTechLabel(actionDomain);
+  if (!normalizedAction) return false;
+  if (scopeLang === 'all') return false;
+  if (scopeLang && normalizedAction && scopeLang !== normalizedAction) {
+    return true;
+  }
+  if (!scopeLang && hintDomain && normalizedAction && hintDomain !== normalizedAction) {
+    return true;
+  }
+  return false;
+}
+
+function assessHintUsage(surface, toolName, toolInput, runtimeMeta = {}) {
+  const cwdPath = runtimeMeta.cwd || process.cwd() || '';
+  const actionPath = extractProjectPath(toolInput || {}) || cwdPath || '';
+  const actionProject = extractProjectSlug(actionPath || '') || extractProjectSlug(cwdPath || '');
+  const actionDomain = detectContext(actionPath || '') || null;
+  const actionKind = classifyActionKind(toolName, toolInput || {}, actionPath || cwdPath);
+  const actionText = buildQuery(toolName || '', toolInput || {}).toLowerCase();
+  const projectSlug = surface?.projectSlug || null;
+  const scopeLang = normalizeTechLabel(surface?.scope?.lang);
+
+  if (projectSlug && actionProject && projectSlug !== actionProject) {
+    return { touched: false, reason: 'wrong_repo', actionProject, actionDomain, actionKind };
+  }
+  if (inferLanguageMismatch(surface, actionDomain)) {
+    return { touched: false, reason: 'wrong_language', actionProject, actionDomain, actionKind };
+  }
+  if (scopeLang && scopeLang !== 'all') {
+    if (actionDomain && normalizeTechLabel(actionDomain) === scopeLang) {
+      return { touched: true, reason: 'language_match', actionProject, actionDomain, actionKind };
+    }
+    if (commandSuggestsDomain(actionText, scopeLang)) {
+      return { touched: true, reason: 'domain_command_match', actionProject, actionDomain, actionKind };
+    }
+    if (actionKind !== 'code') {
+      return { touched: false, reason: 'wrong_task', actionProject, actionDomain, actionKind };
+    }
+    return { touched: false, reason: 'wrong_task', actionProject, actionDomain, actionKind };
+  }
+  if (actionKind === 'docs' || actionKind === 'config' || actionKind === 'ops') {
+    return { touched: false, reason: 'wrong_task', actionProject, actionDomain, actionKind };
+  }
+  if (projectSlug && actionProject && projectSlug === actionProject) {
+    return { touched: true, reason: 'project_match', actionProject, actionDomain, actionKind };
+  }
+  if (actionProject || actionPath) {
+    return { touched: true, reason: 'path_match', actionProject, actionDomain, actionKind };
+  }
+  return { touched: false, reason: 'wrong_task', actionProject, actionDomain, actionKind };
+}
+
+async function reconcilePendingHints(surfacedPoints, toolName, toolInput, meta = {}) {
+  const track = readSessionTrack();
+  if (!track.pending || typeof track.pending !== 'object' || Array.isArray(track.pending)) track.pending = {};
+  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+  const incoming = Array.isArray(surfacedPoints) ? surfacedPoints : [];
+  const results = { touched: [], pending: [], implicitUnused: [], expired: [] };
+
+  for (const surface of incoming) {
+    if (!surface?.id || !surface?.collection) continue;
+    const key = `${surface.collection}:${surface.id}`;
+    if (!track.pending[key]) {
+      track.pending[key] = {
+        ...surface,
+        surfacedAt: nowIso,
+        noTouchCount: 0,
+      };
+    }
+  }
+
+  for (const [key, pending] of Object.entries(track.pending)) {
+    const surfacedAtMs = pending?.surfacedAt ? new Date(pending.surfacedAt).getTime() : 0;
+    if (surfacedAtMs && (nowMs - surfacedAtMs) > PENDING_HINT_TTL_MS) {
+      delete track.pending[key];
+      results.expired.push({ collection: pending.collection, id: pending.id });
+      continue;
+    }
+
+    const assessment = assessHintUsage(pending, toolName, toolInput, meta);
+    if (assessment.touched) {
+      delete track.pending[key];
+      results.touched.push({ collection: pending.collection, id: pending.id, reason: assessment.reason });
+      continue;
+    }
+
+    pending.noTouchCount = (pending.noTouchCount || 0) + 1;
+    pending.lastNoTouchAt = nowIso;
+    pending.lastNoTouchReason = assessment.reason;
+    pending.lastToolName = toolName || '';
+    track.pending[key] = pending;
+
+    if (pending.noTouchCount >= UNUSED_NO_TOUCH_THRESHOLD) {
+      await updatePointPayload(pending.collection, pending.id, incrementUnusedData);
+      activityLog({
+        op: 'implicit-unused',
+        collection: pending.collection,
+        pointId: shortPointId(pending.id),
+        count: pending.noTouchCount,
+        reason: assessment.reason,
+        tool: toolName,
+        ...normalizeSourceMeta(meta),
+      });
+      delete track.pending[key];
+      results.implicitUnused.push({ collection: pending.collection, id: pending.id, reason: assessment.reason });
+      continue;
+    }
+
+    results.pending.push({
+      collection: pending.collection,
+      id: pending.id,
+      count: pending.noTouchCount,
+      reason: assessment.reason,
+    });
+  }
+
+  writeSessionTrack(track);
+  return results;
+}
+
+function ensureNoiseReasonCounts(data) {
+  if (!data.noiseReasonCounts || typeof data.noiseReasonCounts !== 'object' || Array.isArray(data.noiseReasonCounts)) {
+    data.noiseReasonCounts = {};
+  }
+  return data.noiseReasonCounts;
+}
+
+function incrementIrrelevantWithReasonData(reason) {
+  return function applyIrrelevantWithReason(data) {
+    incrementIrrelevantData(data);
+    const normalized = normalizeNoiseReason(reason);
+    if (!normalized) return data;
+    const counts = ensureNoiseReasonCounts(data);
+    counts[normalized] = (counts[normalized] || 0) + 1;
+    data.lastNoiseReason = normalized;
+    return data;
+  };
 }
 
 /**
@@ -660,9 +877,25 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
 
   // Track suggestions: session dedup + ignore detection (NOISE-04, P4)
   const surfacedMeta = surfaced.map(p => {
-    let solution = null;
-    try { solution = JSON.parse(p.payload?.json || '{}').solution || null; } catch {}
-    return { collection: p._collection, id: p.id, solution };
+    try {
+      const exp = JSON.parse(p.payload?.json || '{}');
+      const superseded = getEdgesForId(p.id).some(edge => edge.type === 'supersedes' && edge.target === p.id);
+      return {
+        collection: p._collection,
+        id: p.id,
+        solution: exp.solution || null,
+        domain: exp.domain || null,
+        projectSlug: exp._projectSlug || null,
+        scope: exp.scope || null,
+        createdAt: exp.createdAt || null,
+        lastHitAt: exp.lastHitAt || null,
+        hitCount: exp.hitCount || 0,
+        ignoreCount: exp.ignoreCount || 0,
+        superseded,
+      };
+    } catch {
+      return { collection: p._collection, id: p.id, solution: null };
+    }
   });
   if (surfacedMeta.length > 0) {
     const { flagged, filtered } = trackSuggestions(surfacedMeta);
@@ -701,6 +934,14 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
     } catch { /* never block intercept on brain filter failure */ }
   }
 
+  const shownIds = new Set(
+    lines
+      .map(line => line.match(/\[id:([^\s]+)\s+col:/))
+      .map(match => match?.[1] || null)
+      .filter(Boolean)
+  );
+  const shownSurfacedMeta = surfacedMeta.filter(surface => shownIds.has(shortPointId(surface.id)));
+
   activityLog({
     op: 'intercept',
     stage: 'search_done',
@@ -709,14 +950,14 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
     scores: [...r0, ...r1, ...r2].map(p => p._effectiveScore ?? p.score).sort((a, b) => b - a).slice(0, 3),
     result: lines.length > 0 ? 'suggestion' : null,
     hasResult: lines.length > 0,
-    surfacedCount: surfacedMeta.length,
-    surfaced: surfacedMeta.slice(0, 8).map(s => ({ collection: s.collection, pointId: String(s.id || '').slice(0, 8) })),
+    surfacedCount: shownSurfacedMeta.length,
+    surfaced: shownSurfacedMeta.slice(0, 8).map(s => ({ collection: s.collection, pointId: String(s.id || '').slice(0, 8) })),
     project: extractProjectPath(toolInput),
     ...(routeResult ? { route: routeResult.tier, routeModel: routeResult.model, routeSource: routeResult.source } : {}),
     ...sourceMeta
   });
 
-  return { suggestions: lines.length > 0 ? lines.join('\n---\n') : null, surfacedIds: surfacedMeta, route: routeResult || null };
+  return { suggestions: lines.length > 0 ? lines.join('\n---\n') : null, surfacedIds: shownSurfacedMeta, route: routeResult || null };
 }
 
 // --- intercept: backward-compatible wrapper returning string|null ---
@@ -1147,7 +1388,7 @@ function buildStorePayload(id, qa, domain, projectSlug) {
     why: qa.why || null,    // v2: root cause / incident motivation
     scope: qa.scope || null, // v2: {lang, repos, filePattern} — hard filter gate
     confidence: 0.5, hitCount: 0, tier: 2,
-    lastHitAt: null, ignoreCount: 0,
+    lastHitAt: null, ignoreCount: 0, unusedCount: 0,
     confirmedAt: [],  // Phase 108: temporal trace
     domain: domain || null,
     _projectSlug: projectSlug || null, // P0: project-aware filtering
@@ -1337,6 +1578,16 @@ function computeEffectiveScore(point, data, queryDomain, queryProjectSlug) {
     ? Math.min(0.15, (daysSinceHit - 30) / 335 * 0.15)
     : 0;
   const ignorePenalty = Math.min(0.30, (data.ignoreCount || 0) * 0.05);
+  const irrelevantPenalty = Math.min(0.24, (data.irrelevantCount || 0) * 0.04);
+  const unusedPenalty = Math.min(0.18, (data.unusedCount || 0) * 0.03);
+  const noiseReasonCounts = data.noiseReasonCounts || {};
+  const noiseReasonPenalty = Math.min(
+    0.18,
+    ((noiseReasonCounts.wrong_repo || 0) * 0.05)
+      + ((noiseReasonCounts.wrong_language || 0) * 0.04)
+      + ((noiseReasonCounts.wrong_task || 0) * 0.03)
+      + ((noiseReasonCounts.stale_rule || 0) * 0.06)
+  );
   // P3: Heavier domain penalty (was 0.08/0.03, now 0.20/0.05)
   const domainPenalty = (queryDomain && data.domain && queryDomain !== data.domain) ? 0.20
     : (queryDomain && !data.domain) ? 0.05 : 0;
@@ -1360,7 +1611,7 @@ function computeEffectiveScore(point, data, queryDomain, queryProjectSlug) {
   const supersededPenalty = data.superseded ? 0.15 : 0;
   // Wave 3: Confidence weighting — low-confidence entries rank lower
   const confWeight = computeEffectiveConfidence(data);
-  const rawScore = cosine + hitBoost - recencyPenalty - ignorePenalty - domainPenalty - projectPenalty + temporalAdj - supersededPenalty;
+  const rawScore = cosine + hitBoost - recencyPenalty - ignorePenalty - irrelevantPenalty - unusedPenalty - noiseReasonPenalty - domainPenalty - projectPenalty + temporalAdj - supersededPenalty;
   return rawScore * (0.6 + 0.4 * confWeight); // scale: 0.6 floor to avoid zeroing out
 }
 
@@ -1423,6 +1674,7 @@ function applyHitUpdate(data) {
   data.hitCount = (data.hitCount || 0) + 1;
   data.lastHitAt = new Date().toISOString();
   data.ignoreCount = 0;
+  data.unusedCount = 0;
   // Phase 108: temporal trace — append to confirmedAt (cap at 50)
   if (!Array.isArray(data.confirmedAt)) data.confirmedAt = [];
   data.confirmedAt.push(data.lastHitAt);
@@ -1436,21 +1688,34 @@ async function recordHit(collection, pointId) {
 
 // --- recordFeedback: explicit agent feedback on surfaced suggestions ---
 
-async function recordFeedback(collection, pointId, followed) {
-  await updatePointPayload(collection, pointId, followed ? applyHitUpdate : incrementIgnoreCountData);
-  activityLog({ op: 'feedback', collection, pointId: pointId.slice(0, 8), followed });
+async function recordFeedback(collection, pointId, verdictOrFollowed, reason = null, options = {}) {
+  const verdict = normalizeFeedbackVerdict(verdictOrFollowed);
+  if (!verdict) return false;
+
+  const normalizedReason = verdict === 'IRRELEVANT' ? normalizeNoiseReason(reason) : null;
+  const updateFn = verdict === 'FOLLOWED'
+    ? applyHitUpdate
+    : verdict === 'IGNORED'
+      ? incrementIgnoreCountData
+      : incrementIrrelevantWithReasonData(normalizedReason);
+
+  await updatePointPayload(collection, pointId, updateFn);
+  activityLog({
+    op: options.source === 'judge' ? 'judge-feedback' : 'feedback',
+    collection,
+    pointId: pointId.slice(0, 8),
+    verdict,
+    ...(normalizedReason ? { reason: normalizedReason } : {}),
+  });
+  return true;
 }
 
 // --- recordJudgeFeedback: LLM judge verdict with IRRELEVANT separation ---
 
-async function recordJudgeFeedback(collection, pointId, verdict) {
-  const updateFn = verdict === 'FOLLOWED' ? applyHitUpdate
-    : verdict === 'IGNORED' ? incrementIgnoreCountData
-    : verdict === 'IRRELEVANT' ? incrementIrrelevantData
-    : null;
-  if (!updateFn) return; // UNCLEAR → no feedback
-  await updatePointPayload(collection, pointId, updateFn);
-  activityLog({ op: 'judge-feedback', collection, pointId: pointId.slice(0, 8), verdict });
+async function recordJudgeFeedback(collection, pointId, verdict, reason = null) {
+  const normalized = normalizeFeedbackVerdict(verdict);
+  if (!normalized) return false; // UNCLEAR → no feedback
+  return recordFeedback(collection, pointId, normalized, reason, { source: 'judge' });
 }
 
 // --- syncToQdrant: migrate FileStore data to Qdrant (per D-17) ---
@@ -1705,13 +1970,30 @@ async function evolve(trigger) {
       const data = parsePayload(entry);
       if (!data) continue;
       const ignores = data.ignoreCount || 0;
+      const irrelevants = data.irrelevantCount || 0;
+      const unuseds = data.unusedCount || 0;
       const hits = data.hitCount || 0;
       const age = now - new Date(data.createdAt || 0).getTime();
+      const noiseReasonCounts = data.noiseReasonCounts || {};
+      const staleRuleNoise = noiseReasonCounts.stale_rule || 0;
       // Noise criteria: ignoreCount >= 5 AND hit-to-ignore ratio < 0.2 AND age > 30 days
-      if (ignores >= 5 && (hits / Math.max(1, ignores)) < 0.2 && age > THIRTY_DAYS) {
+      const ignoredNoise = ignores >= 5 && (hits / Math.max(1, ignores)) < 0.2 && age > THIRTY_DAYS;
+      const irrelevantNoise = irrelevants >= 4 && (hits / Math.max(1, irrelevants)) < 0.5 && age > (14 * 24 * 60 * 60 * 1000);
+      const unusedNoise = unuseds >= 3 && (hits / Math.max(1, unuseds)) < 0.35 && age > (14 * 24 * 60 * 60 * 1000);
+      const staleNoise = staleRuleNoise >= 2 && age > (7 * 24 * 60 * 60 * 1000);
+      if (ignoredNoise || irrelevantNoise || unusedNoise || staleNoise) {
         await deleteEntry(collCfg.name, entry.id);
         results.archived++;
-        activityLog({ op: 'evolve-noise-cleanup', id: entry.id.slice(0, 8), ignores, hits, age: Math.round(age / (24 * 60 * 60 * 1000)) });
+        activityLog({
+          op: 'evolve-noise-cleanup',
+          id: entry.id.slice(0, 8),
+          ignores,
+          irrelevants,
+          unuseds,
+          hits,
+          staleRuleNoise,
+          age: Math.round(age / (24 * 60 * 60 * 1000)),
+        });
       }
     }
   }
@@ -2279,4 +2561,4 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
 
 // --- Exports ---
 
-module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _isRouterEnabled: isRouterEnabled };
+module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _reconcilePendingHints: reconcilePendingHints, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _isRouterEnabled: isRouterEnabled };
