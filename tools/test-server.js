@@ -8,8 +8,23 @@
 
 'use strict';
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
 let passed = 0;
 let failed = 0;
+
+function loadConfig() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(os.homedir(), '.experience', 'config.json'), 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+const CONFIG = loadConfig();
+const AUTH_TOKEN = CONFIG.server?.authToken || '';
 
 function assert(condition, label) {
   if (condition) { passed++; console.log(`  PASS: ${label}`); }
@@ -17,9 +32,11 @@ function assert(condition, label) {
 }
 
 async function postJson(base, path, body) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (AUTH_TOKEN) headers.Authorization = `Bearer ${AUTH_TOKEN}`;
   return fetch(`${base}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(body),
   });
 }
@@ -173,7 +190,9 @@ server.listen(0, async () => {
     console.log('\n--- POST /api/intercept (invalid JSON) ---');
     const badJsonRes = await fetch(`${base}/api/intercept`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: AUTH_TOKEN
+        ? { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` }
+        : { 'Content-Type': 'application/json' },
       body: 'not-json{{{',
     });
     assert(badJsonRes.status >= 400, 'invalid JSON returns error status');
