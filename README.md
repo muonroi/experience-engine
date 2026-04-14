@@ -140,10 +140,72 @@ next hook invocation. Lightweight hook traffic is replayed inline; heavier queue
 events are compacted and drained in the background so PreToolUse/PostToolUse stay fast without
 letting extract payloads grow unbounded.
 
-### Existing Machine → Thin Client
+## Role-Based Setup
 
-If a workstation already runs an older local/hybrid Experience Engine install, switch it to a
-true thin client with:
+### Admin: Setup VPS Brain
+
+Use this flow once per VPS. This machine holds the canonical brain, Qdrant-backed state, gates,
+extract/evolve jobs, and server-side activity.
+
+1. Clone the repo on the VPS:
+
+```bash
+git clone https://github.com/muonroi/experience-engine.git
+cd experience-engine
+```
+
+2. Run the main setup with VPS-local Qdrant and provider credentials:
+
+```bash
+EXP_QDRANT_URL="http://localhost:6333" \
+EXP_QDRANT_KEY="YOUR_QDRANT_KEY" \
+EXP_EMBED_PROVIDER="siliconflow" \
+EXP_BRAIN_PROVIDER="siliconflow" \
+EXP_EMBED_MODEL="Qwen/Qwen3-Embedding-0.6B" \
+EXP_BRAIN_MODEL="Qwen/Qwen2.5-7B-Instruct" \
+EXP_EMBED_ENDPOINT="https://api.siliconflow.com/v1/embeddings" \
+EXP_EMBED_KEY="YOUR_EMBED_KEY" \
+EXP_BRAIN_ENDPOINT="https://api.siliconflow.com/v1/chat/completions" \
+EXP_BRAIN_KEY="YOUR_BRAIN_KEY" \
+EXP_SERVER_PORT="8082" \
+EXP_SERVER_AUTH_TOKEN="YOUR_SERVER_AUTH_TOKEN" \
+EXP_AGENTS="codex" \
+bash .experience/setup.sh
+```
+
+3. Start the server on the VPS:
+
+```bash
+node server.js
+```
+
+4. Install scheduled maintenance on the VPS:
+
+```bash
+crontab -e
+```
+
+Add:
+
+```cron
+*/15 * * * * /path/to/node /home/YOUR_USER/.experience/exp-server-maintain.js --trigger cron >> /home/YOUR_USER/.experience/maintain.log 2>&1
+```
+
+5. Keep portable backups so the brain can move to a new VPS later:
+
+```bash
+node tools/exp-portable-backup.js --out /var/backups/experience-$(date +%F)
+```
+
+Admin notes:
+- Only the VPS needs Qdrant credentials, embed keys, and brain keys.
+- Developers should not need direct access to those secrets.
+- If you later migrate to another VPS, restore with `tools/exp-portable-restore.js`.
+
+### Dev: Setup Existing Machine
+
+If a workstation already runs an older local/hybrid Experience Engine install, convert it into a
+true thin client:
 
 ```bash
 git pull
@@ -156,9 +218,9 @@ bash .experience/setup-thin-client.sh \
 `--clean` backs up old local state under `~/.experience/backup-thin-client/<timestamp>/` and removes
 local `activity.jsonl`, `store/`, and old markers so the machine stops behaving like a local brain.
 
-### Fresh Machine → Thin Client
+### Dev: Setup Fresh Machine
 
-On a brand-new machine, clone the repo and run:
+On a brand-new machine, clone the repo and install only the thin-client hooks:
 
 ```bash
 git clone https://github.com/muonroi/experience-engine.git
@@ -168,11 +230,39 @@ bash .experience/setup-thin-client.sh \
   --token YOUR_SERVER_AUTH_TOKEN
 ```
 
-Then verify:
+Thin-client notes:
+- Local machines do not need `EXP_QDRANT_URL`, `EXP_QDRANT_KEY`, SSH tunnels, or provider API keys.
+- The local machine keeps only hooks, config, temporary state, and offline queue.
+- The canonical brain stays on the VPS.
+
+### Verify Checklist
+
+After setup, verify both sides explicitly.
+
+VPS brain checks:
+
+```bash
+curl http://localhost:8082/health
+curl http://localhost:8082/api/gates
+bash ~/.experience/health-check.sh --json
+```
+
+Expected:
+- `/health` returns `status=ok`
+- `/api/gates` returns JSON
+- health check reports all pass or clearly explains any unhealthy item
+
+Local thin-client checks:
 
 ```bash
 bash ~/.experience/health-check.sh --json
 ```
+
+Expected:
+- `mode` reports `Thin client -> VPS brain`
+- `remote_server` and `remote_gates` are `ok`
+- `offline_queue` is empty or drains after the next hook
+- no local Qdrant or SSH tunnel is required in thin-client mode
 
 ## How It Works
 
