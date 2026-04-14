@@ -133,11 +133,27 @@ const PENDING_HINT_TTL_MS = 20 * 60 * 1000;
 const SESSION_TRACK_DIR = require('path').join(require('os').tmpdir(), 'experience-session');
 const MAX_SESSION_UNIQUE = 8; // P2: max unique experiences surfaced per session
 
-function getSessionTrackFile() {
+function sanitizeSessionToken(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 96);
+}
+
+function getSessionTrackFile(meta) {
   try { fs.mkdirSync(SESSION_TRACK_DIR, { recursive: true }); } catch {}
-  // Stable session key: YYYYMMDD + CWD hash (same day + same project = same session)
-  // This groups all hook calls from the same agent workspace into one tracking file.
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const sessionToken = sanitizeSessionToken(
+    meta?.sourceSession
+    || process.env.CODEX_SESSION_ID
+    || process.env.CLAUDE_SESSION_ID
+    || process.env.GEMINI_SESSION_ID
+  );
+  if (sessionToken) {
+    return pathMod.join(SESSION_TRACK_DIR, `session-${today}-${sessionToken}.json`);
+  }
+  // Fallback: YYYYMMDD + CWD hash when no runtime session id is available.
   const cwd = process.cwd() || '';
   let hash = 0;
   for (let i = 0; i < cwd.length; i++) { hash = ((hash << 5) - hash + cwd.charCodeAt(i)) | 0; }
@@ -145,9 +161,9 @@ function getSessionTrackFile() {
   return pathMod.join(SESSION_TRACK_DIR, `session-${sessionKey}.json`);
 }
 
-function readSessionTrack() {
+function readSessionTrack(meta) {
   try {
-    const raw = fs.readFileSync(getSessionTrackFile(), 'utf8');
+    const raw = fs.readFileSync(getSessionTrackFile(meta), 'utf8');
     const data = JSON.parse(raw);
     // Expire after 2 hours (session likely ended)
     if (Date.now() - (data.startedAt || 0) > 2 * 60 * 60 * 1000) return { startedAt: Date.now(), seen: {}, counts: {}, pending: {} };
@@ -158,16 +174,16 @@ function readSessionTrack() {
   }
 }
 
-function writeSessionTrack(track) {
-  try { fs.writeFileSync(getSessionTrackFile(), JSON.stringify(track)); } catch {}
+function writeSessionTrack(track, meta) {
+  try { fs.writeFileSync(getSessionTrackFile(meta), JSON.stringify(track)); } catch {}
 }
 
 /**
  * Track surfaced suggestions in persistent session file.
  * Returns: { filtered: ids to skip (already shown), flagged: ids with 3+ repeats }
  */
-function trackSuggestions(surfacedPoints) {
-  const track = readSessionTrack();
+function trackSuggestions(surfacedPoints, meta) {
+  const track = readSessionTrack(meta);
   const flagged = [];
   const filtered = [];
 
@@ -188,7 +204,7 @@ function trackSuggestions(surfacedPoints) {
     track.seen[key] = Date.now();
   }
 
-  writeSessionTrack(track);
+  writeSessionTrack(track, meta);
   return { flagged, filtered };
 }
 
@@ -196,8 +212,8 @@ function trackSuggestions(surfacedPoints) {
  * P2: Check if session budget is exhausted (max unique experiences).
  * Returns number of unique experiences already shown.
  */
-function sessionUniqueCount() {
-  const track = readSessionTrack();
+function sessionUniqueCount(meta) {
+  const track = readSessionTrack(meta);
   return Object.keys(track.seen).length;
 }
 
@@ -757,7 +773,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
   }
 
   // P2: Session budget cap — stop surfacing after N unique experiences
-  const uniquesSoFar = sessionUniqueCount();
+  const uniquesSoFar = sessionUniqueCount(sourceMeta);
   if (uniquesSoFar >= MAX_SESSION_UNIQUE) {
     activityLog({
       op: 'intercept',
@@ -898,7 +914,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
     }
   });
   if (surfacedMeta.length > 0) {
-    const { flagged, filtered } = trackSuggestions(surfacedMeta);
+    const { flagged, filtered } = trackSuggestions(surfacedMeta, sourceMeta);
     // P4: Remove already-shown suggestions from output
     if (filtered.length > 0) {
       const filteredIds = new Set(filtered.map(f => f.id));
@@ -1201,6 +1217,7 @@ async function callBrainWithFallback(prompt) {
 // Timeout: 3s (tight — fail-open if brain is slow). Cost: ~80 tokens input, ~5 tokens output.
 async function brainRelevanceFilter(actionQuery, suggestionLines, signal, projectSlug) {
   if (!suggestionLines || suggestionLines.length === 0) return null;
+  const hasClearHighConfidenceWarning = suggestionLines.some(line => /Experience - High Confidence \(([-\d.]+)\)/.test(line));
 
   // Extract just the warning text (strip emoji/score prefix for cleaner prompt)
   const warnings = suggestionLines.map((line, i) => {
@@ -1254,13 +1271,17 @@ Reply with ONLY the relevant warning numbers separated by commas (e.g. "1,3"), o
     }
 
     const text = response.trim().toLowerCase();
-    if (text === 'none' || text === '0' || text === '') return [];
+    if (text === 'none' || text === '0' || text === '') {
+      return hasClearHighConfidenceWarning ? null : [];
+    }
 
     // Parse comma-separated numbers
     const nums = text.match(/\d+/g);
     if (!nums) return null; // unparseable — fail-open
     const validIndices = nums.map(n => parseInt(n, 10) - 1).filter(i => i >= 0 && i < suggestionLines.length);
-    if (validIndices.length === 0) return [];
+    if (validIndices.length === 0) {
+      return hasClearHighConfidenceWarning ? null : [];
+    }
     return validIndices.map(i => suggestionLines[i]);
   } catch {
     return null; // timeout or error — fail-open, show all suggestions

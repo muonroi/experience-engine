@@ -138,11 +138,12 @@ async function handleIntercept(req, res) {
     cwd: body.cwd || null,
   };
   const corePath = path.join(os.homedir(), '.experience', 'experience-core.js');
-  const { interceptWithMeta } = require(corePath);
+  delete require.cache[require.resolve(corePath)];
+  const { interceptWithMeta, intercept: interceptFresh } = require(corePath);
   const resultMeta = typeof interceptWithMeta === 'function'
     ? await interceptWithMeta(body.toolName, body.toolInput || {}, undefined, meta)
     : {
-      suggestions: await intercept(body.toolName, body.toolInput || {}, undefined, meta),
+      suggestions: await interceptFresh(body.toolName, body.toolInput || {}, undefined, meta),
       surfacedIds: [],
       route: null,
     };
