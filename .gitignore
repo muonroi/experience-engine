@@ -8,3 +8,8 @@ config.json
 .stop-marker.json
 /sdk/python/muonroi_experience/__pycache__
 health-check.sh
+
+# Local-only agent/runtime state
+.claude/settings.local.json
+.quick-codex-flow/
+.quick-codex-lock/
