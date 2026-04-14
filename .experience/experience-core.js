@@ -1089,6 +1089,12 @@ function assessExtractedQaQuality(qa) {
   if (isPlaceholderExtractField('trigger', trigger)) return { ok: false, reason: 'placeholder_trigger' };
   if (isPlaceholderExtractField('question', question)) return { ok: false, reason: 'placeholder_question' };
   if (isPlaceholderExtractField('solution', solution)) return { ok: false, reason: 'placeholder_solution' };
+  if (/^(session excerpt indicates|execution of commands|deploy fixes?|direct call into)\b/.test(trigger)) {
+    return { ok: false, reason: 'generic_trigger' };
+  }
+  if (/^(implement|update|debug|review)\b/.test(solution) && solution.length < 80) {
+    return { ok: false, reason: 'generic_solution' };
+  }
   if (trigger.length < 8) return { ok: false, reason: 'trigger_too_short' };
   if (solution.length < 12) return { ok: false, reason: 'solution_too_short' };
   return { ok: true, reason: null };
@@ -1109,13 +1115,23 @@ async function extractFromSession(transcript, projectPath) {
   for (const mistake of mistakes.slice(0, 5)) {
     try {
       const qa = await extractQA(mistake);
-      if (!qa || qa.skip) continue;
+      if (!qa) {
+        activityLog({ op: 'extract-skip', reason: 'brain_null', type: mistake.type, project: projectPath || null });
+        continue;
+      }
+      if (qa.skip) {
+        activityLog({ op: 'extract-skip', reason: qa.reason || 'brain_skip', type: mistake.type, project: projectPath || null });
+        continue;
+      }
       const quality = assessExtractedQaQuality(qa);
       if (!quality.ok) {
         activityLog({ op: 'extract-skip', reason: quality.reason, type: mistake.type, project: projectPath || null });
         continue;
       }
-      if (await isDuplicate(qa)) continue;
+      if (await isDuplicate(qa)) {
+        activityLog({ op: 'extract-skip', reason: 'duplicate', type: mistake.type, project: projectPath || null });
+        continue;
+      }
       const projectSlug = extractProjectSlug(projectPath);
       await storeExperience(qa, domain, projectSlug);
       stored++;
@@ -1188,6 +1204,70 @@ function buildQuery(toolName, toolInput) {
 
 // --- Mistake detection ---
 
+function parseTranscriptToolCall(line) {
+  const match = String(line || '').match(/^ToolCall\s+([^:]+):\s*([\s\S]*)$/i);
+  if (!match) return null;
+  return {
+    toolName: match[1].trim(),
+    summary: match[2].trim(),
+  };
+}
+
+function isTranscriptReadOnlyToolCall(line) {
+  const parsed = parseTranscriptToolCall(line);
+  if (!parsed) return false;
+  const tool = parsed.toolName.toLowerCase();
+  if (tool !== 'bash' && tool !== 'shell' && tool !== 'execute_command') return false;
+  let normalized = parsed.summary.replace(/\s+/g, ' ').trim();
+  if (!normalized) return false;
+  if (/^ssh\b/i.test(normalized)) return true;
+  normalized = normalized.replace(/^\s*cd\s+["']?[^"';&|]+["']?\s*&&\s*/i, '');
+  const parts = normalized.split(/\s*(?:&&|\|\||;)\s*/);
+  return parts.every((part) => {
+    const trimmed = part.trim();
+    if (!trimmed || /^cd\s+/i.test(trimmed)) return true;
+    return READ_ONLY_CMD.test(trimmed)
+      || /^sed\s+-n\b/.test(trimmed)
+      || /^curl\b(?!.*\b(-X|--request)\s+(POST|PUT|PATCH|DELETE)\b)/i.test(trimmed);
+  });
+}
+
+function isMutatingTranscriptToolCall(line) {
+  const parsed = parseTranscriptToolCall(line);
+  if (!parsed) return false;
+  const tool = parsed.toolName.toLowerCase();
+  if (tool === 'edit' || tool === 'write' || tool === 'replace' || tool === 'write_file' || tool === 'replace_in_file') {
+    return true;
+  }
+  if (tool === 'bash' || tool === 'shell' || tool === 'execute_command') {
+    return !isTranscriptReadOnlyToolCall(line);
+  }
+  return false;
+}
+
+function extractRetryTarget(line) {
+  const parsed = parseTranscriptToolCall(line);
+  if (!parsed) return null;
+  const tool = parsed.toolName.toLowerCase();
+  if (tool === 'edit' || tool === 'write' || tool === 'replace' || tool === 'write_file' || tool === 'replace_in_file') {
+    const target = parsed.summary.split(/\s+/)[0] || '';
+    return target.includes('.') ? `${parsed.toolName}:${target}` : null;
+  }
+  if (tool === 'bash' || tool === 'shell' || tool === 'execute_command') {
+    const target = extractPathFromCommand(parsed.summary);
+    return target ? `${parsed.toolName}:${target}` : null;
+  }
+  return null;
+}
+
+function isTranscriptErrorSignal(line) {
+  const text = String(line || '');
+  if (!text || /^(User|Assistant):/i.test(text)) return false;
+  return /^ToolOutput:/i.test(text)
+    || /^Bash exit\s+[1-9]/i.test(text)
+    || /\b(error|exception|fatal|assertionerror|failed|denied|not found|timeout)\b/i.test(text);
+}
+
 function detectMistakes(transcript) {
   const mistakes = [];
   const lines = transcript.split('\n');
@@ -1195,11 +1275,10 @@ function detectMistakes(transcript) {
   // Retry loops
   const toolCalls = {};
   for (const line of lines) {
-    const match = line.match(/(Edit|Write|Bash|shell|replace|write_file).*?([\w./]+\.\w+)/i);
-    if (match) {
-      const key = `${match[1]}:${match[2]}`;
-      toolCalls[key] = (toolCalls[key] || 0) + 1;
-    }
+    if (!isMutatingTranscriptToolCall(line)) continue;
+    const key = extractRetryTarget(line);
+    if (!key) continue;
+    toolCalls[key] = (toolCalls[key] || 0) + 1;
   }
   for (const [key, count] of Object.entries(toolCalls)) {
     if (count >= 3) {
@@ -1212,25 +1291,26 @@ function detectMistakes(transcript) {
   }
 
   // Error → fix patterns
-  for (let i = 0; i < lines.length - 1; i++) {
-    if (lines[i].match(/error|Error|ERROR|fail|FAIL|exception/i)
-        && lines[i + 1] && !lines[i + 1].match(/error|Error|fail/i)) {
+  for (let i = 0; i < lines.length; i++) {
+    if (!isTranscriptErrorSignal(lines[i])) continue;
+    for (let j = i + 1; j <= Math.min(i + 6, lines.length - 1); j++) {
+      if (!isMutatingTranscriptToolCall(lines[j])) continue;
       mistakes.push({
         type: 'error_fix',
         context: 'Error followed by correction',
-        excerpt: lines.slice(Math.max(0, i - 2), i + 4).join('\n')
+        excerpt: lines.slice(Math.max(0, i - 2), j + 3).join('\n')
       });
+      break;
     }
   }
 
   // User correction (per D-10, D-12) — proximity window after tool call
-  const toolCallPattern = /Tool(Use|Call)|tool_name|toolName|>\s*(Edit|Write|Bash|Read)/i;
   const correctionPattern = /\b(no[,.]?\s|wrong|don't|instead|not that|stop|undo|revert this)\b/i;
   for (let i = 0; i < lines.length; i++) {
-    if (toolCallPattern.test(lines[i])) {
+    if (isMutatingTranscriptToolCall(lines[i])) {
       // Check next 5 lines for user correction
       for (let j = i + 1; j <= Math.min(i + 5, lines.length - 1); j++) {
-        if (correctionPattern.test(lines[j])) {
+        if (/^User:/i.test(lines[j]) && correctionPattern.test(lines[j])) {
           mistakes.push({
             type: 'user_correction',
             context: `User corrected agent after tool call at line ${i}`,
@@ -1244,11 +1324,10 @@ function detectMistakes(transcript) {
 
   // Test fail -> fix (per D-10)
   const testFailPattern = /\bFAIL\b|test\s+failed|AssertionError|AssertError|FAILED|assert\.|expect\(.*\)\.to/i;
-  const fixActionPattern = /(Edit|Write|write_file|replace|replace_in_file)/i;
   for (let i = 0; i < lines.length; i++) {
-    if (testFailPattern.test(lines[i])) {
+    if (isTranscriptErrorSignal(lines[i]) && testFailPattern.test(lines[i])) {
       for (let j = i + 1; j <= Math.min(i + 10, lines.length - 1); j++) {
-        if (fixActionPattern.test(lines[j])) {
+        if (isMutatingTranscriptToolCall(lines[j])) {
           mistakes.push({
             type: 'test_fail_fix',
             context: `Test failure at line ${i} followed by fix at line ${j}`,
@@ -1918,6 +1997,30 @@ function getEdgesOfType(type) {
 
 // --- Evolution Engine (per D-03) ---
 
+const BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD = 20;
+const BEHAVIORAL_TO_PRINCIPLE_MIN_CONFIDENCE = 0.9;
+const BEHAVIORAL_TO_PRINCIPLE_MIN_AGE_MS = 5 * 24 * 60 * 60 * 1000;
+
+function shouldPromoteBehavioralToPrinciple(data, now = Date.now()) {
+  if (!data || data.createdFrom === 'evolution-abstraction') return false;
+  if ((data.hitCount || 0) < BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD) return false;
+  if ((data.confidence || 0) < BEHAVIORAL_TO_PRINCIPLE_MIN_CONFIDENCE) return false;
+  const createdAt = new Date(data.createdAt || 0).getTime();
+  if (!createdAt || Number.isNaN(createdAt)) return false;
+  return (now - createdAt) >= BEHAVIORAL_TO_PRINCIPLE_MIN_AGE_MS;
+}
+
+function buildPrincipleText(data) {
+  if (!data) return '';
+  if (data.principle) return data.principle;
+  if (data.trigger && data.solution) {
+    return /^(when|if|always|never)\b/i.test(data.trigger)
+      ? `${data.trigger} ${data.solution}`.trim()
+      : `When ${data.trigger}, ${data.solution}`;
+  }
+  return data.solution || data.trigger || '';
+}
+
 async function evolve(trigger) {
   const results = { promoted: 0, abstracted: 0, demoted: 0, archived: 0 };
 
@@ -1951,16 +2054,19 @@ async function evolve(trigger) {
   const t1PrincipleEntries = await getAllEntries('experience-behavioral');
   for (const entry of t1PrincipleEntries) {
     const data = parsePayload(entry);
-    if (!data || data.createdFrom !== 'evolution-abstraction') continue;
-    if ((data.hitCount || 0) >= 3) {
-      data.tier = 0;
-      data.promotedToT0At = new Date().toISOString();
-      const vector = entry.vector || await getEmbedding(`${data.principle || data.solution}`);
-      if (!vector) continue;
-      await upsertEntry('experience-principles', entry.id, vector, data);
-      await deleteEntry('experience-behavioral', entry.id);
-      results.promoted++;
-    }
+    if (!data) continue;
+    const promoteProbationary = data.createdFrom === 'evolution-abstraction' && (data.hitCount || 0) >= 3;
+    const promoteMatureBehavioral = shouldPromoteBehavioralToPrinciple(data);
+    if (!promoteProbationary && !promoteMatureBehavioral) continue;
+    data.tier = 0;
+    data.principle = buildPrincipleText(data);
+    data.promotedToT0At = new Date().toISOString();
+    if (promoteMatureBehavioral) data.promotedFromBehavioralAt = new Date().toISOString();
+    const vector = entry.vector || await getEmbedding(buildPrincipleText(data));
+    if (!vector) continue;
+    await upsertEntry('experience-principles', entry.id, vector, data);
+    await deleteEntry('experience-behavioral', entry.id);
+    results.promoted++;
   }
 
   // Step 2: Abstract T2 clusters -> T0 (per D-05)
@@ -2700,4 +2806,4 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
 
 // --- Exports ---
 
-module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _reconcilePendingHints: reconcilePendingHints, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _isRouterEnabled: isRouterEnabled, _assessExtractedQaQuality: assessExtractedQaQuality, _normalizeExtractText: normalizeExtractText };
+module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _reconcilePendingHints: reconcilePendingHints, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _isRouterEnabled: isRouterEnabled, _assessExtractedQaQuality: assessExtractedQaQuality, _normalizeExtractText: normalizeExtractText, _detectMistakes: detectMistakes, _shouldPromoteBehavioralToPrinciple: shouldPromoteBehavioralToPrinciple, _buildPrincipleText: buildPrincipleText };

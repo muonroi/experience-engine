@@ -26,6 +26,16 @@ test('rejects short placeholder-like solution even with non-placeholder trigger'
   assert.equal(result.reason, 'placeholder_solution');
 });
 
+test('rejects generic extractor output that only repeats session commentary', () => {
+  const result = _assessExtractedQaQuality({
+    trigger: 'Session excerpt indicates issues with error handling and logging',
+    question: 'generic debugging',
+    solution: 'Implement standardized error handling and logging practices.',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'generic_trigger');
+});
+
 test('accepts concrete reusable lesson', () => {
   const result = _assessExtractedQaQuality({
     trigger: 'when POST /api/posttool times out in remote thin-client mode',

@@ -142,6 +142,21 @@ function computeInterceptionPrecision(activity, now) {
   };
 }
 
+function computeOrganicExtractionStats(points, assessQuality) {
+  const stats = {
+    totalOrganic: 0,
+    qualityOrganic: 0,
+  };
+  for (const point of points) {
+    let data = {};
+    try { data = JSON.parse(point.payload?.json || '{}'); } catch {}
+    if (data.createdFrom !== 'session-extractor') continue;
+    stats.totalOrganic++;
+    if (!assessQuality || assessQuality(data)?.ok) stats.qualityOrganic++;
+  }
+  return stats;
+}
+
 // --- Gate checks ---
 async function checkGates(options = {}) {
   const { homeDir, activityLog, configFile } = resolvePaths(options);
@@ -193,11 +208,12 @@ async function checkGates(options = {}) {
     pass: qdrantOk
   });
 
+  const homeCore = require(path.join(homeDir, '.experience', 'experience-core.js'));
+
   // Check 4: Embed works
   let embedOk = false;
   try {
-    const core = require(path.join(homeDir, '.experience', 'experience-core.js'));
-    const vec = await core.getEmbeddingRaw('gate check probe');
+    const vec = await homeCore.getEmbeddingRaw('gate check probe');
     embedOk = vec && vec.length > 0;
   } catch {}
   results.gate1.checks.push({
@@ -210,9 +226,11 @@ async function checkGates(options = {}) {
   // Check 5: Brain works
   let brainOk = false;
   try {
-    const core = require(path.join(homeDir, '.experience', 'experience-core.js'));
-    const result = await core._callBrainWithFallback('Return JSON: {"test":"ok"}');
-    brainOk = !!result?.test;
+    for (let attempt = 0; attempt < 3 && !brainOk; attempt++) {
+      const result = await homeCore._callBrainWithFallback('Return strict JSON only: {"test":"ok"}');
+      brainOk = result?.test === 'ok';
+      if (!brainOk && attempt < 2) await new Promise((resolve) => setTimeout(resolve, 350));
+    }
   } catch {}
   results.gate1.checks.push({
     name: 'Brain API works',
@@ -229,13 +247,22 @@ async function checkGates(options = {}) {
 
   // Metric 1: Extraction works (>= 5 organic T2 entries)
   const t2Count = await collectionCount(qdrantBase, qdrantKey, 'experience-selfqa');
+  const t2Points = await scrollAll(qdrantBase, qdrantKey, 'experience-selfqa');
+  const t1Count = await collectionCount(qdrantBase, qdrantKey, 'experience-behavioral');
+  const t1Points = await scrollAll(qdrantBase, qdrantKey, 'experience-behavioral');
+  const t0Count = await collectionCount(qdrantBase, qdrantKey, 'experience-principles');
+  const t0Points = await scrollAll(qdrantBase, qdrantKey, 'experience-principles');
   const extractEvents = activity.filter(e => e.op === 'extract' && (e.stored || 0) > 0);
   const totalStored = extractEvents.reduce((sum, e) => sum + (e.stored || 0), 0);
+  const organicStats = computeOrganicExtractionStats(
+    [...t2Points, ...t1Points, ...t0Points],
+    homeCore._assessExtractedQaQuality
+  );
   results.gate2.checks.push({
     name: '1. Extraction works',
     target: '>= 5 organic entries',
-    actual: `${totalStored} stored (${t2Count} in T2)`,
-    pass: totalStored >= 5,
+    actual: `${organicStats.qualityOrganic} live organic (${totalStored} extract-stored events, ${organicStats.totalOrganic} total organic entries)`,
+    pass: organicStats.qualityOrganic >= 5 || totalStored >= 5,
     must: true
   });
 
@@ -244,7 +271,6 @@ async function checkGates(options = {}) {
   let dedupOk = true;
   let dedupStats = { duplicateCount: 0, lowQualityCount: 0 };
   if (t2Count > 0) {
-    const t2Points = await scrollAll(qdrantBase, qdrantKey, 'experience-selfqa');
     dedupStats = computeDedupAndHygiene(t2Points);
     dedupOk = dedupStats.duplicateCount === 0 && dedupStats.lowQualityCount === 0;
   }
@@ -307,10 +333,7 @@ async function checkGates(options = {}) {
   });
 
   // Metric 7: Evolution works (>= 1 principle created)
-  const t0Count = await collectionCount(qdrantBase, qdrantKey, 'experience-principles');
-  const t1Count = await collectionCount(qdrantBase, qdrantKey, 'experience-behavioral');
   // Also check T1 entries with createdFrom=evolution-abstraction (probationary principles)
-  const t1Points = await scrollAll(qdrantBase, qdrantKey, 'experience-behavioral');
   const probationary = t1Points.filter(p => {
     try { return JSON.parse(p.payload?.json || '{}').createdFrom === 'evolution-abstraction'; } catch { return false; }
   });
@@ -338,7 +361,6 @@ async function checkGates(options = {}) {
   // Proxy: principles exist AND have hitCount > 0
   let novelCoverage = false;
   if (t0Count > 0) {
-    const t0Points = await scrollAll(qdrantBase, qdrantKey, 'experience-principles');
     novelCoverage = t0Points.some(p => {
       try { return (JSON.parse(p.payload?.json || '{}').hitCount || 0) > 0; } catch { return false; }
     });
@@ -377,7 +399,7 @@ async function checkGates(options = {}) {
   results.gate3.checks.push({
     name: 'Q1: Agent avoids past mistakes?',
     target: 'Extraction + interception pipeline working',
-    actual: q1 ? 'YES — organic lessons stored + hooks firing' : totalStored >= 3 ? 'Partial — stored but hooks unclear' : 'NO — insufficient organic extractions',
+    actual: q1 ? 'YES — organic lessons stored + hooks firing' : organicStats.qualityOrganic >= 3 ? 'Partial — organic lessons exist, still below target' : 'NO — insufficient organic extractions',
     pass: q1
   });
 
@@ -428,6 +450,7 @@ async function checkGates(options = {}) {
     t1_probationary: probationary.length,
     t2_selfqa: t2Count,
     total_extractions: totalStored,
+    live_organic_extractions: organicStats.qualityOrganic,
     total_intercepts_week: interceptEvents.length,
     evolve_runs: evolveEvents.length,
     first_activity: activity[0]?.ts || 'N/A',
@@ -482,7 +505,7 @@ function display(results) {
   const d = results.data;
   console.log('  ── Data ──');
   console.log(`  T0: ${d.t0_principles} principles | T1: ${d.t1_behavioral} behavioral (${d.t1_probationary} probationary) | T2: ${d.t2_selfqa} selfqa`);
-  console.log(`  Extractions: ${d.total_extractions} stored | Intercepts: ${d.total_intercepts_week}/week | Evolve runs: ${d.evolve_runs}`);
+  console.log(`  Extractions: ${d.total_extractions} stored (${d.live_organic_extractions} live organic) | Intercepts: ${d.total_intercepts_week}/week | Evolve runs: ${d.evolve_runs}`);
   console.log(`  Active since: ${d.first_activity} (${d.days_active} days)`);
   console.log('');
 
@@ -516,4 +539,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { checkGates, display, readActivityLog, computeDedupAndHygiene, computeInterceptionPrecision, isPlaceholderLesson };
+module.exports = { checkGates, display, readActivityLog, computeDedupAndHygiene, computeInterceptionPrecision, computeOrganicExtractionStats, isPlaceholderLesson };

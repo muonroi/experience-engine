@@ -24,7 +24,7 @@ function loadConfig() {
 }
 
 const CONFIG = loadConfig();
-const AUTH_TOKEN = CONFIG.server?.authToken || '';
+const AUTH_TOKEN = CONFIG.server?.authToken || CONFIG.serverAuthToken || '';
 
 function assert(condition, label) {
   if (condition) { passed++; console.log(`  PASS: ${label}`); }

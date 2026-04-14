@@ -7,6 +7,7 @@ const assert = require('node:assert/strict');
 const {
   computeDedupAndHygiene,
   computeInterceptionPrecision,
+  computeOrganicExtractionStats,
 } = require('./exp-gates.js');
 
 function pointFrom(data) {
@@ -43,4 +44,15 @@ test('computeInterceptionPrecision measures surfaced-hint precision rather than 
   assert.equal(stats.relevant, 1);
   assert.equal(stats.irrelevant, 2);
   assert.equal(stats.precision, 33);
+});
+
+test('computeOrganicExtractionStats counts only quality organic session-extractor entries', () => {
+  const stats = computeOrganicExtractionStats([
+    pointFrom({ createdFrom: 'bulk-seed', trigger: 'bulk', solution: 'seeded' }),
+    pointFrom({ createdFrom: 'session-extractor', trigger: 'when sed command fails due to missing file', solution: 'check file existence before inspection' }),
+    pointFrom({ createdFrom: 'session-extractor', trigger: 'execution of commands', solution: 'review the incomplete command and ensure it is correctly formatted and complete' }),
+  ], (data) => ({ ok: !/^execution of commands$/i.test(data.trigger) }));
+
+  assert.equal(stats.totalOrganic, 2);
+  assert.equal(stats.qualityOrganic, 1);
 });
