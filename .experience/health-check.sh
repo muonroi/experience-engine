@@ -266,8 +266,8 @@ run_checks() {
   check_agent_hooks "Gemini CLI" "$HOME/.gemini/settings.json" "BeforeTool" "interceptor"
 
   # 8. Activity — recent intercepts
-  if [ -n "$server_base" ] && [ ! -f "$ACTIVITY" ]; then
-    check "Activity" "ok" "Remote mode — local activity not required"
+  if [ -n "$server_base" ]; then
+    check "Activity" "ok" "Thin-client mode — activity is tracked on VPS"
     check "Model Routing" "ok" "Tracked on VPS"
   elif [ -f "$ACTIVITY" ]; then
     local total_lines; total_lines=$(wc -l < "$ACTIVITY")
