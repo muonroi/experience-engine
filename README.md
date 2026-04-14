@@ -285,6 +285,106 @@ YOU write code with any AI agent
       └─ Memory shrinks as capability grows
 ```
 
+## Runtime Architecture
+
+```mermaid
+flowchart LR
+
+subgraph CLIENT["Local Machine / Thin Client"]
+    AGENT["Agent<br/>Codex / Claude / Gemini"]
+
+    subgraph CAPTURE["Capture Hooks"]
+        PRE["interceptor.js<br/>PreToolUse"]
+        PREP["interceptor-prompt.js"]
+        POST["interceptor-post.js<br/>PostToolUse"]
+        STOP["stop-extractor.js<br/>Session End"]
+        FEED["exp-feedback"]
+        HC["health-check.sh"]
+    end
+
+    QUEUE["offline-queue"]
+end
+
+subgraph SERVER["VPS Brain Server"]
+    subgraph API["server.js / API Layer"]
+        I1["POST /api/intercept"]
+        I2["POST /api/posttool"]
+        I3["POST /api/extract"]
+        I4["POST /api/feedback"]
+        I5["GET /api/gates"]
+        I6["POST /api/brain"]
+    end
+
+    subgraph CORE_LAYER["Processing"]
+        CORE["experience-core.js"]
+        JUDGE["judge-worker.js"]
+        EVO["exp-server-maintain.js<br/>+ evolve()"]
+        ACT["activity.jsonl"]
+    end
+end
+
+subgraph MEMORY["Knowledge Layers"]
+    STORE["Qdrant + FileStore"]
+    T2["T2 SelfQA<br/>Organic extracted lessons"]
+    T1["T1 Behavioral<br/>Confirmed reflexes"]
+    T0["T0 Principles<br/>Generalized rules"]
+end
+
+AGENT --> PRE
+AGENT --> PREP
+PRE --> I1
+PREP --> I1
+I1 --> CORE
+
+AGENT --> POST
+POST --> I2
+I2 --> JUDGE
+JUDGE --> CORE
+
+AGENT --> STOP
+STOP --> I3
+I3 --> CORE
+
+FEED --> I4
+I4 --> CORE
+
+HC --> I5
+I5 --> CORE
+
+I6 --> CORE
+
+CORE --> ACT
+CORE --> STORE
+STORE --> T2
+STORE --> T1
+STORE --> T0
+
+CORE <--> EVO
+EVO --> T1
+EVO --> T0
+EVO --> T2
+
+POST -. "fail / timeout" .-> QUEUE
+STOP -. "heavy extract / outage" .-> QUEUE
+FEED -. "offline" .-> QUEUE
+QUEUE -. "replay" .-> I1
+QUEUE -. "replay" .-> I2
+QUEUE -. "replay" .-> I3
+QUEUE -. "replay" .-> I4
+
+classDef client fill:#EAF3FF,stroke:#4A90E2,stroke-width:1.2px,color:#111;
+classDef api fill:#FFF4E5,stroke:#F5A623,stroke-width:1.2px,color:#111;
+classDef core fill:#EFFFF4,stroke:#27AE60,stroke-width:1.2px,color:#111;
+classDef memory fill:#F6EEFF,stroke:#8E44AD,stroke-width:1.2px,color:#111;
+classDef queue fill:#FDEDEC,stroke:#C0392B,stroke-width:1.2px,color:#111;
+
+class AGENT,PRE,PREP,POST,STOP,FEED,HC client;
+class I1,I2,I3,I4,I5,I6 api;
+class CORE,JUDGE,EVO,ACT core;
+class STORE,T2,T1,T0 memory;
+class QUEUE queue;
+```
+
 ## 4-Tier Architecture
 
 ```
