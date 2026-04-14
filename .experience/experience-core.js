@@ -581,6 +581,33 @@ function activityLog(event) {
   } catch { /* never crash the engine */ }
 }
 
+function estimateTextUnits(text, cap = 12000) {
+  return Math.min(String(text || '').length, cap);
+}
+
+function logCostCall(kind, provider, source, units, extra = {}) {
+  activityLog({
+    op: 'cost-call',
+    kind,
+    provider: provider || 'unknown',
+    source: source || 'unknown',
+    units: Math.max(0, Math.round(Number(units) || 0)),
+    ...extra,
+  });
+}
+
+function logMistakeSeen(mistakes, projectPath) {
+  if (!Array.isArray(mistakes) || mistakes.length === 0) return;
+  const counts = new Map();
+  for (const mistake of mistakes) {
+    const type = String(mistake?.type || 'unknown');
+    counts.set(type, (counts.get(type) || 0) + 1);
+  }
+  for (const [type, count] of counts.entries()) {
+    activityLog({ op: 'mistake-seen', type, count, project: projectPath || null });
+  }
+}
+
 function normalizeSourceMeta(meta) {
   if (!meta || typeof meta !== 'object') return {};
   return {
@@ -1106,10 +1133,16 @@ async function extractFromSession(transcript, projectPath) {
   const domain = detectTranscriptDomain(transcript);
 
   const mistakes = detectMistakes(transcript);
+  logCostCall('extract', 'local', 'session-extract', estimateTextUnits(transcript, 12000), {
+    project: projectPath || null,
+    mistakes: mistakes.length,
+  });
   if (mistakes.length === 0) {
     activityLog({ op: 'extract', mistakes: 0, stored: 0, project: projectPath || null });
     return 0;
   }
+
+  logMistakeSeen(mistakes, projectPath);
 
   let stored = 0;
   for (const mistake of mistakes.slice(0, 5)) {
@@ -1372,15 +1405,30 @@ function getBrainFallback() {
   return cfgValue('brainFallback', 'EXPERIENCE_BRAIN_FALLBACK', getBrainProvider() === 'ollama' ? '' : 'ollama');
 }
 
-async function callBrainWithFallback(prompt) {
+async function callBrainWithFallback(prompt, meta = {}) {
   const brainProvider = getBrainProvider();
   const fallbackProvider = getBrainFallback();
   const primary = BRAIN_FNS[brainProvider] || BRAIN_FNS.ollama;
+  const units = estimateTextUnits(prompt, 4000);
+
+  let startedAt = Date.now();
   let result = await primary(prompt);
+  logCostCall('brain', brainProvider, meta.source || 'general', units, {
+    ok: !!result,
+    phase: 'primary',
+    durationMs: Date.now() - startedAt,
+  });
   if (result) return result;
+
   activityLog({ op: 'brain-failure', provider: brainProvider, phase: 'primary' });
   if (fallbackProvider && BRAIN_FNS[fallbackProvider]) {
+    startedAt = Date.now();
     result = await BRAIN_FNS[fallbackProvider](prompt);
+    logCostCall('brain', fallbackProvider, meta.source || 'general', units, {
+      ok: !!result,
+      phase: 'fallback',
+      durationMs: Date.now() - startedAt,
+    });
     if (result) {
       activityLog({ op: 'brain-fallback', provider: fallbackProvider });
       return result;
@@ -1397,35 +1445,20 @@ async function brainRelevanceFilter(actionQuery, suggestionLines, signal, projec
   if (!suggestionLines || suggestionLines.length === 0) return null;
   const hasClearHighConfidenceWarning = suggestionLines.some(line => /Experience - High Confidence \(([-\d.]+)\)/.test(line));
 
-  // Extract just the warning text (strip emoji/score prefix for cleaner prompt)
   const warnings = suggestionLines.map((line, i) => {
     const clean = line.replace(/^.*?\]:\s*/, '');
     return `${i + 1}. ${clean}`;
   });
 
   const projectCtx = projectSlug ? `\nPROJECT: ${projectSlug} — warnings about OTHER projects are NOT relevant.` : '';
-  const prompt = `You are a relevance filter. An AI coding agent is about to perform this action:
+  const prompt = `You are a relevance filter. An AI coding agent is about to perform this action:\n\nACTION: ${actionQuery.slice(0, 300)}${projectCtx}\n\nThese warnings were retrieved from past experience:\n${warnings.join('\n')}\n\nWhich warnings could help prevent a mistake in THIS SPECIFIC action?\nRules:\n- A warning is relevant ONLY if the action could actually trigger the mistake the warning describes\n- Generic advice that doesn't match the specific action is NOT relevant\n- Warnings about a DIFFERENT project/codebase than the current one are NOT relevant\n- "ls", "git log", "cat" commands reading files NEVER need warnings about code patterns\n\nReply with ONLY the relevant warning numbers separated by commas (e.g. "1,3"), or "none" if none are relevant.`;
 
-ACTION: ${actionQuery.slice(0, 300)}${projectCtx}
-
-These warnings were retrieved from past experience:
-${warnings.join('\n')}
-
-Which warnings could help prevent a mistake in THIS SPECIFIC action?
-Rules:
-- A warning is relevant ONLY if the action could actually trigger the mistake the warning describes
-- Generic advice that doesn't match the specific action is NOT relevant
-- Warnings about a DIFFERENT project/codebase than the current one are NOT relevant
-- "ls", "git log", "cat" commands reading files NEVER need warnings about code patterns
-
-Reply with ONLY the relevant warning numbers separated by commas (e.g. "1,3"), or "none" if none are relevant.`;
-
-  // Use a dedicated fast brain call with short timeout
   try {
     const brainProvider = getBrainProvider();
+    const units = estimateTextUnits(prompt, 4000);
+    const startedAt = Date.now();
     let response;
 
-    // Direct call with tight timeout — bypass callBrainWithFallback to avoid JSON parsing
     if (brainProvider === 'ollama') {
       const res = await fetch(getOllamaGenerateUrl(), {
         method: 'POST',
@@ -1433,10 +1466,12 @@ Reply with ONLY the relevant warning numbers separated by commas (e.g. "1,3"), o
         body: JSON.stringify({ model: getBrainModel(), prompt, stream: false, options: { temperature: 0.1, num_predict: 20 } }),
         signal: signal || AbortSignal.timeout(3000),
       });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        logCostCall('brain', brainProvider, 'brain-filter', units, { ok: false, durationMs: Date.now() - startedAt });
+        return null;
+      }
       response = (await res.json()).response || '';
     } else {
-      // OpenAI-compatible / Gemini / Claude — use chat endpoint
       const endpoint = getBrainEndpoint() || 'https://api.openai.com/v1/chat/completions';
       const res = await fetch(endpoint, {
         method: 'POST',
@@ -1444,31 +1479,35 @@ Reply with ONLY the relevant warning numbers separated by commas (e.g. "1,3"), o
         body: JSON.stringify({ model: getBrainModel(), messages: [{ role: 'user', content: prompt }], temperature: 0.1, max_tokens: 20 }),
         signal: signal || AbortSignal.timeout(3000),
       });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        logCostCall('brain', brainProvider, 'brain-filter', units, { ok: false, durationMs: Date.now() - startedAt });
+        return null;
+      }
       response = (await res.json()).choices?.[0]?.message?.content || '';
     }
+
+    logCostCall('brain', brainProvider, 'brain-filter', units, { ok: true, durationMs: Date.now() - startedAt });
 
     const text = response.trim().toLowerCase();
     if (text === 'none' || text === '0' || text === '') {
       return hasClearHighConfidenceWarning ? null : [];
     }
 
-    // Parse comma-separated numbers
     const nums = text.match(/\d+/g);
-    if (!nums) return null; // unparseable — fail-open
+    if (!nums) return null;
     const validIndices = nums.map(n => parseInt(n, 10) - 1).filter(i => i >= 0 && i < suggestionLines.length);
     if (validIndices.length === 0) {
       return hasClearHighConfidenceWarning ? null : [];
     }
     return validIndices.map(i => suggestionLines[i]);
   } catch {
-    return null; // timeout or error — fail-open, show all suggestions
+    return null;
   }
 }
 
 async function extractQA(mistake) {
   const prompt = `Given this session excerpt where something went wrong:\n${mistake.excerpt.slice(0, 1500)}\n\nExtract ONE reusable lesson as JSON (no markdown).\nRules:\n- trigger must be a concrete condition rooted in the excerpt, never placeholders like "when this fires"\n- question must briefly name the mistake being prevented\n- solution must be a concrete preventive action, never placeholders like "what to do"\n- if there is no concrete reusable lesson, return {"skip":true,"reason":"no_reusable_lesson"}\n\nReturn JSON only:\n{"trigger":"specific trigger from the excerpt","question":"brief mistake description","reasoning":["step1","step2"],"solution":"specific preventive action","why":"root cause or incident that created this rule","scope":{"lang":"C#|JavaScript|all","repos":[],"filePattern":"*.cs"}}`;
-  return callBrainWithFallback(prompt);
+  return callBrainWithFallback(prompt, { source: 'extract' });
 }
 
 async function brainOllama(prompt) {
@@ -1666,9 +1705,17 @@ const EMBED_PROVIDERS = {
   custom:       { fn: embedOpenAI },
 };
 
-async function getEmbedding(text, signal) {
-  const p = EMBED_PROVIDERS[getEmbedProvider()] || EMBED_PROVIDERS.ollama;
-  return p.fn(text, signal);
+async function getEmbedding(text, signal, meta = {}) {
+  const provider = getEmbedProvider();
+  const p = EMBED_PROVIDERS[provider] || EMBED_PROVIDERS.ollama;
+  const units = estimateTextUnits(text, 8000);
+  const startedAt = Date.now();
+  const vector = await p.fn(text, signal);
+  logCostCall('embed', provider, meta.source || 'general', units, {
+    ok: !!vector,
+    durationMs: Date.now() - startedAt,
+  });
+  return vector;
 }
 
 async function embedOllama(text, signal) {
@@ -2083,7 +2130,7 @@ async function evolve(trigger) {
     // Wave 3: Structured conditions[] — principle carries preconditions for constraint checking
     const prompt = `Given these ${summaries.length} related experiences, extract ONE general principle covering all cases. Format as JSON: {"principle":"When [condition], always [action] because [reason]","conditions":["keyword1","keyword2","keyword3"]}\nConditions = 2-4 keywords that MUST be present for this principle to apply.\n\n${summaries.join('\n')}`;
 
-    const result = await callBrainWithFallback(prompt);
+    const result = await callBrainWithFallback(prompt, { source: 'evolve' });
     if (!result?.principle) continue;
 
     const vector = await getEmbedding(result.principle);
@@ -2529,11 +2576,12 @@ async function classifyViaBrain(prompt, timeoutMs = 10000) {
   const endpoint = getBrainEndpoint();
   const brainModel = getBrainModel();
   const key = getBrainKey() || '';
+  const units = estimateTextUnits(prompt, 4000);
 
-  // Provider: siliconflow or any OpenAI-compatible endpoint
   if (brainProvider === 'siliconflow' || endpoint) {
     if (!key) return null;
     const targetEndpoint = endpoint || 'https://api.siliconflow.com/v1/chat/completions';
+    const startedAt = Date.now();
     try {
       const res = await fetch(targetEndpoint, {
         method: 'POST',
@@ -2546,13 +2594,21 @@ async function classifyViaBrain(prompt, timeoutMs = 10000) {
         }),
         signal: AbortSignal.timeout(timeoutMs),
       });
-      if (!res.ok) return null;
-      return (await res.json()).choices?.[0]?.message?.content?.trim() || null;
-    } catch { return null; }
+      if (!res.ok) {
+        logCostCall('judge', brainProvider, 'judge', units, { ok: false, durationMs: Date.now() - startedAt });
+        return null;
+      }
+      const result = (await res.json()).choices?.[0]?.message?.content?.trim() || null;
+      logCostCall('judge', brainProvider, 'judge', units, { ok: !!result, durationMs: Date.now() - startedAt });
+      return result;
+    } catch {
+      logCostCall('judge', brainProvider, 'judge', units, { ok: false, durationMs: Date.now() - startedAt });
+      return null;
+    }
   }
 
-  // Provider: ollama (generate endpoint, plain text)
   if (brainProvider === 'ollama') {
+    const startedAt = Date.now();
     try {
       const res = await fetch(getOllamaGenerateUrl(), {
         method: 'POST',
@@ -2565,19 +2621,22 @@ async function classifyViaBrain(prompt, timeoutMs = 10000) {
         }),
         signal: AbortSignal.timeout(timeoutMs),
       });
-      if (!res.ok) return null;
-      return (await res.json()).response?.trim() || null;
-    } catch { return null; }
+      if (!res.ok) {
+        logCostCall('judge', brainProvider, 'judge', units, { ok: false, durationMs: Date.now() - startedAt });
+        return null;
+      }
+      const result = (await res.json()).response?.trim() || null;
+      logCostCall('judge', brainProvider, 'judge', units, { ok: !!result, durationMs: Date.now() - startedAt });
+      return result;
+    } catch {
+      logCostCall('judge', brainProvider, 'judge', units, { ok: false, durationMs: Date.now() - startedAt });
+      return null;
+    }
   }
 
   return null;
 }
 
-/**
- * Normalize brain classification response to a valid tier.
- * Handles: multi-word responses, "medium" alias, casing.
- * Returns 'fast' | 'balanced' | 'premium' | null (null = unrecognized).
- */
 function normalizeTierResponse(raw) {
   if (!raw) return null;
   const word = raw.trim().toLowerCase().split(/\s+/)[0];

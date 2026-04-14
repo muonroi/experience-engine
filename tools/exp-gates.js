@@ -76,6 +76,14 @@ function normalizeText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
+function normalizeProjectPath(projectPath) {
+  if (projectPath == null) return '(unknown project)';
+  const normalized = String(projectPath).replace(/\\/g, '/');
+  const lastSlash = normalized.lastIndexOf('/');
+  if (lastSlash === -1) return normalized || '.';
+  return normalized.substring(0, lastSlash);
+}
+
 function isPlaceholderLesson(data) {
   const trigger = normalizeText(data?.trigger);
   const solution = normalizeText(data?.solution);
@@ -155,6 +163,104 @@ function computeOrganicExtractionStats(points, assessQuality) {
     if (!assessQuality || assessQuality(data)?.ok) stats.qualityOrganic++;
   }
   return stats;
+}
+
+function computeRecurrenceReduction(activity, now) {
+  const dayMs = 86400000;
+  const recentStart = now - 7 * dayMs;
+  const baselineStart = now - 14 * dayMs;
+  const events = activity.filter((e) => e.op === 'mistake-seen' && e.ts);
+  const hasTwoWeeks = events.some((e) => new Date(e.ts).getTime() < recentStart);
+  if (!hasTwoWeeks) {
+    return { sufficient: false, reason: 'need 2+ weeks of mistake telemetry' };
+  }
+
+  const baseline = new Map();
+  const recent = new Map();
+  for (const event of events) {
+    const ts = new Date(event.ts).getTime();
+    const count = Math.max(0, Number(event.count) || 0);
+    if (!count) continue;
+    const key = `${normalizeProjectPath(event.project)}::${event.type || 'unknown'}`;
+    if (ts >= baselineStart && ts < recentStart) {
+      baseline.set(key, (baseline.get(key) || 0) + count);
+    } else if (ts >= recentStart && ts <= now) {
+      recent.set(key, (recent.get(key) || 0) + count);
+    }
+  }
+
+  const trackedKeys = [...baseline.keys()];
+  const baselineTotal = trackedKeys.reduce((sum, key) => sum + (baseline.get(key) || 0), 0);
+  const recentTotal = trackedKeys.reduce((sum, key) => sum + (recent.get(key) || 0), 0);
+  if (trackedKeys.length === 0 || baselineTotal < 5) {
+    return {
+      sufficient: false,
+      reason: `baseline too small (${baselineTotal} comparable mistakes across ${trackedKeys.length} project/type buckets)`,
+      trackedKeys: trackedKeys.length,
+      baselineTotal,
+      recentTotal,
+    };
+  }
+
+  const reductionPct = Math.round((1 - (recentTotal / baselineTotal)) * 100);
+  return {
+    sufficient: true,
+    trackedKeys: trackedKeys.length,
+    baselineTotal,
+    recentTotal,
+    reductionPct,
+    pass: reductionPct >= 30,
+  };
+}
+
+function computeCostStability(activity, now) {
+  const dayMs = 86400000;
+  const recentStart = now - 7 * dayMs;
+  const baselineStart = now - 14 * dayMs;
+  const events = activity.filter((e) => e.op === 'cost-call' && e.ts);
+  const hasTwoWeeks = events.some((e) => new Date(e.ts).getTime() < recentStart);
+  if (!hasTwoWeeks) {
+    return { sufficient: false, reason: 'need 2+ weeks of cost telemetry' };
+  }
+
+  const baselineDays = new Map();
+  const recentDays = new Map();
+  for (const event of events) {
+    const ts = new Date(event.ts).getTime();
+    const units = Math.max(0, Math.round(Number(event.units) || 0));
+    if (!units) continue;
+    const day = new Date(event.ts).toISOString().slice(0, 10);
+    if (ts >= baselineStart && ts < recentStart) {
+      baselineDays.set(day, (baselineDays.get(day) || 0) + units);
+    } else if (ts >= recentStart && ts <= now) {
+      recentDays.set(day, (recentDays.get(day) || 0) + units);
+    }
+  }
+
+  if (baselineDays.size < 3 || recentDays.size < 3) {
+    return {
+      sufficient: false,
+      reason: `need >= 3 active cost days per window (baseline=${baselineDays.size}, recent=${recentDays.size})`,
+      baselineDays: baselineDays.size,
+      recentDays: recentDays.size,
+    };
+  }
+
+  const baselineTotal = [...baselineDays.values()].reduce((a, b) => a + b, 0);
+  const recentTotal = [...recentDays.values()].reduce((a, b) => a + b, 0);
+  const baselineAvg = Math.round(baselineTotal / baselineDays.size);
+  const recentAvg = Math.round(recentTotal / recentDays.size);
+  const deltaPct = baselineAvg > 0 ? Math.round(((recentAvg - baselineAvg) / baselineAvg) * 100) : 0;
+
+  return {
+    sufficient: true,
+    baselineDays: baselineDays.size,
+    recentDays: recentDays.size,
+    baselineAvg,
+    recentAvg,
+    deltaPct,
+    pass: deltaPct <= 10,
+  };
 }
 
 // --- Gate checks ---
@@ -321,14 +427,14 @@ async function checkGates(options = {}) {
   });
 
   // Metric 6: Error recurrence drops (>= 30%)
-  // Can only measure after 2+ weeks of data
-  const twoWeeksAgo = now - 14 * 86400000;
-  const hasEnoughData = activity.some(e => new Date(e.ts).getTime() < twoWeeksAgo);
+  const recurrence = computeRecurrenceReduction(activity, now);
   results.gate2.checks.push({
     name: '6. Error recurrence drops',
     target: '>= 30% reduction',
-    actual: hasEnoughData ? 'Needs manual assessment' : 'Insufficient data (need 2+ weeks)',
-    pass: false,
+    actual: recurrence.sufficient
+      ? `${recurrence.reductionPct}% reduction (${recurrence.baselineTotal} -> ${recurrence.recentTotal} across ${recurrence.trackedKeys} project/type buckets)`
+      : `Insufficient data (${recurrence.reason})`,
+    pass: recurrence.sufficient && recurrence.pass,
     should: true
   });
 
@@ -374,11 +480,14 @@ async function checkGates(options = {}) {
   });
 
   // Metric 10: Cost stable
+  const costStability = computeCostStability(activity, now);
   results.gate2.checks.push({
     name: '10. Cost stable',
-    target: 'Not increased',
-    actual: 'Needs manual assessment',
-    pass: false,
+    target: 'No material increase (>10%)',
+    actual: costStability.sufficient
+      ? `${costStability.deltaPct >= 0 ? '+' : ''}${costStability.deltaPct}% vs baseline (${costStability.baselineAvg}/day -> ${costStability.recentAvg}/day, ${costStability.baselineDays}+${costStability.recentDays} active days)`
+      : `Insufficient data (${costStability.reason})`,
+    pass: costStability.sufficient && costStability.pass,
     should: true
   });
 
@@ -456,7 +565,20 @@ async function checkGates(options = {}) {
     first_activity: activity[0]?.ts || 'N/A',
     days_active: activity.length > 0
       ? Math.round((now - new Date(activity[0].ts).getTime()) / 86400000)
-      : 0
+      : 0,
+    recurrence: recurrence.sufficient ? {
+      reduction_pct: recurrence.reductionPct,
+      baseline_total: recurrence.baselineTotal,
+      recent_total: recurrence.recentTotal,
+      tracked_keys: recurrence.trackedKeys,
+    } : { sufficient: false, reason: recurrence.reason },
+    cost_stability: costStability.sufficient ? {
+      delta_pct: costStability.deltaPct,
+      baseline_avg_daily_units: costStability.baselineAvg,
+      recent_avg_daily_units: costStability.recentAvg,
+      baseline_days: costStability.baselineDays,
+      recent_days: costStability.recentDays,
+    } : { sufficient: false, reason: costStability.reason },
   };
 
   return results;
@@ -539,4 +661,14 @@ if (require.main === module) {
   });
 }
 
-module.exports = { checkGates, display, readActivityLog, computeDedupAndHygiene, computeInterceptionPrecision, computeOrganicExtractionStats, isPlaceholderLesson };
+module.exports = {
+  checkGates,
+  display,
+  readActivityLog,
+  computeDedupAndHygiene,
+  computeInterceptionPrecision,
+  computeOrganicExtractionStats,
+  computeRecurrenceReduction,
+  computeCostStability,
+  isPlaceholderLesson,
+};
