@@ -55,7 +55,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test .experience/test-bootstrap.js .experience/test-hook-payloads.js .experience/test-remote-hooks.js tests/npm-cli.test.js",
+    "test": "node --test --test-concurrency=1 .experience/test-bootstrap.js .experience/test-hook-payloads.js .experience/test-remote-hooks.js tests/npm-cli.test.js",
     "pack:dry-run": "npm pack --dry-run"
   },
   "publishConfig": {
