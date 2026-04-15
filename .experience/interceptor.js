@@ -6,9 +6,14 @@ const os = require('os');
 
 const DEBUG_LOG = process.env.EXPERIENCE_HOOK_DEBUG_LOG || path.join(os.homedir(), '.codex', 'log', 'experience-hook-debug.jsonl');
 let input = '';
-const STDIN_TIMEOUT_MS = 3000;
-const INTERCEPT_TIMEOUT_MS = 2500;
-const HARD_EXIT_TIMEOUT_MS = 4500;
+function timeoutFromEnv(name, fallback) {
+  const raw = Number(process.env[name] || 0);
+  return raw > 0 ? raw : fallback;
+}
+
+const STDIN_TIMEOUT_MS = timeoutFromEnv('EXPERIENCE_HOOK_STDIN_TIMEOUT_MS', 3000);
+const INTERCEPT_TIMEOUT_MS = timeoutFromEnv('EXPERIENCE_HOOK_INTERCEPT_TIMEOUT_MS', 2500);
+const HARD_EXIT_TIMEOUT_MS = timeoutFromEnv('EXPERIENCE_HOOK_HARD_EXIT_TIMEOUT_MS', 4500);
 
 function debugLog(event) {
   try {

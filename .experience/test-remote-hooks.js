@@ -40,13 +40,14 @@ function startServer(handler) {
   });
 }
 
-function runHook(homeDir, scriptName, input) {
+function runHook(homeDir, scriptName, input, extraEnv = {}) {
   const result = spawnSync(process.execPath, [path.join(homeDir, '.experience', scriptName)], {
     env: {
       ...process.env,
       HOME: homeDir,
       USERPROFILE: homeDir,
       EXPERIENCE_HOOK_DEBUG_LOG: path.join(homeDir, '.experience', 'tmp', 'debug.jsonl'),
+      ...extraEnv,
     },
     input: JSON.stringify(input),
     encoding: 'utf8',
@@ -109,6 +110,9 @@ test('remote interceptor and posttool hooks proxy through VPS APIs', { skip: SER
       tool_name: 'Bash',
       tool_input: { command: 'dotnet test' },
       cwd: '/repo/storyflow',
+    }, {
+      EXPERIENCE_HOOK_INTERCEPT_TIMEOUT_MS: '5000',
+      EXPERIENCE_HOOK_HARD_EXIT_TIMEOUT_MS: '7000',
     });
     assert.equal(pre.status, 0);
     const preOut = parseHookJson(pre);
@@ -166,6 +170,9 @@ test('remote prompt hook proxies prompt search to VPS', { skip: SERVER_BLOCKED ?
       session_id: 'sess-2',
       user_prompt: 'please fix the failing tests in storyflow',
       cwd: '/repo/storyflow',
+    }, {
+      EXPERIENCE_HOOK_INTERCEPT_TIMEOUT_MS: '5000',
+      EXPERIENCE_HOOK_HARD_EXIT_TIMEOUT_MS: '7000',
     });
     assert.equal(result.status, 0);
     const promptOut = parseHookJson(result);
