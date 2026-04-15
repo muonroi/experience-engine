@@ -622,11 +622,19 @@ Diagnostic dashboard to verify the engine is running, reachable, and firing.
 bash ~/.experience/health-check.sh          # full dashboard
 bash ~/.experience/health-check.sh --json   # machine-readable output
 bash ~/.experience/health-check.sh --watch  # auto-refresh every 30s
+exp-health-last                             # last persisted boot/shell snapshot
 ```
 
 The dashboard now prints a concrete **fix suggestion per unhealthy check**, including thin-client /
 VPS issues such as `serverBaseUrl`, remote `/api/gates`, auth token, offline queue backlog, and
 missing installed helper files.
+
+Setup now also installs a lightweight bootstrap layer under `~/.experience/`:
+
+- On WSL and shell-driven setups, opening a new `bash` or `zsh` session triggers background bootstrap.
+- On native Linux, setup installs a user-level `systemd` bootstrap service.
+- Each bootstrap run writes the latest snapshot to `~/.experience/status/boot-health-latest.meta.json`.
+- `exp-health-last` reads that snapshot so you can check the last known state without re-running the full dashboard.
 
 **What it checks (14 points):**
 

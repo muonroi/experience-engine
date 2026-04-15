@@ -18,6 +18,9 @@ const os = require('os');
 
 const EXP_DIR = path.join(os.homedir(), '.experience');
 const DEBUG_LOG = process.env.EXPERIENCE_HOOK_DEBUG_LOG || path.join(os.homedir(), '.codex', 'log', 'experience-hook-debug.jsonl');
+const STDIN_TIMEOUT_MS = 3000;
+const INTERCEPT_TIMEOUT_MS = 2500;
+const HARD_EXIT_TIMEOUT_MS = 4500;
 
 function debugLog(event) {
   try {
@@ -54,6 +57,51 @@ function isRemoteMode() {
   }
 }
 
+function suppressHookOutput() {
+  const muted = [];
+  const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+  const originalStderrWrite = process.stderr.write.bind(process.stderr);
+  const originalConsole = {
+    log: console.log,
+    info: console.info,
+    warn: console.warn,
+    error: console.error,
+  };
+
+  const capture = (stream, chunk) => {
+    const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk || '');
+    if (text) muted.push({ stream, text });
+    return true;
+  };
+
+  process.stdout.write = ((chunk, encoding, callback) => {
+    if (typeof encoding === 'function') encoding();
+    if (typeof callback === 'function') callback();
+    return capture('stdout', chunk);
+  });
+  process.stderr.write = ((chunk, encoding, callback) => {
+    if (typeof encoding === 'function') encoding();
+    if (typeof callback === 'function') callback();
+    return capture('stderr', chunk);
+  });
+  console.log = (...args) => capture('console.log', args.join(' '));
+  console.info = (...args) => capture('console.info', args.join(' '));
+  console.warn = (...args) => capture('console.warn', args.join(' '));
+  console.error = (...args) => capture('console.error', args.join(' '));
+
+  return {
+    restore() {
+      process.stdout.write = originalStdoutWrite;
+      process.stderr.write = originalStderrWrite;
+      console.log = originalConsole.log;
+      console.info = originalConsole.info;
+      console.warn = originalConsole.warn;
+      console.error = originalConsole.error;
+      return muted;
+    }
+  };
+}
+
 function buildSourceMeta(data) {
   return {
     sourceKind: 'codex-hook',
@@ -71,7 +119,13 @@ let input = '';
 const t = setTimeout(() => {
   debugLog({ stage: 'timeout' });
   process.exit(0);
-}, 3000);
+}, STDIN_TIMEOUT_MS);
+
+const hardExit = setTimeout(() => {
+  debugLog({ stage: 'hard_exit' });
+  activityLog({ stage: 'hard_exit' });
+  process.exit(0);
+}, HARD_EXIT_TIMEOUT_MS);
 
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', c => { input += c; });
@@ -107,16 +161,14 @@ process.stdin.on('end', async () => {
     }
 
     const ctrl = new AbortController();
-    const timer = setTimeout(() => {
-      debugLog({ stage: 'abort' });
-      activityLog({ stage: 'abort', ...sourceMeta });
-      ctrl.abort();
-    }, 2500);
+    let timedOut = false;
+    let timer = null;
+    const mute = suppressHookOutput();
 
     // Use the prompt as the query — treat it like a generic tool call
     // This searches all experience collections for relevant warnings
     const toolInput = { command: prompt, _promptHook: true };
-    const resultMeta = await (async () => {
+    const resultPromise = (async () => {
       const remote = getRemoteClient();
       if (remote) {
         const config = remote.loadConfig();
@@ -145,9 +197,40 @@ process.stdin.on('end', async () => {
         return null;
       }
       return interceptWithMeta('UserPrompt', toolInput, ctrl.signal, sourceMeta);
-    })();
+    })().catch(error => {
+      if (ctrl.signal.aborted) {
+        debugLog({ stage: 'aborted', message: error?.message || String(error) });
+        activityLog({ stage: 'aborted', message: error?.message || String(error), ...sourceMeta });
+        return null;
+      }
+      throw error;
+    });
+    const timeoutPromise = new Promise(resolve => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        debugLog({ stage: 'abort' });
+        activityLog({ stage: 'abort', ...sourceMeta });
+        ctrl.abort();
+        resolve(null);
+      }, INTERCEPT_TIMEOUT_MS);
+    });
+    const resultMeta = await Promise.race([resultPromise, timeoutPromise]);
+    const mutedOutput = mute.restore();
     clearTimeout(timer);
-    if (!resultMeta) process.exit(0);
+    if (mutedOutput.length > 0) {
+      debugLog({
+        stage: 'suppressed_output',
+        count: mutedOutput.length,
+        preview: mutedOutput.map(entry => entry.text).join('').slice(0, 240),
+      });
+      activityLog({
+        stage: 'suppressed_output',
+        count: mutedOutput.length,
+        preview: mutedOutput.map(entry => entry.text).join('').slice(0, 240),
+        ...sourceMeta,
+      });
+    }
+    if (timedOut || !resultMeta) process.exit(0);
 
     const suggestions = resultMeta?.suggestions || null;
     const routeInfo = resultMeta?.route || null;
@@ -180,14 +263,17 @@ process.stdin.on('end', async () => {
     }
 
     if (outputText) {
-      // UserPromptSubmit: plain text stdout is added as developer context.
-      // This is the safest cross-version approach per Codex hooks spec.
-      // Ref: https://developers.openai.com/codex/hooks
-      process.stdout.write(outputText);
+      process.stdout.write(JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: 'UserPromptSubmit',
+          additionalContext: outputText,
+        }
+      }));
     }
   } catch (error) {
     debugLog({ stage: 'error', message: error?.message || String(error) });
     activityLog({ stage: 'error', message: error?.message || String(error) });
   }
+  clearTimeout(hardExit);
   process.exit(0);
 });
