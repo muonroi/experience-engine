@@ -1,0 +1,48 @@
+#!/bin/bash
+# Print the latest persisted Experience Engine health snapshot.
+
+set +e
+
+SNAPSHOT="${HOME}/.experience/status/boot-health-latest.meta.json"
+
+if [ ! -f "$SNAPSHOT" ]; then
+  if [ "$1" = "--brief" ]; then
+    echo "Experience Engine boot check pending"
+    exit 0
+  fi
+  echo "No persisted health snapshot found at $SNAPSHOT"
+  exit 1
+fi
+
+if [ "$1" = "--json" ]; then
+  cat "$SNAPSHOT"
+  exit 0
+fi
+
+node -e "
+  const fs = require('fs');
+  const file = process.argv[1];
+  const brief = process.argv[2] === '--brief';
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const summary = data.health?.summary || { pass: 0, warn: 0, fail: 0 };
+  const label = data.overall === 'healthy'
+    ? 'HEALTHY'
+    : data.overall === 'degraded'
+      ? 'DEGRADED'
+      : 'UNHEALTHY';
+  const ageMin = Math.max(0, Math.floor((Date.now() - new Date(data.ts).getTime()) / 60000));
+  const age = ageMin < 60 ? ageMin + 'm' : Math.floor(ageMin / 60) + 'h';
+  const line = 'Experience Engine ' + label + ' (' + summary.pass + ' pass, ' + summary.warn + ' warn, ' + summary.fail + ' fail, ' + age + ' ago)';
+  if (brief) {
+    console.log(line);
+    process.exit(0);
+  }
+  console.log(line);
+  console.log('Reason: ' + (data.reason || 'unknown'));
+  console.log('Snapshot: ' + file);
+  if (data.bootstrap?.tunnelConfigured) {
+    console.log('Tunnel: ' + (data.bootstrap.tunnelReachable ? 'reachable' : 'unreachable'));
+    if (data.bootstrap.tunnelStarted) console.log('Tunnel start: attempted during bootstrap');
+    if (data.bootstrap.tunnelError) console.log('Tunnel error: ' + data.bootstrap.tunnelError);
+  }
+" "$SNAPSHOT" "$1"

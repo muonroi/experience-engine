@@ -49,7 +49,14 @@ fi
 
 mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/tmp" "$INSTALL_DIR/offline-queue"
 
-for f in interceptor.js interceptor-post.js interceptor-prompt.js stop-extractor.js remote-client.js extract-compact.js exp-client-drain.js health-check.sh exp-feedback.js exp-feedback; do
+ensure_line_in_file() {
+  local file="$1" line="$2"
+  mkdir -p "$(dirname "$file")"
+  touch "$file"
+  grep -Fqx "$line" "$file" 2>/dev/null || printf '\n%s\n' "$line" >> "$file"
+}
+
+for f in interceptor.js interceptor-post.js interceptor-prompt.js stop-extractor.js remote-client.js extract-compact.js exp-client-drain.js health-check.sh exp-feedback.js exp-feedback exp-bootstrap.sh exp-health-last exp-shell-init.sh; do
   cp "$SRC_DIR/$f" "$INSTALL_DIR/$f"
 done
 
@@ -68,12 +75,20 @@ chmod +x \
   "$INSTALL_DIR/health-check.sh" \
   "$INSTALL_DIR/exp-feedback.js" \
   "$INSTALL_DIR/exp-feedback" \
+  "$INSTALL_DIR/exp-bootstrap.sh" \
+  "$INSTALL_DIR/exp-health-last" \
+  "$INSTALL_DIR/exp-shell-init.sh" \
   "$INSTALL_DIR/exp-server-maintain.js" \
   "$INSTALL_DIR/exp-portable-backup.js" \
   "$INSTALL_DIR/exp-portable-restore.js"
 
 mkdir -p "$HOME/.local/bin"
 ln -sf "$INSTALL_DIR/exp-feedback" "$HOME/.local/bin/exp-feedback"
+ln -sf "$INSTALL_DIR/exp-health-last" "$HOME/.local/bin/exp-health-last"
+ensure_line_in_file "$HOME/.bashrc" 'export PATH="$HOME/.local/bin:$PATH"'
+ensure_line_in_file "$HOME/.zshrc" 'export PATH="$HOME/.local/bin:$PATH"'
+ensure_line_in_file "$HOME/.bashrc" '[ -f "$HOME/.experience/exp-shell-init.sh" ] && . "$HOME/.experience/exp-shell-init.sh"'
+ensure_line_in_file "$HOME/.zshrc" '[ -f "$HOME/.experience/exp-shell-init.sh" ] && . "$HOME/.experience/exp-shell-init.sh"'
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 if $CLEAN_MODE; then

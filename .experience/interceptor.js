@@ -6,6 +6,9 @@ const os = require('os');
 
 const DEBUG_LOG = process.env.EXPERIENCE_HOOK_DEBUG_LOG || path.join(os.homedir(), '.codex', 'log', 'experience-hook-debug.jsonl');
 let input = '';
+const STDIN_TIMEOUT_MS = 3000;
+const INTERCEPT_TIMEOUT_MS = 2500;
+const HARD_EXIT_TIMEOUT_MS = 4500;
 
 function debugLog(event) {
   try {
@@ -65,10 +68,61 @@ function isCodexHookInvocation(data, tool) {
   return false;
 }
 
+function suppressHookOutput() {
+  const muted = [];
+  const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+  const originalStderrWrite = process.stderr.write.bind(process.stderr);
+  const originalConsole = {
+    log: console.log,
+    info: console.info,
+    warn: console.warn,
+    error: console.error,
+  };
+
+  const capture = (stream, chunk) => {
+    const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk || '');
+    if (text) muted.push({ stream, text });
+    return true;
+  };
+
+  process.stdout.write = ((chunk, encoding, callback) => {
+    if (typeof encoding === 'function') encoding();
+    if (typeof callback === 'function') callback();
+    return capture('stdout', chunk);
+  });
+  process.stderr.write = ((chunk, encoding, callback) => {
+    if (typeof encoding === 'function') encoding();
+    if (typeof callback === 'function') callback();
+    return capture('stderr', chunk);
+  });
+  console.log = (...args) => capture('console.log', args.join(' '));
+  console.info = (...args) => capture('console.info', args.join(' '));
+  console.warn = (...args) => capture('console.warn', args.join(' '));
+  console.error = (...args) => capture('console.error', args.join(' '));
+
+  return {
+    restore() {
+      process.stdout.write = originalStdoutWrite;
+      process.stderr.write = originalStderrWrite;
+      console.log = originalConsole.log;
+      console.info = originalConsole.info;
+      console.warn = originalConsole.warn;
+      console.error = originalConsole.error;
+      return muted;
+    }
+  };
+}
+
 const t = setTimeout(() => {
   debugLog({ stage: 'timeout_waiting_for_stdin' });
   process.exit(0);
-}, 3000);
+}, STDIN_TIMEOUT_MS);
+
+const hardExit = setTimeout(() => {
+  debugLog({ stage: 'hard_exit' });
+  activityLog({ stage: 'hard_exit' });
+  process.exit(0);
+}, HARD_EXIT_TIMEOUT_MS);
 
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', c => { input += c; });
@@ -87,13 +141,10 @@ process.stdin.on('end', async () => {
     if (!matches) process.exit(0);
 
     const ctrl = new AbortController();
-    const timer = setTimeout(() => {
-      debugLog({ stage: 'intercept_abort', tool });
-      activityLog({ stage: 'intercept_abort', tool, ...sourceMeta });
-      ctrl.abort();
-    }, 2500);
-
-    const resultMeta = await (async () => {
+    let timedOut = false;
+    let timer = null;
+    const mute = suppressHookOutput();
+    const resultPromise = (async () => {
       const remote = getRemoteClient();
       if (remote) {
         const config = remote.loadConfig();
@@ -112,8 +163,42 @@ process.stdin.on('end', async () => {
       const { interceptWithMeta: interceptMeta, intercept: localIntercept } = require(corePath);
       if (interceptMeta) return interceptMeta(tool, toolInput, ctrl.signal, sourceMeta);
       return { suggestions: await localIntercept(tool, toolInput, ctrl.signal, sourceMeta), surfacedIds: [], route: null };
-    })();
+    })().catch(error => {
+      if (ctrl.signal.aborted) {
+        debugLog({ stage: 'intercept_aborted', tool, message: error?.message || String(error) });
+        activityLog({ stage: 'intercept_aborted', tool, message: error?.message || String(error), ...sourceMeta });
+        return null;
+      }
+      throw error;
+    });
+    const timeoutPromise = new Promise(resolve => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        debugLog({ stage: 'intercept_abort', tool });
+        activityLog({ stage: 'intercept_abort', tool, ...sourceMeta });
+        ctrl.abort();
+        resolve(null);
+      }, INTERCEPT_TIMEOUT_MS);
+    });
+    const resultMeta = await Promise.race([resultPromise, timeoutPromise]);
+    const mutedOutput = mute.restore();
     clearTimeout(timer);
+    if (mutedOutput.length > 0) {
+      debugLog({
+        stage: 'suppressed_output',
+        tool,
+        count: mutedOutput.length,
+        preview: mutedOutput.map(entry => entry.text).join('').slice(0, 240),
+      });
+      activityLog({
+        stage: 'suppressed_output',
+        tool,
+        count: mutedOutput.length,
+        preview: mutedOutput.map(entry => entry.text).join('').slice(0, 240),
+        ...sourceMeta,
+      });
+    }
+    if (timedOut || !resultMeta) process.exit(0);
     const result = resultMeta?.suggestions ?? (typeof resultMeta === 'string' ? resultMeta : null);
     const surfacedIds = resultMeta?.surfacedIds || [];
     const routeInfo = resultMeta?.route || null;
@@ -203,5 +288,6 @@ process.stdin.on('end', async () => {
     debugLog({ stage: 'error', message: error?.message || String(error), stack: error?.stack || null });
     activityLog({ stage: 'error', message: error?.message || String(error), stack: error?.stack || null });
   }
+  clearTimeout(hardExit);
   process.exit(0);
 });

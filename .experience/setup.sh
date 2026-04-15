@@ -48,6 +48,42 @@ fi
 INSTALL_DIR="$HOME/.experience"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+ensure_line_in_file() {
+  local file="$1" line="$2"
+  mkdir -p "$(dirname "$file")"
+  touch "$file"
+  grep -Fqx "$line" "$file" 2>/dev/null || printf '\n%s\n' "$line" >> "$file"
+}
+
+cleanup_legacy_shell_autostart() {
+  local file="$1"
+  [ -f "$file" ] || return
+  node -e "
+    const fs = require('fs');
+    const file = process.argv[1];
+    const lines = fs.readFileSync(file, 'utf8').split(/\\r?\\n/);
+    const out = [];
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line === '# Experience Engine SSH tunnel auto-start (WSL)') {
+        if (i + 1 < lines.length && lines[i + 1].includes('pgrep -f \"ssh.*')) i++;
+        continue;
+      }
+      out.push(lines[i]);
+    }
+    let text = out.join('\\n');
+    if (!text.endsWith('\\n')) text += '\\n';
+    fs.writeFileSync(file, text);
+  " "$file" 2>/dev/null
+}
+
+install_shell_init() {
+  local file="$1"
+  local line='[ -f "$HOME/.experience/exp-shell-init.sh" ] && . "$HOME/.experience/exp-shell-init.sh"'
+  cleanup_legacy_shell_autostart "$file"
+  ensure_line_in_file "$file" "$line"
+}
+
 # Cross-platform node stdout capture.
 # MSYS/Git Bash "stdout is not a tty": native .exe (node) inside $() subshells
 # triggers MSYS TTY detection errors. Fix: run node OUTSIDE $(), redirect stdout
@@ -945,7 +981,7 @@ if ! cp "$SRC_DIR/experience-core.js" "$INSTALL_DIR/experience-core.js"; then
 fi
 
 # Copy hook/runtime helpers from source
-for f in interceptor.js stop-extractor.js interceptor-post.js interceptor-prompt.js judge-worker.js remote-client.js extract-compact.js exp-client-drain.js activity-watch.js health-check.sh exp-watch exp-feedback exp-feedback.js exp-open-pane exp-pane-right exp-pane-left exp-pane-bottom; do
+for f in interceptor.js stop-extractor.js interceptor-post.js interceptor-prompt.js judge-worker.js remote-client.js extract-compact.js exp-client-drain.js activity-watch.js health-check.sh exp-watch exp-feedback exp-feedback.js exp-open-pane exp-pane-right exp-pane-left exp-pane-bottom exp-bootstrap.sh exp-health-last exp-shell-init.sh; do
   if [ -f "$SRC_DIR/$f" ]; then
     cp "$SRC_DIR/$f" "$INSTALL_DIR/$f"
   fi
@@ -959,21 +995,19 @@ for f in exp-server-maintain.js exp-portable-backup.js exp-portable-restore.js; 
   fi
 done
 
-chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js" "$INSTALL_DIR/interceptor-post.js" "$INSTALL_DIR/interceptor-prompt.js" "$INSTALL_DIR/judge-worker.js" "$INSTALL_DIR/remote-client.js" "$INSTALL_DIR/extract-compact.js" "$INSTALL_DIR/exp-client-drain.js" "$INSTALL_DIR/activity-watch.js" "$INSTALL_DIR/health-check.sh" "$INSTALL_DIR/exp-server-maintain.js" "$INSTALL_DIR/exp-portable-backup.js" "$INSTALL_DIR/exp-portable-restore.js" "$INSTALL_DIR/exp-watch" "$INSTALL_DIR/exp-feedback" "$INSTALL_DIR/exp-feedback.js" "$INSTALL_DIR/exp-open-pane" "$INSTALL_DIR/exp-pane-right" "$INSTALL_DIR/exp-pane-left" "$INSTALL_DIR/exp-pane-bottom" 2>/dev/null
+chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js" "$INSTALL_DIR/interceptor-post.js" "$INSTALL_DIR/interceptor-prompt.js" "$INSTALL_DIR/judge-worker.js" "$INSTALL_DIR/remote-client.js" "$INSTALL_DIR/extract-compact.js" "$INSTALL_DIR/exp-client-drain.js" "$INSTALL_DIR/activity-watch.js" "$INSTALL_DIR/health-check.sh" "$INSTALL_DIR/exp-server-maintain.js" "$INSTALL_DIR/exp-portable-backup.js" "$INSTALL_DIR/exp-portable-restore.js" "$INSTALL_DIR/exp-watch" "$INSTALL_DIR/exp-feedback" "$INSTALL_DIR/exp-feedback.js" "$INSTALL_DIR/exp-open-pane" "$INSTALL_DIR/exp-pane-right" "$INSTALL_DIR/exp-pane-left" "$INSTALL_DIR/exp-pane-bottom" "$INSTALL_DIR/exp-bootstrap.sh" "$INSTALL_DIR/exp-health-last" "$INSTALL_DIR/exp-shell-init.sh" 2>/dev/null
 
 mkdir -p "$HOME/.local/bin"
 ln -sf "$INSTALL_DIR/exp-watch" "$HOME/.local/bin/exp-watch"
 ln -sf "$INSTALL_DIR/exp-feedback" "$HOME/.local/bin/exp-feedback"
+ln -sf "$INSTALL_DIR/exp-health-last" "$HOME/.local/bin/exp-health-last"
 ln -sf "$INSTALL_DIR/exp-open-pane" "$HOME/.local/bin/exp-open-pane"
 ln -sf "$INSTALL_DIR/exp-pane-right" "$HOME/.local/bin/exp-pane-right"
 ln -sf "$INSTALL_DIR/exp-pane-left" "$HOME/.local/bin/exp-pane-left"
 ln -sf "$INSTALL_DIR/exp-pane-bottom" "$HOME/.local/bin/exp-pane-bottom"
-if [ -f "$HOME/.bashrc" ] && ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.bashrc" 2>/dev/null; then
-  {
-    echo ''
-    echo '# Experience Engine local helpers'
-    echo 'export PATH="$HOME/.local/bin:$PATH"'
-  } >> "$HOME/.bashrc"
+ensure_line_in_file "$HOME/.bashrc" 'export PATH="$HOME/.local/bin:$PATH"'
+if [ -f "$HOME/.zshrc" ]; then
+  ensure_line_in_file "$HOME/.zshrc" 'export PATH="$HOME/.local/bin:$PATH"'
 fi
 
 # Atomic config write — only when NOT keeping config
@@ -1059,6 +1093,8 @@ if [ -n "$TUNNEL_SSH" ]; then
     MINGW*|MSYS*|CYGWIN*|Windows*)
       STARTUP="$APPDATA/Microsoft/Windows/Start Menu/Programs/Startup/experience-tunnel.vbs"
       printf "Set WshShell = CreateObject(\"WScript.Shell\")\nWshShell.Run \"%s\", 0, False\n" "$TUNNEL_SSH" > "$STARTUP"
+      install_shell_init "$HOME/.bashrc"
+      install_shell_init "$HOME/.zshrc"
       echo "  Auto-start: Windows startup script"
       ;;
     Darwin*)
@@ -1074,6 +1110,8 @@ if [ -n "$TUNNEL_SSH" ]; then
 </dict></plist>
 EOF
       launchctl load "$PLIST" 2>/dev/null
+      install_shell_init "$HOME/.bashrc"
+      install_shell_init "$HOME/.zshrc"
       echo "  Auto-start: macOS LaunchAgent"
       ;;
     Linux*)
@@ -1098,17 +1136,9 @@ EOF
           TUNNEL_SSH=$(echo "$TUNNEL_SSH" | sed "s|$WIN_KEY|$WSL_KEY|g")
         fi
 
-        # WSL: Add tunnel auto-start to .bashrc (idempotent)
-        if ! grep -q "experience-engine-tunnel" "$HOME/.bashrc" 2>/dev/null; then
-          cat >> "$HOME/.bashrc" << BASHEOF
-
-# Experience Engine SSH tunnel auto-start (WSL)
-pgrep -f "ssh.*$(echo "$TUNNEL_SSH" | grep -oP '\d+:localhost:\d+')" >/dev/null 2>&1 || $TUNNEL_SSH 2>/dev/null
-BASHEOF
-          echo "  Auto-start: WSL .bashrc (runs on each shell open)"
-        else
-          echo "  Auto-start: already in .bashrc"
-        fi
+        install_shell_init "$HOME/.bashrc"
+        install_shell_init "$HOME/.zshrc"
+        echo "  Auto-start: WSL shell init (.bashrc/.zshrc)"
 
         # WSL: Symlink ~/.experience to Windows files (shared brain)
         WIN_EXP="/mnt/c/Users/$(whoami 2>/dev/null || echo $USER)/.experience"
@@ -1122,16 +1152,20 @@ BASHEOF
         fi
       else
         # Native Linux: systemd service
-        SERVICE="$HOME/.config/systemd/user/experience-engine-tunnel.service"
+        SERVICE="$HOME/.config/systemd/user/experience-engine-bootstrap.service"
         mkdir -p "$(dirname "$SERVICE")"
-        printf "[Unit]\nDescription=Experience Engine Tunnel\nAfter=network.target\n[Service]\nExecStart=%s\nRestart=always\n[Install]\nWantedBy=default.target\n" "$TUNNEL_SSH" > "$SERVICE"
-        systemctl --user daemon-reload && systemctl --user enable --now experience-engine-tunnel.service 2>/dev/null
-        echo "  Auto-start: systemd service"
+        printf "[Unit]\nDescription=Experience Engine Bootstrap\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=oneshot\nExecStart=/bin/bash %%h/.experience/exp-bootstrap.sh --reason systemd --quiet\nRemainAfterExit=yes\n[Install]\nWantedBy=default.target\n" > "$SERVICE"
+        systemctl --user daemon-reload && systemctl --user enable --now experience-engine-bootstrap.service 2>/dev/null
+        install_shell_init "$HOME/.bashrc"
+        install_shell_init "$HOME/.zshrc"
+        echo "  Auto-start: systemd bootstrap service"
       fi
       ;;
   esac
 else
   echo "  No tunnel needed (local or cloud Qdrant)"
+  install_shell_init "$HOME/.bashrc"
+  install_shell_init "$HOME/.zshrc"
 fi
 
 # ── Step 4: Verify Qdrant collections ────────────────────────────────────
@@ -1991,6 +2025,7 @@ if [ "$HEALTH_FAIL" -eq 0 ]; then
   echo "   exp-feedback noise a1b2c3d4 experience-selfqa wrong_task"
   echo " Health check:"
   echo "   bash ~/.experience/health-check.sh"
+  echo "   exp-health-last"
   echo "   exp-open-pane --right --percent 33"
   echo "   exp-pane-right   | exp-pane-left | exp-pane-bottom"
   echo "   Fallback: ~/.local/bin/exp-open-pane or ~/.experience/exp-open-pane"
