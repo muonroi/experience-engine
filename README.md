@@ -109,6 +109,46 @@ Step D — Agent wiring:    Claude Code / Gemini CLI / Codex CLI / OpenCode
 
 **Done.** Your agent starts learning from mistakes immediately.
 
+### Option C: npm CLI package
+
+If you want the installer/runtime without cloning the repo first, use the npm package.
+
+```bash
+npx @muonroi/experience-engine setup
+```
+
+Or install it globally:
+
+```bash
+npm install -g @muonroi/experience-engine
+experience-engine setup
+```
+
+The npm package is intentionally a CLI/runtime wrapper around the existing installer and
+`server.js`. It is not presented as a stable Node library API yet.
+
+Useful commands:
+
+```bash
+experience-engine setup
+experience-engine setup-thin-client --server http://your-vps:8082 --token YOUR_TOKEN --clean
+experience-engine server
+experience-engine health
+```
+
+Maintainer release flow:
+
+```bash
+# bump package.json version
+git commit -am "Release npm package v0.1.0"
+git push origin develop
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Pushing a `v*` tag triggers the bundled GitHub Actions workflow, which runs `npm test`,
+performs `npm pack --dry-run`, and publishes to npm using the repository `NPM_TOKEN` secret.
+
 ### Shortcuts
 
 ```bash
@@ -139,6 +179,12 @@ Queued remote events live under `~/.experience/offline-queue/` and replay automa
 next hook invocation. Lightweight hook traffic is replayed inline; heavier queued `/api/extract`
 events are compacted and drained in the background so PreToolUse/PostToolUse stay fast without
 letting extract payloads grow unbounded.
+
+Thin-client startup behavior:
+- `setup-thin-client.sh` installs `exp-shell-init.sh` into both `~/.bashrc` and `~/.zshrc`
+- opening a new shell automatically triggers a lightweight background bootstrap
+- `exp-health-last` shows the latest persisted snapshot without rerunning the full dashboard
+- if the machine was offline, queued events replay automatically once the VPS is reachable again
 
 ## Role-Based Setup
 
@@ -173,13 +219,57 @@ EXP_AGENTS="codex" \
 bash .experience/setup.sh
 ```
 
-3. Start the server on the VPS:
+3. Run the API as a persistent service on the VPS.
+
+Do not rely on `node server.js` in a transient shell if you want reboot-safe behavior. Use a
+user-level `systemd` service:
 
 ```bash
-node server.js
+mkdir -p ~/.config/systemd/user
+
+cat > ~/.config/systemd/user/experience-engine.service <<'EOF'
+[Unit]
+Description=Experience Engine API Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/experience-engine
+ExecStart=%h/.nvm/versions/node/v22.22.2/bin/node server.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=default.target
+EOF
+
+systemctl --user daemon-reload
+systemctl --user enable --now experience-engine.service
+
+# Important for reboot persistence on VPS:
+sudo loginctl enable-linger "$USER"
 ```
 
-4. Install scheduled maintenance on the VPS:
+If `server.js` was already started manually, stop that manual process before starting the service,
+otherwise the service can flap with `EADDRINUSE` on port `8082`.
+
+4. Verify the VPS brain explicitly:
+
+```bash
+systemctl --user status experience-engine.service --no-pager
+curl http://127.0.0.1:8082/health
+curl http://127.0.0.1:8082/api/gates
+bash ~/.experience/health-check.sh --json
+```
+
+Expected:
+- `experience-engine.service` is `active (running)`
+- `/health` returns `status=ok`
+- `/api/gates` returns JSON
+- health check reports all pass or clearly explains the remaining issue
+
+5. Install scheduled maintenance on the VPS:
 
 ```bash
 crontab -e
@@ -191,7 +281,7 @@ Add:
 */15 * * * * /path/to/node /home/YOUR_USER/.experience/exp-server-maintain.js --trigger cron >> /home/YOUR_USER/.experience/maintain.log 2>&1
 ```
 
-5. Keep portable backups so the brain can move to a new VPS later:
+6. Keep portable backups so the brain can move to a new VPS later:
 
 ```bash
 node tools/exp-portable-backup.js --out /var/backups/experience-$(date +%F)
@@ -200,7 +290,17 @@ node tools/exp-portable-backup.js --out /var/backups/experience-$(date +%F)
 Admin notes:
 - Only the VPS needs Qdrant credentials, embed keys, and brain keys.
 - Developers should not need direct access to those secrets.
-- If you later migrate to another VPS, restore with `tools/exp-portable-restore.js`.
+- Re-running setup on an existing VPS does not require retyping secrets if `~/.experience/config.json`
+  already exists. Pull the repo, then keep the current config:
+
+```bash
+cd ~/experience-engine
+git pull --ff-only
+printf '1\n' | bash .experience/setup.sh
+```
+
+- If you later migrate to another VPS, restore with `tools/exp-portable-restore.js` and then point
+  thin clients at the new server URL/token.
 
 ### Dev: Setup Existing Machine
 
@@ -234,6 +334,9 @@ Thin-client notes:
 - Local machines do not need `EXP_QDRANT_URL`, `EXP_QDRANT_KEY`, SSH tunnels, or provider API keys.
 - The local machine keeps only hooks, config, temporary state, and offline queue.
 - The canonical brain stays on the VPS.
+- `--clean` is recommended when converting an old local/hybrid install into a real thin client.
+- After setup, opening a new `bash` or `zsh` shell automatically runs the thin-client bootstrap.
+- If you add a second or third workstation later, repeat this same thin-client setup there.
 
 ### Verify Checklist
 
@@ -263,6 +366,61 @@ Expected:
 - `remote_server` and `remote_gates` are `ok`
 - `offline_queue` is empty or drains after the next hook
 - no local Qdrant or SSH tunnel is required in thin-client mode
+
+### Common Scenarios
+
+#### A. Add Another Thin Client Later
+
+For every additional workstation, do not manually copy an old `~/.experience` directory. Clone the
+repo and run the thin-client installer against the same VPS:
+
+```bash
+git clone https://github.com/muonroi/experience-engine.git
+cd experience-engine
+bash .experience/setup-thin-client.sh \
+  --server http://your-vps:8082 \
+  --token YOUR_SERVER_AUTH_TOKEN
+```
+
+If that machine previously acted as a local brain, use `--clean`:
+
+```bash
+bash .experience/setup-thin-client.sh \
+  --server http://your-vps:8082 \
+  --token YOUR_SERVER_AUTH_TOKEN \
+  --clean
+```
+
+#### B. Build A New VPS And Attach Thin Clients From Scratch
+
+1. Provision the VPS and install Node.js + Qdrant.
+2. Clone the repo on the VPS.
+3. Run `setup.sh` with provider keys, Qdrant URL, and `EXP_SERVER_AUTH_TOKEN`.
+4. Install and enable `experience-engine.service`.
+5. Verify `/health`, `/api/gates`, and `bash ~/.experience/health-check.sh --json`.
+6. On every workstation, run `setup-thin-client.sh --server ... --token ...`.
+
+This gives you one canonical brain on the VPS and any number of thin clients on laptops, desktops,
+or WSL shells.
+
+#### C. Reboot Behavior
+
+- VPS reboot:
+  `experience-engine.service` should come back automatically.
+- Thin-client machine reboot:
+  nothing needs to be reinstalled; the next time you open a shell, `exp-shell-init.sh` bootstraps
+  the client automatically.
+- Quick post-reboot check:
+
+```bash
+exp-health-last
+```
+
+If you need the full dashboard:
+
+```bash
+bash ~/.experience/health-check.sh --json
+```
 
 ## How It Works
 
@@ -622,11 +780,19 @@ Diagnostic dashboard to verify the engine is running, reachable, and firing.
 bash ~/.experience/health-check.sh          # full dashboard
 bash ~/.experience/health-check.sh --json   # machine-readable output
 bash ~/.experience/health-check.sh --watch  # auto-refresh every 30s
+exp-health-last                             # last persisted boot/shell snapshot
 ```
 
 The dashboard now prints a concrete **fix suggestion per unhealthy check**, including thin-client /
 VPS issues such as `serverBaseUrl`, remote `/api/gates`, auth token, offline queue backlog, and
 missing installed helper files.
+
+Setup now also installs a lightweight bootstrap layer under `~/.experience/`:
+
+- On WSL and shell-driven setups, opening a new `bash` or `zsh` session triggers background bootstrap.
+- On native Linux, setup installs a user-level `systemd` bootstrap service.
+- Each bootstrap run writes the latest snapshot to `~/.experience/status/boot-health-latest.meta.json`.
+- `exp-health-last` reads that snapshot so you can check the last known state without re-running the full dashboard.
 
 **What it checks (14 points):**
 
@@ -767,19 +933,46 @@ node tools/exp-portable-backup.js --out /var/backups/experience-$(date +%F)
 node tools/exp-portable-restore.js --from /var/backups/experience-2026-04-14 --restore-config
 ```
 
+Recommended migration playbook:
+
+1. On the old VPS, create a portable backup.
+2. On the new VPS, clone the repo and restore that backup.
+3. Re-run `setup.sh` on the new VPS, keeping or restoring the config.
+4. Install the `experience-engine.service` user service on the new VPS and verify `/health`.
+5. Decide whether to keep the same `serverAuthToken` or rotate it.
+6. On every thin client, rerun:
+
+```bash
+bash .experience/setup-thin-client.sh \
+  --server http://new-vps:8082 \
+  --token YOUR_SERVER_AUTH_TOKEN \
+  --clean
+```
+
+Thin clients do not need Qdrant credentials or provider keys during migration. They only need:
+- the new VPS base URL
+- the bearer token, if auth is enabled
+
+That keeps VPS migration operationally simple: move the canonical brain once, then repoint clients.
+
 ## File Structure
 
 ```
 .experience/
-  experience-core.js    — engine (1709 LOC, zero deps)
+  experience-core.js    — engine (2868 LOC, zero deps)
   stop-extractor.js     — session extraction + evolution trigger (Claude + Codex)
   setup.sh              — guided setup wizard
+  setup-thin-client.sh  — thin-client installer for additional workstations
   interceptor.js        — PreToolUse hook — injects experience hints before agent calls
   interceptor-post.js   — PostToolUse hook — captures tool outcomes for extraction
+  interceptor-prompt.js — UserPromptSubmit hook — injects prompt-time experience context
   judge-worker.js       — Async LLM judge — evaluates verdicts + noise reasons
   remote-client.js      — thin-client HTTP transport + offline queue
   extract-compact.js    — transcript compaction for extract payloads
   exp-client-drain.js   — background drain for queued heavy extract events
+  exp-bootstrap.sh      — boot/shell bootstrap + snapshot writer
+  exp-health-last       — latest persisted health snapshot reader
+  exp-shell-init.sh     — shell bootstrap entrypoint for bash/zsh
 
 server.js               — REST API (282 LOC, zero deps)
 
@@ -850,7 +1043,7 @@ cd /mnt/d/your/project && codex
 - Creates `~/.codex/hooks.json` with PreToolUse + PostToolUse + Stop hooks
 - Enables hooks via `~/.codex/config.toml` (`codex_hooks = true`)
 - Starts SSH tunnel inside WSL if needed (Windows tunnel not reachable from WSL2)
-- Adds tunnel auto-start to `.bashrc` (survives shell restarts)
+- Adds shell bootstrap to `.bashrc` / `.zshrc` so health/bootstrap survives shell restarts
 
 ### Agent Hook Comparison
 

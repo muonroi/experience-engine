@@ -1,0 +1,82 @@
+{
+  "name": "@muonroi/experience-engine",
+  "version": "0.1.0",
+  "description": "CLI installer and server runtime for Experience Engine",
+  "license": "MIT",
+  "type": "commonjs",
+  "bin": {
+    "experience-engine": "bin/experience-engine.js",
+    "exp-engine": "bin/experience-engine.js"
+  },
+  "files": [
+    "bin/",
+    ".experience/activity-watch.js",
+    ".experience/exp-bootstrap.sh",
+    ".experience/exp-client-drain.js",
+    ".experience/exp-feedback",
+    ".experience/exp-feedback.js",
+    ".experience/exp-health-last",
+    ".experience/exp-open-pane",
+    ".experience/exp-pane-bottom",
+    ".experience/exp-pane-left",
+    ".experience/exp-pane-right",
+    ".experience/exp-shell-init.sh",
+    ".experience/exp-watch",
+    ".experience/experience-core.js",
+    ".experience/extract-compact.js",
+    ".experience/health-check.sh",
+    ".experience/interceptor-post.js",
+    ".experience/interceptor-prompt.js",
+    ".experience/interceptor.js",
+    ".experience/judge-worker.js",
+    ".experience/remote-client.js",
+    ".experience/setup-thin-client.sh",
+    ".experience/setup.ps1",
+    ".experience/setup.sh",
+    ".experience/stop-extractor.js",
+    "tools/exp-demote.js",
+    "tools/exp-gates.js",
+    "tools/exp-portable-backup.js",
+    "tools/exp-portable-restore.js",
+    "tools/exp-replay-sessions.js",
+    "tools/exp-server-maintain.js",
+    "tools/exp-stats.js",
+    "tools/experience-bulk-seed.js",
+    "server.js",
+    "README.md",
+    "LICENSE",
+    "docker-compose.yml",
+    "Dockerfile",
+    "demo.svg",
+    "demo.tape",
+    "demo.yml"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 .experience/test-bootstrap.js .experience/test-hook-payloads.js .experience/test-remote-hooks.js tests/npm-cli.test.js",
+    "pack:dry-run": "npm pack --dry-run"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/muonroi/experience-engine.git"
+  },
+  "homepage": "https://github.com/muonroi/experience-engine#readme",
+  "bugs": {
+    "url": "https://github.com/muonroi/experience-engine/issues"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "memory",
+    "experience",
+    "codex",
+    "claude",
+    "gemini",
+    "qdrant"
+  ]
+}
