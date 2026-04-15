@@ -97,7 +97,10 @@ test('remote interceptor and posttool hooks proxy through VPS APIs', { skip: SER
       res.end(JSON.stringify({ ok: true, reconcile: { touched: [], pending: [], implicitUnused: [], expired: [] }, judgeQueued: true }));
     });
   });
-  writeConfig(homeDir, { serverBaseUrl: `http://127.0.0.1:${port}` });
+  writeConfig(homeDir, {
+    serverBaseUrl: `http://127.0.0.1:${port}`,
+    serverHookTimeoutMs: 3000,
+  });
 
   try {
     const pre = await runHook(homeDir, 'interceptor.js', {
@@ -152,7 +155,10 @@ test('remote prompt hook proxies prompt search to VPS', { skip: SERVER_BLOCKED ?
       }));
     });
   });
-  writeConfig(homeDir, { serverBaseUrl: `http://127.0.0.1:${port}` });
+  writeConfig(homeDir, {
+    serverBaseUrl: `http://127.0.0.1:${port}`,
+    serverHookTimeoutMs: 3000,
+  });
 
   try {
     const result = await runHook(homeDir, 'interceptor-prompt.js', {
