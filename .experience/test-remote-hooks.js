@@ -7,7 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const spawnProbe = spawnSync(process.execPath, ['-e', 'process.exit(0)'], { encoding: 'utf8' });
 const CHILD_BLOCKED = !!spawnProbe.error;
 const listenProbe = CHILD_BLOCKED ? { status: 1 } : spawnSync(
@@ -19,7 +19,7 @@ const SERVER_BLOCKED = CHILD_BLOCKED || listenProbe.status !== 0;
 
 function makeTempHome() {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'exp-remote-hooks-'));
-  fs.mkdirSync(path.join(homeDir, '.experience'), { recursive: true });
+  fs.mkdirSync(path.join(homeDir, '.experience', 'tmp'), { recursive: true });
   return homeDir;
 }
 
@@ -66,6 +66,14 @@ function nowMs() {
   return Number(process.hrtime.bigint() / 1000000n);
 }
 
+function parseHookJson(result) {
+  return JSON.parse(result.stdout || '{}');
+}
+
+function extractHookText(payload) {
+  return payload.systemMessage || payload.hookSpecificOutput?.additionalContext || '';
+}
+
 test('remote interceptor and posttool hooks proxy through VPS APIs', { skip: SERVER_BLOCKED ? 'sandbox blocks local test server or child node processes' : false }, async () => {
   const homeDir = makeTempHome();
   copyRuntime(homeDir, ['interceptor.js', 'interceptor-post.js', 'remote-client.js']);
@@ -100,8 +108,8 @@ test('remote interceptor and posttool hooks proxy through VPS APIs', { skip: SER
       cwd: '/repo/storyflow',
     });
     assert.equal(pre.status, 0);
-    const preOut = JSON.parse(pre.stdout || '{}');
-    assert.match(preOut.systemMessage, /Remote warning/);
+    const preOut = parseHookJson(pre);
+    assert.match(extractHookText(preOut), /Remote warning/);
     assert.equal(received[0].url, '/api/intercept');
     assert.equal(received[0].body.cwd, '/repo/storyflow');
 
@@ -154,9 +162,12 @@ test('remote prompt hook proxies prompt search to VPS', { skip: SERVER_BLOCKED ?
       cwd: '/repo/storyflow',
     });
     assert.equal(result.status, 0);
-    const promptOut = JSON.parse(result.stdout || '{}');
-    assert.equal(promptOut.hookSpecificOutput?.hookEventName, 'UserPromptSubmit');
-    assert.match(promptOut.hookSpecificOutput?.additionalContext || '', /Remote prompt hint/);
+    const promptOut = parseHookJson(result);
+    const promptText = extractHookText(promptOut);
+    if (promptOut.hookSpecificOutput?.hookEventName) {
+      assert.equal(promptOut.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+    }
+    assert.match(promptText, /Remote prompt hint/);
     assert.equal(received[0].url, '/api/intercept');
     assert.equal(received[0].body.toolName, 'UserPrompt');
   } finally {

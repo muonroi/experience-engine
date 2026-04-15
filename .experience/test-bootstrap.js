@@ -17,6 +17,10 @@ function makeHome() {
   return homeDir;
 }
 
+function repoScript(name) {
+  return path.join(__dirname, name);
+}
+
 test('bootstrap persists latest health snapshot', { skip: BASH_BLOCKED ? 'sandbox blocks bash child processes' : false }, () => {
   const homeDir = makeHome();
   const expDir = path.join(homeDir, '.experience');
@@ -32,7 +36,7 @@ exit 0
 `);
   fs.chmodSync(path.join(expDir, 'health-check.sh'), 0o755);
 
-  const scriptPath = path.join('/mnt/d/Personal/Core/experience-engine/.experience', 'exp-bootstrap.sh');
+  const scriptPath = repoScript('exp-bootstrap.sh');
   const run = spawnSync('/bin/bash', [scriptPath, '--reason', 'test'], {
     env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir },
     encoding: 'utf8',
@@ -63,7 +67,7 @@ test('exp-health-last prints concise status line', { skip: BASH_BLOCKED ? 'sandb
     health: { summary: { pass: 1, warn: 0, fail: 2 } },
   }, null, 2));
 
-  const cmdPath = path.join('/mnt/d/Personal/Core/experience-engine/.experience', 'exp-health-last');
+  const cmdPath = repoScript('exp-health-last');
   const run = spawnSync('/bin/bash', [cmdPath, '--brief'], {
     env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir },
     encoding: 'utf8',
