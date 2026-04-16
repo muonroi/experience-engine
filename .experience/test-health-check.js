@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
+const SCRIPT_PATH = path.join(__dirname, 'health-check.sh');
 
 function makeHome() {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'exp-health-'));
@@ -16,9 +17,19 @@ function makeHome() {
 }
 
 function startServer() {
+  const received = [];
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
+    received.push({
+      pathname: url.pathname,
+      auth: req.headers.authorization || '',
+    });
     if (url.pathname === '/collections' || url.pathname === '/health' || url.pathname === '/api/gates') {
+      if (url.pathname === '/api/gates' && req.headers.authorization !== 'Bearer server-secret') {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'unauthorized' }));
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       if (url.pathname === '/collections') {
         res.end(JSON.stringify({ result: { collections: [{ name: 'experience-behavioral' }] } }));
@@ -38,14 +49,14 @@ function startServer() {
     res.end(JSON.stringify({ error: 'not found' }));
   });
   return new Promise((resolve) => {
-    server.listen(0, () => resolve({ server, port: server.address().port }));
+    server.listen(0, () => resolve({ server, port: server.address().port, received }));
   });
 }
 
 test('health-check reports thin-client server state and remediation hints', async () => {
   const homeDir = makeHome();
   const expDir = path.join(homeDir, '.experience');
-  const { server, port } = await startServer();
+  const { server, port, received } = await startServer();
 
   const config = {
     qdrantUrl: `http://127.0.0.1:${port}`,
@@ -77,9 +88,8 @@ module.exports = {
 };
 `);
 
-  const scriptPath = path.join('/mnt/d/sources/Core/experience-engine/.experience', 'health-check.sh');
   const result = await new Promise((resolve, reject) => {
-    const child = spawn('bash', [scriptPath, '--json'], {
+    const child = spawn('bash', [SCRIPT_PATH, '--json'], {
       env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -111,6 +121,8 @@ module.exports = {
     assert.equal(data.server_auth.status, 'ok');
     assert.equal(data.offline_queue.status, 'warn');
     assert.match(data.offline_queue.fix, /flush the queue/);
+    const gateRequest = received.find((entry) => entry.pathname === '/api/gates');
+    assert.equal(gateRequest?.auth, 'Bearer server-secret');
   } finally {
     server.close();
   }
@@ -141,9 +153,8 @@ test('health-check treats local server nodes as healthy without client hooks', a
     fs.writeFileSync(path.join(expDir, file), '# stub\n');
   }
 
-  const scriptPath = path.join('/mnt/d/sources/Core/experience-engine/.experience', 'health-check.sh');
   const result = await new Promise((resolve, reject) => {
-    const child = spawn('bash', [scriptPath, '--json'], {
+    const child = spawn('bash', [SCRIPT_PATH, '--json'], {
       env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir },
       stdio: ['ignore', 'pipe', 'pipe'],
     });

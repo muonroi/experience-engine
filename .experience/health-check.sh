@@ -236,12 +236,12 @@ run_checks() {
     rm -f "/tmp/exp-health-$$.json"
 
     local gates_http
-    local server_auth_hdr=""
-    [ -n "$server_auth" ] && server_auth_hdr="Authorization: Bearer $server_auth"
-    gates_http=$(curl -s -m 15 -o /dev/null -w "%{http_code}" ${server_auth_hdr:+-H "$server_auth_hdr"} "${server_base}/api/gates" 2>/dev/null)
+    local -a server_auth_args=()
+    [ -n "$server_auth" ] && server_auth_args=(-H "Authorization: Bearer $server_auth")
+    gates_http=$(curl -s -m 15 -o /dev/null -w "%{http_code}" "${server_auth_args[@]}" "${server_base}/api/gates" 2>/dev/null)
     if [ "$gates_http" = "000" ]; then
       sleep 1
-      gates_http=$(curl -s -m 15 -o /dev/null -w "%{http_code}" ${server_auth_hdr:+-H "$server_auth_hdr"} "${server_base}/api/gates" 2>/dev/null)
+      gates_http=$(curl -s -m 15 -o /dev/null -w "%{http_code}" "${server_auth_args[@]}" "${server_base}/api/gates" 2>/dev/null)
     fi
     if [ "$gates_http" = "200" ]; then
       check "Remote Gates" "ok" "$server_base/api/gates"
