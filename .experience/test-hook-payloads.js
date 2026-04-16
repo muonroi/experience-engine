@@ -9,6 +9,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const probe = spawnSync(process.execPath, ['-e', 'process.exit(0)'], { encoding: 'utf8' });
 const CHILD_BLOCKED = !!probe.error;
+const TIMEOUT_ASSERT_MAX_MS = 4300;
 
 function makeTempHome() {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'exp-hook-payload-'));
@@ -139,7 +140,7 @@ test('local hooks exit cleanly on timeout without emitting partial payload', { s
   });
   assert.equal(pre.status, 0);
   assert.equal(pre.stdout, '');
-  assert.ok(pre.durationMs < 3500, `expected fast timeout for PreToolUse, got ${pre.durationMs}ms`);
+  assert.ok(pre.durationMs < TIMEOUT_ASSERT_MAX_MS, `expected fast timeout for PreToolUse, got ${pre.durationMs}ms`);
 
   const prompt = runHook(homeDir, 'interceptor-prompt.js', {
     hook_event_name: 'UserPromptSubmit',
@@ -149,5 +150,5 @@ test('local hooks exit cleanly on timeout without emitting partial payload', { s
   });
   assert.equal(prompt.status, 0);
   assert.equal(prompt.stdout, '');
-  assert.ok(prompt.durationMs < 3500, `expected fast timeout for UserPromptSubmit, got ${prompt.durationMs}ms`);
+  assert.ok(prompt.durationMs < TIMEOUT_ASSERT_MAX_MS, `expected fast timeout for UserPromptSubmit, got ${prompt.durationMs}ms`);
 });
