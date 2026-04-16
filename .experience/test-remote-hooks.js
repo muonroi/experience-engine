@@ -47,26 +47,45 @@ function startServer(handler) {
 }
 
 function runHook(homeDir, scriptName, input, extraEnv = {}) {
-  const result = spawnSync(process.execPath, [path.join(homeDir, '.experience', scriptName)], {
-    env: {
-      ...process.env,
-      HOME: homeDir,
-      USERPROFILE: homeDir,
-      EXPERIENCE_HOOK_DEBUG_LOG: path.join(homeDir, '.experience', 'tmp', 'debug.jsonl'),
-      ...extraEnv,
-    },
-    input: JSON.stringify(input),
-    encoding: 'utf8',
-    timeout: 8000,
-  });
+  return new Promise((resolve, reject) => {
+    const startedAt = nowMs();
+    const child = spawn(process.execPath, [path.join(homeDir, '.experience', scriptName)], {
+      env: {
+        ...process.env,
+        HOME: homeDir,
+        USERPROFILE: homeDir,
+        EXPERIENCE_HOOK_DEBUG_LOG: path.join(homeDir, '.experience', 'tmp', 'debug.jsonl'),
+        ...extraEnv,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
 
-  if (result.error) throw result.error;
-  return {
-    status: result.status,
-    signal: result.signal,
-    stdout: result.stdout || '',
-    stderr: result.stderr || '',
-  };
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`hook ${scriptName} timed out`));
+    }, 8000);
+
+    child.stdout.on('data', chunk => { stdout += chunk.toString('utf8'); });
+    child.stderr.on('data', chunk => { stderr += chunk.toString('utf8'); });
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once('exit', (status, signal) => {
+      clearTimeout(timer);
+      resolve({
+        status,
+        signal,
+        stdout,
+        stderr,
+        durationMs: nowMs() - startedAt,
+      });
+    });
+
+    child.stdin.end(JSON.stringify(input));
+  });
 }
 
 function nowMs() {
@@ -212,7 +231,6 @@ test('remote PreToolUse hook exits quickly when VPS intercept is slow', { skip: 
   writeConfig(homeDir, { serverBaseUrl: `http://127.0.0.1:${port}`, serverTimeoutMs: 5000 });
 
   try {
-    const started = nowMs();
     const result = await runHook(homeDir, 'interceptor.js', {
       hook_event_name: 'PreToolUse',
       session_id: 'sess-slow-pre',
@@ -220,10 +238,9 @@ test('remote PreToolUse hook exits quickly when VPS intercept is slow', { skip: 
       tool_input: { command: 'dotnet test' },
       cwd: '/repo/storyflow',
     });
-    const durationMs = nowMs() - started;
     assert.equal(result.status, 0);
     assert.equal(result.stdout, '');
-    assert.ok(durationMs < 3500, `expected hook to exit quickly, got ${durationMs}ms`);
+    assert.ok(result.durationMs < 3500, `expected hook to exit quickly, got ${result.durationMs}ms`);
   } finally {
     server.close();
   }
@@ -250,7 +267,6 @@ test('remote PostToolUse hook queues when VPS posttool is slow', { skip: SERVER_
   writeConfig(homeDir, { serverBaseUrl: `http://127.0.0.1:${port}`, serverTimeoutMs: 5000 });
 
   try {
-    const started = nowMs();
     const result = await runHook(homeDir, 'interceptor-post.js', {
       hook_event_name: 'PostToolUse',
       session_id: 'sess-slow-post',
@@ -259,9 +275,8 @@ test('remote PostToolUse hook queues when VPS posttool is slow', { skip: SERVER_
       tool_response: { output: 'ok' },
       cwd: '/repo/storyflow',
     });
-    const durationMs = nowMs() - started;
     assert.equal(result.status, 0);
-    assert.ok(durationMs < 3500, `expected hook to exit quickly, got ${durationMs}ms`);
+    assert.ok(result.durationMs < 3500, `expected hook to exit quickly, got ${result.durationMs}ms`);
     const queueDir = path.join(homeDir, '.experience', 'offline-queue');
     const queued = fs.readdirSync(queueDir).filter((name) => name.endsWith('.json'));
     assert.equal(queued.length, 1);

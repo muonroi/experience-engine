@@ -15,8 +15,8 @@
     <img alt="Works Offline" src="https://img.shields.io/badge/works-offline-blue">
     <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-yellow">
     <img alt="Node.js 20+" src="https://img.shields.io/badge/node-20%2B-green">
-    <img alt="Tests" src="https://img.shields.io/badge/tests-187%20passing-brightgreen">
-    <img alt="E2E" src="https://img.shields.io/badge/E2E-44%20tests-brightgreen">
+    <img alt="Tests" src="https://img.shields.io/badge/tests-node%3Atest%20suite-brightgreen">
+    <img alt="Runtime" src="https://img.shields.io/badge/remote%20hooks%20%26%20server-verified-brightgreen">
   </p>
 </p>
 
@@ -328,7 +328,7 @@ otherwise the service can flap with `EADDRINUSE` on port `8082`.
 ```bash
 systemctl --user status experience-engine.service --no-pager
 curl http://127.0.0.1:8082/health
-curl http://127.0.0.1:8082/api/gates
+curl -H "Authorization: Bearer $EXP_SERVER_AUTH_TOKEN" http://127.0.0.1:8082/api/gates
 bash ~/.experience/health-check.sh --json
 ```
 
@@ -439,7 +439,7 @@ VPS brain checks:
 
 ```bash
 curl http://localhost:8082/health
-curl http://localhost:8082/api/gates
+curl -H "Authorization: Bearer $EXP_SERVER_AUTH_TOKEN" http://localhost:8082/api/gates
 bash ~/.experience/health-check.sh --json
 ```
 
@@ -498,7 +498,7 @@ bash .experience/setup-thin-client.sh \
 2. Either clone the repo on the VPS or install `@muonroi/experience-engine` globally.
 3. Run `setup.sh` or `experience-engine setup` with provider keys, Qdrant URL, and `EXP_SERVER_AUTH_TOKEN`.
 4. Install and enable `experience-engine.service`.
-5. Verify `/health`, `/api/gates`, and `bash ~/.experience/health-check.sh --json`.
+5. Verify `/health`, authenticated `/api/gates`, and `bash ~/.experience/health-check.sh --json`.
 6. On every workstation, run `setup-thin-client.sh --server ... --token ...` or `experience-engine setup-thin-client --server ... --token ...`.
 
 This gives you one canonical brain on the VPS and any number of thin clients on laptops, desktops,
@@ -719,6 +719,10 @@ node server.js
 ```
 
 **Endpoints:**
+
+When `server.authToken` (or `serverAuthToken`) is configured, every `POST` endpoint and every
+`GET /api/*` endpoint requires `Authorization: Bearer <token>`. `/health` remains public for
+liveness checks and local service supervision.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -1088,15 +1092,16 @@ tools/
   exp-demote.js         — interactive demote/delete CLI
   exp-gates.js          — v3.0 gate status checker
   experience-bulk-seed.js — bootstrap from existing rules
-  test-server.js        — 49 API integration tests
-  test-activity-log.js  — activity logging tests
+  test-server.js        — standalone API integration smoke script
+  test-activity-log.js  — standalone activity logging smoke script
   test-scoring.js       — 41 anti-noise scoring tests
   test-context.js       — 29 context-aware query tests
   test-exp-stats.js     — observability CLI tests
   test-model-router.js  — 44 model router tests (9 suites)
 ```
 
-**E2E verified: 2026-04-11 — 44 model router tests pass (9 suites: keyword routing, history routing, brain routing, claude/gemini/codex/opencode runtimes, feedback learning, tier fallback)**
+Default automated verification runs through `npm test`, which executes the maintained `node:test`
+suite under `.experience/`, `tests/`, and selected `tools/` coverage files.
 
 ## Philosophy
 
