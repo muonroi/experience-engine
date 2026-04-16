@@ -14,6 +14,7 @@ test('promotes mature high-hit behavioral entries to principles', () => {
   const result = _shouldPromoteBehavioralToPrinciple({
     createdFrom: 'bulk-seed',
     hitCount: 27,
+    validatedCount: 27,
     confidence: 0.92,
     createdAt: '2026-04-09T03:50:28.668Z',
     trigger: 'Never use hardcoded px widths for table columns',
@@ -27,13 +28,25 @@ test('does not promote immature or low-confidence behavioral entries', () => {
   assert.equal(_shouldPromoteBehavioralToPrinciple({
     createdFrom: 'bulk-seed',
     hitCount: 5,
+    validatedCount: 5,
     confidence: 0.92,
     createdAt: '2026-04-09T03:50:28.668Z',
   }, now), false);
   assert.equal(_shouldPromoteBehavioralToPrinciple({
     createdFrom: 'bulk-seed',
     hitCount: 27,
+    validatedCount: 27,
     confidence: 0.5,
+    createdAt: '2026-04-09T03:50:28.668Z',
+  }, now), false);
+});
+
+test('does not treat legacy surfaced hitCount as validated promotion signal', () => {
+  const now = new Date('2026-04-14T07:00:00Z').getTime();
+  assert.equal(_shouldPromoteBehavioralToPrinciple({
+    createdFrom: 'bulk-seed',
+    hitCount: 120,
+    confidence: 0.95,
     createdAt: '2026-04-09T03:50:28.668Z',
   }, now), false);
 });

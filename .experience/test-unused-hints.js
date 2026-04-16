@@ -117,6 +117,8 @@ describe('unused hint reconciliation', () => {
     assert.strictEqual(result.touched.length, 1, 'relevant edit should clear pending hint');
     const stored = JSON.parse(readTestStore(coll)[0].payload.json);
     assert.strictEqual(stored.unusedCount, 0, 'touch should not increment unusedCount');
+    assert.strictEqual(stored.hitCount, 1, 'touch should count as validated usage');
+    assert.strictEqual(stored.validatedCount, 1, 'validatedCount should increment on touch');
   });
 });
 

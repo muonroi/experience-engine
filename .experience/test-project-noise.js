@@ -47,6 +47,16 @@ describe('extractProjectSlug', () => {
     assert.strictEqual(extractProjectSlug('D:\\sources\\Core\\Experience-Engine\\src\\file.js'), 'experience-engine');
   });
 
+  it('extracts repo slug from Core workspace paths on Windows', () => {
+    assert.strictEqual(extractProjectSlug('D:/Personal/Core/experience-engine/server.js'), 'experience-engine');
+    assert.strictEqual(extractProjectSlug('D:/Personal/Core/muonroi-building-block/src/App.cs'), 'muonroi-building-block');
+  });
+
+  it('extracts repo slug from Core workspace paths on WSL mount paths', () => {
+    assert.strictEqual(extractProjectSlug('/mnt/d/Personal/Core/experience-engine/.experience/experience-core.js'), 'experience-engine');
+    assert.strictEqual(extractProjectSlug('/mnt/d/Personal/Core/storyflow_ui/src/App.tsx'), 'storyflow_ui');
+  });
+
   it('returns null for null/undefined input', () => {
     assert.strictEqual(extractProjectSlug(null), null);
     assert.strictEqual(extractProjectSlug(undefined), null);
