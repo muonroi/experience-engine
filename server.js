@@ -21,7 +21,7 @@
  *   POST /api/route-feedback        — Record agent outcome for routing learning
  *   POST /api/brain                 — Proxy brain LLM calls (for clients behind firewall)
  *
- * Config: ~/.experience/config.json (server.port, server.authToken)
+ * Config: ~/.experience/config.json (server.port, server.authToken, server.readAuthToken)
  * Start: node server.js
  */
 
@@ -49,6 +49,7 @@ const PORT = _cfg.server?.port || parseInt(process.env.EXP_SERVER_PORT, 10) || 8
 const QDRANT_BASE = _cfg.qdrantUrl || process.env.EXPERIENCE_QDRANT_URL || 'http://localhost:6333';
 const QDRANT_API_KEY = _cfg.qdrantKey || process.env.EXPERIENCE_QDRANT_KEY || '';
 const AUTH_TOKEN = _cfg.server?.authToken || _cfg.serverAuthToken || null;
+const READ_AUTH_TOKEN = _cfg.server?.readAuthToken || _cfg.serverReadAuthToken || process.env.EXPERIENCE_SERVER_READ_AUTH_TOKEN || null;
 const VALID_FEEDBACK_VERDICTS = new Set(['FOLLOWED', 'IGNORED', 'IRRELEVANT']);
 const VALID_NOISE_REASONS = new Set(['wrong_repo', 'wrong_language', 'wrong_task', 'stale_rule']);
 const TMP_DIR = path.join(os.homedir(), '.experience', 'tmp');
@@ -68,12 +69,16 @@ const CORS = {
 };
 
 // --- Auth middleware ---
-// When server.authToken is set in ~/.experience/config.json, all POST endpoints
-// and sensitive GET endpoints require the matching Bearer token.
-function requireAuth(req, res) {
-  if (!AUTH_TOKEN) return true; // no auth configured — allow all
+// When server.authToken is set, writes and sensitive reads require the full token.
+// Optionally, server.readAuthToken may authorize read-only observability endpoints.
+function requireAuth(req, res, options = {}) {
+  const allowReadToken = options.allowReadToken === true;
+  const acceptedTokens = [];
+  if (AUTH_TOKEN) acceptedTokens.push(AUTH_TOKEN);
+  if (allowReadToken && READ_AUTH_TOKEN) acceptedTokens.push(READ_AUTH_TOKEN);
+  if (acceptedTokens.length === 0) return true; // no auth configured — allow all
   const hdr = req.headers['authorization'] || '';
-  if (hdr === `Bearer ${AUTH_TOKEN}`) return true;
+  if (acceptedTokens.some(token => hdr === `Bearer ${token}`)) return true;
   res.writeHead(401, { 'Content-Type': 'application/json', ...CORS });
   res.end(JSON.stringify({ error: 'Unauthorized' }));
   return false;
@@ -86,6 +91,10 @@ function loadExperienceCore({ fresh = false } = {}) {
 
 function isProtectedGetPath(pathname) {
   return pathname !== '/health';
+}
+
+function isReadOnlyApiPath(pathname) {
+  return pathname === '/api/stats' || pathname === '/api/gates';
 }
 
 async function resolvePointIdPrefix(collection, pointId) {
@@ -506,7 +515,7 @@ const server = http.createServer(async (req, res) => {
     // Keep health open for liveness checks; protect other GET APIs when auth is configured.
     if (p === '/health' && req.method === 'GET') return await handleHealth(req, res);
     if (req.method === 'GET' && isProtectedGetPath(p)) {
-      if (!requireAuth(req, res)) return;
+      if (!requireAuth(req, res, { allowReadToken: isReadOnlyApiPath(p) })) return;
     }
     if (p === '/api/stats' && req.method === 'GET') return await handleStats(req, res, url);
     if (p === '/api/gates' && req.method === 'GET') return await handleGates(req, res);
@@ -568,6 +577,7 @@ module.exports = {
   handleRouteModel,
   handleRouteFeedback,
   isProtectedGetPath,
+  isReadOnlyApiPath,
   loadExperienceCore,
   resolvePointIdPrefix,
   RUNTIME_DIR,

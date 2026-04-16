@@ -14,10 +14,14 @@ test('resolveCommand maps setup to packaged setup script', () => {
   assert.equal(spec.args[0], path.resolve(__dirname, '..', '.experience', 'setup.sh'));
 });
 
-test('resolveCommand maps thin client and server commands', () => {
+test('resolveCommand maps thin client, sync-install, and server commands', () => {
   const thin = resolveCommand('setup-thin-client', ['--server', 'http://example']);
   assert.equal(thin.cmd, 'bash');
   assert.equal(thin.args[0], path.resolve(__dirname, '..', '.experience', 'setup-thin-client.sh'));
+
+  const sync = resolveCommand('sync-install', ['--quiet']);
+  assert.equal(sync.cmd, 'bash');
+  assert.equal(sync.args[0], path.resolve(__dirname, '..', '.experience', 'sync-install.sh'));
 
   const server = resolveCommand('server');
   assert.equal(server.cmd, process.execPath);
@@ -33,6 +37,7 @@ test('main prints help for empty command', () => {
   assert.equal(code, 0);
   assert.match(output, /Experience Engine CLI/);
   assert.match(output, /setup-thin-client/);
+  assert.match(output, /sync-install/);
 });
 
 test('main rejects unknown commands', () => {

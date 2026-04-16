@@ -14,6 +14,7 @@ function usage(out = process.stdout) {
 Usage:
   experience-engine setup [args...]
   experience-engine setup-thin-client [args...]
+  experience-engine sync-install [args...]
   experience-engine server [args...]
   experience-engine health [args...]
   experience-engine help
@@ -21,6 +22,7 @@ Usage:
 Commands:
   setup               Run the full installer from this package
   setup-thin-client   Convert the current machine into a thin client
+  sync-install        Sync packaged runtime files into ~/.experience
   server              Start the Experience Engine API server
   health              Run the installed ~/.experience health check
   help                Show this help
@@ -34,6 +36,8 @@ function resolveCommand(command, args = []) {
       return { cmd: 'bash', args: [path.join(root, '.experience', 'setup.sh'), ...args] };
     case 'setup-thin-client':
       return { cmd: 'bash', args: [path.join(root, '.experience', 'setup-thin-client.sh'), ...args] };
+    case 'sync-install':
+      return { cmd: 'bash', args: [path.join(root, '.experience', 'sync-install.sh'), ...args] };
     case 'server':
       return { cmd: process.execPath, args: [path.join(root, 'server.js'), ...args] };
     case 'health':

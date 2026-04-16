@@ -132,6 +132,7 @@ Useful commands:
 ```bash
 experience-engine setup
 experience-engine setup-thin-client --server http://your-vps:8082 --token YOUR_TOKEN --clean
+experience-engine sync-install
 experience-engine server
 experience-engine health
 ```
@@ -194,6 +195,7 @@ canonical brain.
 {
   "serverBaseUrl": "http://your-vps:8082",
   "serverAuthToken": "optional-bearer-token",
+  "serverReadAuthToken": "optional-read-only-token-for-stats-and-gates",
   "serverTimeoutMs": 5000
 }
 ```
@@ -240,6 +242,7 @@ EXP_BRAIN_ENDPOINT="https://api.siliconflow.com/v1/chat/completions" \
 EXP_BRAIN_KEY="YOUR_BRAIN_KEY" \
 EXP_SERVER_PORT="8082" \
 EXP_SERVER_AUTH_TOKEN="YOUR_SERVER_AUTH_TOKEN" \
+EXP_SERVER_READ_AUTH_TOKEN="YOUR_OPTIONAL_READ_TOKEN" \
 EXP_AGENTS="codex" \
 bash .experience/setup.sh
 ```
@@ -265,6 +268,7 @@ EXP_BRAIN_ENDPOINT="https://api.siliconflow.com/v1/chat/completions" \
 EXP_BRAIN_KEY="YOUR_BRAIN_KEY" \
 EXP_SERVER_PORT="8082" \
 EXP_SERVER_AUTH_TOKEN="YOUR_SERVER_AUTH_TOKEN" \
+EXP_SERVER_READ_AUTH_TOKEN="YOUR_OPTIONAL_READ_TOKEN" \
 EXP_AGENTS="codex" \
 experience-engine setup
 ```
@@ -287,6 +291,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=%h/experience-engine
+ExecStartPre=/bin/bash %h/experience-engine/.experience/sync-install.sh --quiet
 ExecStart=%h/.nvm/versions/node/v22.22.2/bin/node server.js
 Restart=always
 RestartSec=5
@@ -314,6 +319,7 @@ Then use that path in the service file, for example:
 ```ini
 [Service]
 Type=simple
+ExecStartPre=/usr/local/bin/experience-engine sync-install --quiet
 ExecStart=/usr/local/bin/experience-engine server
 Restart=always
 RestartSec=5
@@ -328,7 +334,7 @@ otherwise the service can flap with `EADDRINUSE` on port `8082`.
 ```bash
 systemctl --user status experience-engine.service --no-pager
 curl http://127.0.0.1:8082/health
-curl -H "Authorization: Bearer $EXP_SERVER_AUTH_TOKEN" http://127.0.0.1:8082/api/gates
+curl -H "Authorization: Bearer ${EXP_SERVER_READ_AUTH_TOKEN:-$EXP_SERVER_AUTH_TOKEN}" http://127.0.0.1:8082/api/gates
 bash ~/.experience/health-check.sh --json
 ```
 
@@ -394,6 +400,7 @@ npm package flow:
 npx @muonroi/experience-engine setup-thin-client \
   --server http://your-vps:8082 \
   --token YOUR_SERVER_AUTH_TOKEN \
+  --read-token YOUR_OPTIONAL_READ_TOKEN \
   --clean
 ```
 
@@ -412,7 +419,8 @@ git clone https://github.com/muonroi/experience-engine.git
 cd experience-engine
 bash .experience/setup-thin-client.sh \
   --server http://your-vps:8082 \
-  --token YOUR_SERVER_AUTH_TOKEN
+  --token YOUR_SERVER_AUTH_TOKEN \
+  --read-token YOUR_OPTIONAL_READ_TOKEN
 ```
 
 npm package flow:
@@ -439,7 +447,7 @@ VPS brain checks:
 
 ```bash
 curl http://localhost:8082/health
-curl -H "Authorization: Bearer $EXP_SERVER_AUTH_TOKEN" http://localhost:8082/api/gates
+curl -H "Authorization: Bearer ${EXP_SERVER_READ_AUTH_TOKEN:-$EXP_SERVER_AUTH_TOKEN}" http://localhost:8082/api/gates
 bash ~/.experience/health-check.sh --json
 ```
 
@@ -721,8 +729,10 @@ node server.js
 **Endpoints:**
 
 When `server.authToken` (or `serverAuthToken`) is configured, every `POST` endpoint and every
-`GET /api/*` endpoint requires `Authorization: Bearer <token>`. `/health` remains public for
-liveness checks and local service supervision.
+`GET /api/*` endpoint requires `Authorization: Bearer <token>`. If `server.readAuthToken`
+(or `serverReadAuthToken`) is configured, read-only observability endpoints (`/api/stats`,
+`/api/gates`) also accept that token. `/health` remains public for liveness checks and local
+service supervision.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -1068,6 +1078,7 @@ That keeps VPS migration operationally simple: move the canonical brain once, th
   stop-extractor.js     — session extraction + evolution trigger (Claude + Codex)
   setup.sh              — guided setup wizard
   setup-thin-client.sh  — thin-client installer for additional workstations
+  sync-install.sh       — repo/package runtime sync into ~/.experience
   interceptor.js        — PreToolUse hook — injects experience hints before agent calls
   interceptor-post.js   — PostToolUse hook — captures tool outcomes for extraction
   interceptor-prompt.js — UserPromptSubmit hook — injects prompt-time experience context
@@ -1101,7 +1112,16 @@ tools/
 ```
 
 Default automated verification runs through `npm test`, which executes the maintained `node:test`
-suite under `.experience/`, `tests/`, and selected `tools/` coverage files.
+suite under `tests/`. CI should run the broader smoke path:
+
+```bash
+npm run test:ci
+```
+
+That keeps local iteration fast while still exercising:
+- `npm test`
+- `node --test .experience/test-health-check.js`
+- `node tools/test-server.js`
 
 ## Philosophy
 

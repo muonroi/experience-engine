@@ -34,6 +34,7 @@
     ".experience/setup.ps1",
     ".experience/setup.sh",
     ".experience/stop-extractor.js",
+    ".experience/sync-install.sh",
     "tools/exp-demote.js",
     "tools/exp-gates.js",
     "tools/exp-portable-backup.js",
@@ -56,6 +57,9 @@
   },
   "scripts": {
     "test": "node --test --test-concurrency=1 tests/*.test.js",
+    "test:health": "node --test .experience/test-health-check.js",
+    "test:server": "node tools/test-server.js",
+    "test:ci": "npm test && npm run test:health && npm run test:server",
     "pack:dry-run": "npm pack --dry-run"
   },
   "publishConfig": {
