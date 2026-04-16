@@ -136,6 +136,29 @@ experience-engine server
 experience-engine health
 ```
 
+Current recommended npm-based setup flows:
+
+```bash
+# Local/full install on the current machine
+npx @muonroi/experience-engine setup
+
+# Thin client on a laptop/WSL box that should use an existing VPS brain
+npx @muonroi/experience-engine setup-thin-client \
+  --server http://your-vps:8082 \
+  --token YOUR_SERVER_AUTH_TOKEN \
+  --clean
+```
+
+If this machine will run the canonical VPS brain long-term, global install is usually more practical:
+
+```bash
+npm install -g @muonroi/experience-engine
+experience-engine setup
+experience-engine server
+```
+
+Use the repo clone flow when you want local source code, Docker assets, tests, or direct repo maintenance.
+
 Maintainer release flow:
 
 ```bash
@@ -193,14 +216,16 @@ Thin-client startup behavior:
 Use this flow once per VPS. This machine holds the canonical brain, Qdrant-backed state, gates,
 extract/evolve jobs, and server-side activity.
 
-1. Clone the repo on the VPS:
+You can set up the VPS brain in two supported ways.
+
+Option 1: repo clone (best when you also want local source, Docker files, tests, or easy `git pull`)
 
 ```bash
 git clone https://github.com/muonroi/experience-engine.git
 cd experience-engine
 ```
 
-2. Run the main setup with VPS-local Qdrant and provider credentials:
+Then run the main setup with VPS-local Qdrant and provider credentials:
 
 ```bash
 EXP_QDRANT_URL="http://localhost:6333" \
@@ -219,10 +244,37 @@ EXP_AGENTS="codex" \
 bash .experience/setup.sh
 ```
 
+Option 2: npm package (best when you only want the installed runtime on the VPS)
+
+```bash
+npm install -g @muonroi/experience-engine
+```
+
+Then run the same setup through the packaged CLI:
+
+```bash
+EXP_QDRANT_URL="http://localhost:6333" \
+EXP_QDRANT_KEY="YOUR_QDRANT_KEY" \
+EXP_EMBED_PROVIDER="siliconflow" \
+EXP_BRAIN_PROVIDER="siliconflow" \
+EXP_EMBED_MODEL="Qwen/Qwen3-Embedding-0.6B" \
+EXP_BRAIN_MODEL="Qwen/Qwen2.5-7B-Instruct" \
+EXP_EMBED_ENDPOINT="https://api.siliconflow.com/v1/embeddings" \
+EXP_EMBED_KEY="YOUR_EMBED_KEY" \
+EXP_BRAIN_ENDPOINT="https://api.siliconflow.com/v1/chat/completions" \
+EXP_BRAIN_KEY="YOUR_BRAIN_KEY" \
+EXP_SERVER_PORT="8082" \
+EXP_SERVER_AUTH_TOKEN="YOUR_SERVER_AUTH_TOKEN" \
+EXP_AGENTS="codex" \
+experience-engine setup
+```
+
 3. Run the API as a persistent service on the VPS.
 
-Do not rely on `node server.js` in a transient shell if you want reboot-safe behavior. Use a
-user-level `systemd` service:
+Do not rely on `node server.js` or `experience-engine server` in a transient shell if you want
+reboot-safe behavior. Use a user-level `systemd` service.
+
+If you used the repo clone flow:
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -249,6 +301,23 @@ systemctl --user enable --now experience-engine.service
 
 # Important for reboot persistence on VPS:
 sudo loginctl enable-linger "$USER"
+```
+
+If you used the npm global-install flow, first discover the absolute binary path:
+
+```bash
+command -v experience-engine
+```
+
+Then use that path in the service file, for example:
+
+```ini
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/experience-engine server
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
 ```
 
 If `server.js` was already started manually, stop that manual process before starting the service,
@@ -301,15 +370,28 @@ printf '1\n' | bash .experience/setup.sh
 
 - If you later migrate to another VPS, restore with `tools/exp-portable-restore.js` and then point
   thin clients at the new server URL/token.
+- If you installed via npm instead of `git clone`, rerun `experience-engine setup` on the VPS after
+  upgrading the global package.
 
 ### Dev: Setup Existing Machine
 
 If a workstation already runs an older local/hybrid Experience Engine install, convert it into a
 true thin client:
 
+Repo clone flow:
+
 ```bash
 git pull
 bash .experience/setup-thin-client.sh \
+  --server http://your-vps:8082 \
+  --token YOUR_SERVER_AUTH_TOKEN \
+  --clean
+```
+
+npm package flow:
+
+```bash
+npx @muonroi/experience-engine setup-thin-client \
   --server http://your-vps:8082 \
   --token YOUR_SERVER_AUTH_TOKEN \
   --clean
@@ -320,12 +402,23 @@ local `activity.jsonl`, `store/`, and old markers so the machine stops behaving 
 
 ### Dev: Setup Fresh Machine
 
-On a brand-new machine, clone the repo and install only the thin-client hooks:
+On a brand-new machine, either clone the repo or use the npm package. Both install only the
+thin-client hooks and local queue/state.
+
+Repo clone flow:
 
 ```bash
 git clone https://github.com/muonroi/experience-engine.git
 cd experience-engine
 bash .experience/setup-thin-client.sh \
+  --server http://your-vps:8082 \
+  --token YOUR_SERVER_AUTH_TOKEN
+```
+
+npm package flow:
+
+```bash
+npx @muonroi/experience-engine setup-thin-client \
   --server http://your-vps:8082 \
   --token YOUR_SERVER_AUTH_TOKEN
 ```
@@ -372,12 +465,20 @@ Expected:
 #### A. Add Another Thin Client Later
 
 For every additional workstation, do not manually copy an old `~/.experience` directory. Clone the
-repo and run the thin-client installer against the same VPS:
+repo and run the thin-client installer against the same VPS, or use the npm package directly.
 
 ```bash
 git clone https://github.com/muonroi/experience-engine.git
 cd experience-engine
 bash .experience/setup-thin-client.sh \
+  --server http://your-vps:8082 \
+  --token YOUR_SERVER_AUTH_TOKEN
+```
+
+Or:
+
+```bash
+npx @muonroi/experience-engine setup-thin-client \
   --server http://your-vps:8082 \
   --token YOUR_SERVER_AUTH_TOKEN
 ```
@@ -394,11 +495,11 @@ bash .experience/setup-thin-client.sh \
 #### B. Build A New VPS And Attach Thin Clients From Scratch
 
 1. Provision the VPS and install Node.js + Qdrant.
-2. Clone the repo on the VPS.
-3. Run `setup.sh` with provider keys, Qdrant URL, and `EXP_SERVER_AUTH_TOKEN`.
+2. Either clone the repo on the VPS or install `@muonroi/experience-engine` globally.
+3. Run `setup.sh` or `experience-engine setup` with provider keys, Qdrant URL, and `EXP_SERVER_AUTH_TOKEN`.
 4. Install and enable `experience-engine.service`.
 5. Verify `/health`, `/api/gates`, and `bash ~/.experience/health-check.sh --json`.
-6. On every workstation, run `setup-thin-client.sh --server ... --token ...`.
+6. On every workstation, run `setup-thin-client.sh --server ... --token ...` or `experience-engine setup-thin-client --server ... --token ...`.
 
 This gives you one canonical brain on the VPS and any number of thin clients on laptops, desktops,
 or WSL shells.
