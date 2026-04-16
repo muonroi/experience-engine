@@ -19,7 +19,9 @@ const {
   _updatePointPayload,
   recordFeedback,
   recordHit,
+  recordSurface,
   _applyHitUpdate: applyHitUpdate,
+  _applySurfaceUpdate: applySurfaceUpdate,
   _incrementIgnoreCountData: incrementIgnoreCountData,
 } = require('./experience-core.js');
 
@@ -68,11 +70,22 @@ describe('updatePointPayload', () => {
 
   it('updatePointPayload with applyHitUpdate calls updateFn with correct data shape', async () => {
     // Test the contract: applyHitUpdate mutates data correctly (independent of storage backend)
-    const data = { hitCount: 2, ignoreCount: 1, confirmedAt: [] };
+    const data = { hitCount: 2, validatedCount: 2, ignoreCount: 1, confirmedAt: [] };
     applyHitUpdate(data);
     assert.strictEqual(data.hitCount, 3, 'applyHitUpdate should increment hitCount to 3');
+    assert.strictEqual(data.validatedCount, 3, 'applyHitUpdate should increment validatedCount to 3');
     assert.strictEqual(data.ignoreCount, 0, 'applyHitUpdate should reset ignoreCount to 0');
     assert(Array.isArray(data.confirmedAt) && data.confirmedAt.length === 1, 'applyHitUpdate should append to confirmedAt');
+  });
+
+  it('applySurfaceUpdate increments surfaceCount without mutating validated hitCount', () => {
+    const data = { hitCount: 2, validatedCount: 2, surfaceCount: 4, ignoreCount: 1, confirmedAt: [] };
+    applySurfaceUpdate(data);
+    assert.strictEqual(data.surfaceCount, 5, 'applySurfaceUpdate should increment surfaceCount');
+    assert.strictEqual(data.hitCount, 2, 'applySurfaceUpdate should not increment validated hitCount');
+    assert.strictEqual(data.validatedCount, 2, 'applySurfaceUpdate should preserve validatedCount');
+    assert.strictEqual(data.ignoreCount, 1, 'applySurfaceUpdate should not reset ignoreCount');
+    assert.strictEqual(data.confirmedAt.length, 0, 'applySurfaceUpdate should not append to confirmedAt');
   });
 
   it('updatePointPayload with incrementIgnoreCountData calls updateFn with correct data shape', async () => {
@@ -100,8 +113,8 @@ describe('recordFeedback delegates to updatePointPayload', () => {
     const coll = `${TEST_COLL_PREFIX}-fb-true`;
     const idA = 'feedback-true-001';
     const idB = 'record-hit-001';
-    const initialA = { hitCount: 1, ignoreCount: 1, confirmedAt: [] };
-    const initialB = { hitCount: 1, ignoreCount: 1, confirmedAt: [] };
+    const initialA = { hitCount: 1, validatedCount: 1, ignoreCount: 1, confirmedAt: [] };
+    const initialB = { hitCount: 1, validatedCount: 1, ignoreCount: 1, confirmedAt: [] };
     writeTestStore(coll, [makeTestEntry(idA, initialA), makeTestEntry(idB, initialB)]);
 
     await recordFeedback(coll, idA, 'FOLLOWED');
@@ -114,7 +127,23 @@ describe('recordFeedback delegates to updatePointPayload', () => {
     const dataB = JSON.parse(entryB.payload.json);
 
     assert.strictEqual(dataA.hitCount, dataB.hitCount, 'hitCount should match recordHit result');
+    assert.strictEqual(dataA.validatedCount, dataB.validatedCount, 'validatedCount should match recordHit result');
     assert.strictEqual(dataA.ignoreCount, dataB.ignoreCount, 'ignoreCount should match recordHit result');
+  });
+
+  it('recordSurface tracks surfacing without incrementing validated hitCount', async () => {
+    const coll = `${TEST_COLL_PREFIX}-surface`;
+    const id = 'record-surface-001';
+    writeTestStore(coll, [makeTestEntry(id, { hitCount: 2, validatedCount: 2, surfaceCount: 1, ignoreCount: 0, confirmedAt: [] })]);
+
+    await recordSurface(coll, id);
+
+    const entries = readTestStore(coll);
+    const entry = entries.find(e => e.id === id);
+    const data = JSON.parse(entry.payload.json);
+    assert.strictEqual(data.surfaceCount, 2, 'surfaceCount should increment');
+    assert.strictEqual(data.hitCount, 2, 'hitCount should stay tied to validated usage only');
+    assert.strictEqual(data.validatedCount, 2, 'validatedCount should not change on surfacing');
   });
 
   it('recordFeedback(coll, id, "IGNORED") should behave same as incrementIgnoreCount (increments ignoreCount)', async () => {

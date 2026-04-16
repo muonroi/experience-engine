@@ -420,6 +420,15 @@ async function reconcilePendingHints(surfacedPoints, toolName, toolInput, meta =
 
     const assessment = assessHintUsage(pending, toolName, toolInput, meta);
     if (assessment.touched) {
+      await updatePointPayload(pending.collection, pending.id, applyHitUpdate);
+      activityLog({
+        op: 'implicit-touch',
+        collection: pending.collection,
+        pointId: shortPointId(pending.id),
+        reason: assessment.reason,
+        tool: toolName,
+        ...normalizeSourceMeta(meta),
+      });
       delete track.pending[key];
       results.touched.push({ collection: pending.collection, id: pending.id, reason: assessment.reason });
       continue;
@@ -689,8 +698,11 @@ function isAbsolutePath(p) {
 function extractProjectSlug(filePath) {
   if (!filePath) return null;
   const normalized = filePath.replace(/\\/g, '/');
-  // Match: /sources/{org}/{project}/ or /repos/{project}/ or /projects/{project}/
+  // Match common repo-workspace layouts first so Windows/WSL paths map to the same slug.
   const patterns = [
+    /^[a-z]:\/personal\/core\/([^/]+)/i,
+    /\/mnt\/[a-z]\/personal\/core\/([^/]+)/i,
+    /^[a-z]:\/sources\/[^/]+\/([^/]+)/i,
     /\/sources\/[^/]+\/([^/]+)/i,
     /\/repos\/([^/]+)/i,
     /\/projects\/([^/]+)/i,
@@ -701,6 +713,8 @@ function extractProjectSlug(filePath) {
     const m = normalized.match(pat);
     if (m) return m[1].toLowerCase();
   }
+  const explicitRepo = normalized.match(/\/([^/]+)\/(?:src|tests|test|tools|docs|sdk|\.experience|bin)(?:\/|$)/i);
+  if (explicitRepo) return explicitRepo[1].toLowerCase();
   // Fallback: use first 2 meaningful path segments
   const parts = normalized.split('/').filter(p => p && p !== '.' && p !== '..');
   if (parts.length >= 2) return parts.slice(0, 2).join('/').toLowerCase();
@@ -953,7 +967,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
     } catch { return false; }
   });
   if (surfaced.length > 0) {
-    Promise.all(surfaced.map(p => recordHit(p._collection, p.id))).catch(() => {});
+    Promise.all(surfaced.map(p => recordSurface(p._collection, p.id))).catch(() => {});
   }
 
   // Track suggestions: session dedup + ignore detection (NOISE-04, P4)
@@ -1637,7 +1651,7 @@ function buildStorePayload(id, qa, domain, projectSlug) {
     reasoning: qa.reasoning || [], solution: qa.solution,
     why: qa.why || null,    // v2: root cause / incident motivation
     scope: qa.scope || null, // v2: {lang, repos, filePattern} — hard filter gate
-    confidence: 0.5, hitCount: 0, tier: 2,
+    confidence: 0.5, hitCount: 0, validatedCount: 0, surfaceCount: 0, signalVersion: 2, tier: 2,
     lastHitAt: null, ignoreCount: 0, unusedCount: 0,
     confirmedAt: [],  // Phase 108: temporal trace
     domain: domain || null,
@@ -1926,15 +1940,41 @@ function applyBudget(lines, maxChars) {
   return result;
 }
 
+function getValidatedHitCount(data) {
+  if (!data || typeof data !== 'object') return 0;
+  if (typeof data.validatedCount === 'number') return data.validatedCount;
+  // Legacy entries used hitCount as "surfaced count". Do not treat that as validated signal.
+  return 0;
+}
+
+function ensureSignalMetrics(data) {
+  if (!data || typeof data !== 'object') return data;
+  if (typeof data.surfaceCount !== 'number') {
+    data.surfaceCount = (data.signalVersion || 0) >= 2 ? 0 : (data.hitCount || 0);
+  }
+  if (typeof data.validatedCount !== 'number') data.validatedCount = 0;
+  if (!Array.isArray(data.confirmedAt)) data.confirmedAt = [];
+  data.signalVersion = 2;
+  return data;
+}
+
+function applySurfaceUpdate(data) {
+  ensureSignalMetrics(data);
+  data.surfaceCount = (data.surfaceCount || 0) + 1;
+  data.lastSurfacedAt = new Date().toISOString();
+  return data;
+}
+
 // --- recordHit: increment hitCount on experience entries ---
 
 function applyHitUpdate(data) {
-  data.hitCount = (data.hitCount || 0) + 1;
+  ensureSignalMetrics(data);
+  data.validatedCount = (data.validatedCount || 0) + 1;
+  data.hitCount = data.validatedCount;
   data.lastHitAt = new Date().toISOString();
   data.ignoreCount = 0;
   data.unusedCount = 0;
   // Phase 108: temporal trace — append to confirmedAt (cap at 50)
-  if (!Array.isArray(data.confirmedAt)) data.confirmedAt = [];
   data.confirmedAt.push(data.lastHitAt);
   if (data.confirmedAt.length > 50) data.confirmedAt = data.confirmedAt.slice(-50);
   return data;
@@ -1942,6 +1982,10 @@ function applyHitUpdate(data) {
 
 async function recordHit(collection, pointId) {
   await updatePointPayload(collection, pointId, applyHitUpdate);
+}
+
+async function recordSurface(collection, pointId) {
+  await updatePointPayload(collection, pointId, applySurfaceUpdate);
 }
 
 // --- recordFeedback: explicit agent feedback on surfaced suggestions ---
@@ -2048,9 +2092,25 @@ const BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD = 20;
 const BEHAVIORAL_TO_PRINCIPLE_MIN_CONFIDENCE = 0.9;
 const BEHAVIORAL_TO_PRINCIPLE_MIN_AGE_MS = 5 * 24 * 60 * 60 * 1000;
 
+function resetPromotionProbation(data, tier) {
+  ensureSignalMetrics(data);
+  data.tier = tier;
+  data.ignoreCount = 0;
+  data.irrelevantCount = 0;
+  data.unusedCount = 0;
+  data.lastNoiseReason = null;
+  data.noiseReasonCounts = {};
+  if (tier === 1) data.confidence = Math.max(data.confidence || 0.5, 0.6);
+  if (tier === 0) data.confidence = Math.max(data.confidence || 0.5, 0.9);
+  delete data.demotedAt;
+  delete data.demoteReason;
+  delete data.demotedFromT0At;
+  return data;
+}
+
 function shouldPromoteBehavioralToPrinciple(data, now = Date.now()) {
   if (!data || data.createdFrom === 'evolution-abstraction') return false;
-  if ((data.hitCount || 0) < BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD) return false;
+  if (getValidatedHitCount(data) < BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD) return false;
   if ((data.confidence || 0) < BEHAVIORAL_TO_PRINCIPLE_MIN_CONFIDENCE) return false;
   const createdAt = new Date(data.createdAt || 0).getTime();
   if (!createdAt || Number.isNaN(createdAt)) return false;
@@ -2083,11 +2143,11 @@ async function evolve(trigger) {
       activityLog({ op: 'evolve-low-quality-cleanup', id: entry.id.slice(0, 8), reason: quality.reason });
       continue;
     }
-    if (!data || (data.hitCount || 0) < 3) continue;
+    if (!data || getValidatedHitCount(data) < 3) continue;
     // Wave 1: Minimum 7-day age before promotion — prevent rapid-fire poisoning
     const ageMs = Date.now() - new Date(data.createdAt || 0).getTime();
     if (ageMs < 7 * 24 * 60 * 60 * 1000) continue;
-    data.tier = 1;
+    resetPromotionProbation(data, 1);
     data.promotedAt = new Date().toISOString();
     const vector = entry.vector || await getEmbedding(`${data.trigger} ${data.solution}`);
     if (!vector) continue;
@@ -2102,10 +2162,10 @@ async function evolve(trigger) {
   for (const entry of t1PrincipleEntries) {
     const data = parsePayload(entry);
     if (!data) continue;
-    const promoteProbationary = data.createdFrom === 'evolution-abstraction' && (data.hitCount || 0) >= 3;
+    const promoteProbationary = data.createdFrom === 'evolution-abstraction' && getValidatedHitCount(data) >= 3;
     const promoteMatureBehavioral = shouldPromoteBehavioralToPrinciple(data);
     if (!promoteProbationary && !promoteMatureBehavioral) continue;
-    data.tier = 0;
+    resetPromotionProbation(data, 0);
     data.principle = buildPrincipleText(data);
     data.promotedToT0At = new Date().toISOString();
     if (promoteMatureBehavioral) data.promotedFromBehavioralAt = new Date().toISOString();
@@ -2659,10 +2719,11 @@ function resolveTierModel(tier, runtime) {
  */
 async function storeRouteDecision(taskText, taskHash, tier, model, runtime, context, vector) {
   const id = require('crypto').randomUUID();
+  const projectSlug = context?.projectSlug || extractProjectSlug(context?.files?.[0] || '') || null;
   const routeData = {
     id, taskHash, taskSummary: taskText.slice(0, 200), tier, model, runtime: runtime || null,
     source: 'brain', outcome: null, retryCount: 0, duration: null,
-    domain: context?.domain || null, projectSlug: context?.phase || null,
+    domain: context?.domain || null, projectSlug,
     createdAt: new Date().toISOString(), feedbackAt: null,
   };
 
@@ -2832,15 +2893,19 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
   // Qdrant: scroll and update (always try, not just when FileStore misses)
   if (await checkQdrant()) {
     try {
-      const scrollRes = await fetch(`${getQdrantBase()}/collections/${ROUTES_COLLECTION}/points/scroll`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
-        body: JSON.stringify({ limit: 100, with_payload: true, filter: { must: [buildQdrantUserFilter()] } }),
-        signal: AbortSignal.timeout(5000),
-      });
-      if (scrollRes.ok) {
-        const points = (await scrollRes.json()).result?.points || [];
-        if (points.length === 100) activityLog({ op: 'route-feedback-warn', msg: 'scroll hit 100 limit, may miss entries' });
+      let offset = null;
+      do {
+        const body = { limit: 100, with_payload: true, filter: { must: [buildQdrantUserFilter()] } };
+        if (offset) body.offset = offset;
+        const scrollRes = await fetch(`${getQdrantBase()}/collections/${ROUTES_COLLECTION}/points/scroll`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!scrollRes.ok) break;
+        const scrollBody = await scrollRes.json();
+        const points = scrollBody.result?.points || [];
         for (const point of points) {
           const data = (() => { try { return JSON.parse(point.payload?.json || '{}'); } catch { return {}; } })();
           if (data.taskHash === taskHash) {
@@ -2855,7 +2920,8 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
             break;
           }
         }
-      }
+        offset = found ? null : (scrollBody.result?.next_page_offset || null);
+      } while (offset && !found);
     } catch { /* Qdrant scroll failed */ }
   }
 
@@ -2865,4 +2931,4 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
 
 // --- Exports ---
 
-module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _reconcilePendingHints: reconcilePendingHints, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _isRouterEnabled: isRouterEnabled, _assessExtractedQaQuality: assessExtractedQaQuality, _normalizeExtractText: normalizeExtractText, _detectMistakes: detectMistakes, _shouldPromoteBehavioralToPrinciple: shouldPromoteBehavioralToPrinciple, _buildPrincipleText: buildPrincipleText };
+module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, recordSurface, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _applySurfaceUpdate: applySurfaceUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _recordSurfaceUpdatesFields: applySurfaceUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _reconcilePendingHints: reconcilePendingHints, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _isRouterEnabled: isRouterEnabled, _assessExtractedQaQuality: assessExtractedQaQuality, _normalizeExtractText: normalizeExtractText, _detectMistakes: detectMistakes, _shouldPromoteBehavioralToPrinciple: shouldPromoteBehavioralToPrinciple, _buildPrincipleText: buildPrincipleText, _getValidatedHitCount: getValidatedHitCount };
