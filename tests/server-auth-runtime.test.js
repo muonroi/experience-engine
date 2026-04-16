@@ -14,6 +14,8 @@ const REPO_ROOT = path.join(__dirname, '..');
 function createTempHome(config) {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'exp-server-auth-'));
   fs.mkdirSync(path.join(homeDir, '.experience'), { recursive: true });
+  fs.mkdirSync(path.join(homeDir, '.experience', 'store'), { recursive: true });
+  fs.mkdirSync(path.join(homeDir, '.experience', 'tmp'), { recursive: true });
   fs.writeFileSync(
     path.join(homeDir, '.experience', 'config.json'),
     JSON.stringify(config, null, 2)
@@ -118,6 +120,37 @@ test('server resolves runtime helpers from the repo .experience directory', () =
   assert.equal(serverModule.RUNTIME_DIR, path.join(REPO_ROOT, '.experience'));
   assert.equal(serverModule.isProtectedGetPath('/health'), false);
   assert.equal(serverModule.isProtectedGetPath('/api/stats'), true);
+  assert.equal(serverModule.isReadOnlyApiPath('/api/stats'), true);
+  assert.equal(serverModule.isReadOnlyApiPath('/api/user'), false);
   const core = serverModule.loadExperienceCore();
   assert.equal(typeof core.intercept, 'function');
+});
+
+test('read auth token only unlocks observability endpoints', async () => {
+  const token = 'test-server-token';
+  const readToken = 'test-read-token';
+  const runtime = await startServer({
+    server: { authToken: token, readAuthToken: readToken },
+    serverAuthToken: token,
+    serverReadAuthToken: readToken,
+  });
+
+  try {
+    const statsRead = await fetch(`${runtime.baseUrl}/api/stats`, {
+      headers: { Authorization: `Bearer ${readToken}` },
+    });
+    assert.equal(statsRead.status, 200);
+
+    const userRead = await fetch(`${runtime.baseUrl}/api/user`, {
+      headers: { Authorization: `Bearer ${readToken}` },
+    });
+    assert.equal(userRead.status, 401);
+
+    const timelineRead = await fetch(`${runtime.baseUrl}/api/timeline?topic=test`, {
+      headers: { Authorization: `Bearer ${readToken}` },
+    });
+    assert.equal(timelineRead.status, 401);
+  } finally {
+    await runtime.stop();
+  }
 });

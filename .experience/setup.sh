@@ -131,6 +131,8 @@ Non-interactive mode (CI/scripts):
     EXP_BRAIN_ENDPOINT   custom brain endpoint URL (for siliconflow/custom)
     EXP_BRAIN_PROXY      Optional proxy URL for brain API calls (firewall bypass)
                          Example: EXP_BRAIN_PROXY=http://your-vps:8082/api/brain
+    EXP_SERVER_READ_AUTH_TOKEN
+                         Optional read-only bearer token for /api/stats and /api/gates
     EXP_TUNNEL_SSH       SSH tunnel command for VPS Qdrant (optional)
                          Example: EXP_TUNNEL_SSH="ssh -i ~/.ssh/key -f -N -L 6333:localhost:6333 user@host"
     EXP_OLLAMA_URL       Ollama URL (default: http://localhost:11434)
@@ -981,7 +983,7 @@ if ! cp "$SRC_DIR/experience-core.js" "$INSTALL_DIR/experience-core.js"; then
 fi
 
 # Copy hook/runtime helpers from source
-for f in interceptor.js stop-extractor.js interceptor-post.js interceptor-prompt.js judge-worker.js remote-client.js extract-compact.js exp-client-drain.js activity-watch.js health-check.sh exp-watch exp-feedback exp-feedback.js exp-open-pane exp-pane-right exp-pane-left exp-pane-bottom exp-bootstrap.sh exp-health-last exp-shell-init.sh; do
+for f in interceptor.js stop-extractor.js interceptor-post.js interceptor-prompt.js judge-worker.js remote-client.js extract-compact.js exp-client-drain.js activity-watch.js health-check.sh exp-watch exp-feedback exp-feedback.js exp-open-pane exp-pane-right exp-pane-left exp-pane-bottom exp-bootstrap.sh exp-health-last exp-shell-init.sh sync-install.sh; do
   if [ -f "$SRC_DIR/$f" ]; then
     cp "$SRC_DIR/$f" "$INSTALL_DIR/$f"
   fi
@@ -995,7 +997,7 @@ for f in exp-server-maintain.js exp-portable-backup.js exp-portable-restore.js; 
   fi
 done
 
-chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js" "$INSTALL_DIR/interceptor-post.js" "$INSTALL_DIR/interceptor-prompt.js" "$INSTALL_DIR/judge-worker.js" "$INSTALL_DIR/remote-client.js" "$INSTALL_DIR/extract-compact.js" "$INSTALL_DIR/exp-client-drain.js" "$INSTALL_DIR/activity-watch.js" "$INSTALL_DIR/health-check.sh" "$INSTALL_DIR/exp-server-maintain.js" "$INSTALL_DIR/exp-portable-backup.js" "$INSTALL_DIR/exp-portable-restore.js" "$INSTALL_DIR/exp-watch" "$INSTALL_DIR/exp-feedback" "$INSTALL_DIR/exp-feedback.js" "$INSTALL_DIR/exp-open-pane" "$INSTALL_DIR/exp-pane-right" "$INSTALL_DIR/exp-pane-left" "$INSTALL_DIR/exp-pane-bottom" "$INSTALL_DIR/exp-bootstrap.sh" "$INSTALL_DIR/exp-health-last" "$INSTALL_DIR/exp-shell-init.sh" 2>/dev/null
+chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js" "$INSTALL_DIR/interceptor-post.js" "$INSTALL_DIR/interceptor-prompt.js" "$INSTALL_DIR/judge-worker.js" "$INSTALL_DIR/remote-client.js" "$INSTALL_DIR/extract-compact.js" "$INSTALL_DIR/exp-client-drain.js" "$INSTALL_DIR/activity-watch.js" "$INSTALL_DIR/health-check.sh" "$INSTALL_DIR/exp-server-maintain.js" "$INSTALL_DIR/exp-portable-backup.js" "$INSTALL_DIR/exp-portable-restore.js" "$INSTALL_DIR/exp-watch" "$INSTALL_DIR/exp-feedback" "$INSTALL_DIR/exp-feedback.js" "$INSTALL_DIR/exp-open-pane" "$INSTALL_DIR/exp-pane-right" "$INSTALL_DIR/exp-pane-left" "$INSTALL_DIR/exp-pane-bottom" "$INSTALL_DIR/exp-bootstrap.sh" "$INSTALL_DIR/exp-health-last" "$INSTALL_DIR/exp-shell-init.sh" "$INSTALL_DIR/sync-install.sh" 2>/dev/null
 
 mkdir -p "$HOME/.local/bin"
 ln -sf "$INSTALL_DIR/exp-watch" "$HOME/.local/bin/exp-watch"
@@ -1031,7 +1033,8 @@ const cfg = {
   brainProxyUrl:  '${BRAIN_PROXY_URL:-}',
   serverBaseUrl:  '${EXP_SERVER_BASE_URL:-}',
   serverAuthToken:'${EXP_SERVER_AUTH_TOKEN:-}',
-  server:         { authToken: '${EXP_SERVER_AUTH_TOKEN:-}' },
+  serverReadAuthToken:'${EXP_SERVER_READ_AUTH_TOKEN:-}',
+  server:         { authToken: '${EXP_SERVER_AUTH_TOKEN:-}', readAuthToken: '${EXP_SERVER_READ_AUTH_TOKEN:-}' },
   serverTimeoutMs: 5000,
   embedDim:       $EMBED_DIM,
   ollamaUrl:      '$OLLAMA_URL',
@@ -2093,6 +2096,7 @@ if [ -n "$REMOTE_HOST" ]; then
     "$INSTALL_DIR/exp-pane-right"
     "$INSTALL_DIR/exp-pane-left"
     "$INSTALL_DIR/exp-pane-bottom"
+    "$INSTALL_DIR/sync-install.sh"
   )
   [ -z "$SKIP_REMOTE_CONFIG" ] && REMOTE_FILES+=("$INSTALL_DIR/config.json")
 

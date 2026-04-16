@@ -7,6 +7,7 @@ ROOT_DIR="$(cd "$SRC_DIR/.." && pwd)"
 
 SERVER_URL=""
 SERVER_TOKEN=""
+SERVER_READ_TOKEN=""
 CLEAN_MODE=false
 
 while [ $# -gt 0 ]; do
@@ -19,6 +20,10 @@ while [ $# -gt 0 ]; do
       SERVER_TOKEN="${2:-}"
       shift 2
       ;;
+    --read-token)
+      SERVER_READ_TOKEN="${2:-}"
+      shift 2
+      ;;
     --clean)
       CLEAN_MODE=true
       shift
@@ -26,11 +31,12 @@ while [ $# -gt 0 ]; do
     --help|-h)
       cat <<'EOF'
 Usage:
-  bash .experience/setup-thin-client.sh --server http://your-vps:8082 [--token TOKEN] [--clean]
+  bash .experience/setup-thin-client.sh --server http://your-vps:8082 [--token TOKEN] [--read-token TOKEN] [--clean]
 
 Options:
   --server   Required. Experience Engine VPS base URL.
   --token    Optional. Bearer token used by POST endpoints.
+  --read-token Optional. Read-only token for /api/stats and /api/gates.
   --clean    Backup and remove old local brain state so this machine becomes a true thin client.
 EOF
       exit 0
@@ -56,7 +62,7 @@ ensure_line_in_file() {
   grep -Fqx "$line" "$file" 2>/dev/null || printf '\n%s\n' "$line" >> "$file"
 }
 
-for f in interceptor.js interceptor-post.js interceptor-prompt.js stop-extractor.js remote-client.js extract-compact.js exp-client-drain.js health-check.sh exp-feedback.js exp-feedback exp-bootstrap.sh exp-health-last exp-shell-init.sh; do
+for f in interceptor.js interceptor-post.js interceptor-prompt.js stop-extractor.js remote-client.js extract-compact.js exp-client-drain.js health-check.sh exp-feedback.js exp-feedback exp-bootstrap.sh exp-health-last exp-shell-init.sh sync-install.sh; do
   cp "$SRC_DIR/$f" "$INSTALL_DIR/$f"
 done
 
@@ -78,6 +84,7 @@ chmod +x \
   "$INSTALL_DIR/exp-bootstrap.sh" \
   "$INSTALL_DIR/exp-health-last" \
   "$INSTALL_DIR/exp-shell-init.sh" \
+  "$INSTALL_DIR/sync-install.sh" \
   "$INSTALL_DIR/exp-server-maintain.js" \
   "$INSTALL_DIR/exp-portable-backup.js" \
   "$INSTALL_DIR/exp-portable-restore.js"
@@ -106,6 +113,7 @@ cat > "$INSTALL_DIR/config.json" <<EOF
 {
   "serverBaseUrl": "${SERVER_URL%/}",
   "serverAuthToken": "${SERVER_TOKEN}",
+  "serverReadAuthToken": "${SERVER_READ_TOKEN}",
   "serverTimeoutMs": 5000,
   "serverExtractTimeoutMs": 60000,
   "version": "thin-client",
