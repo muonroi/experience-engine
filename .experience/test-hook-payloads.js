@@ -91,7 +91,7 @@ test('local PreToolUse emits valid JSON payload and suppresses stray stdout', { 
     hook_event_name: 'PreToolUse',
     session_id: 'sess-local-pre',
     tool_name: 'Bash',
-    tool_input: { command: 'rg quick-codex .' },
+    tool_input: { command: 'dotnet test' },
     cwd: '/repo/experience-engine',
   });
 
@@ -102,6 +102,29 @@ test('local PreToolUse emits valid JSON payload and suppresses stray stdout', { 
   assert.match(payload.systemMessage || '', /\[Model Route\] tier=balanced/);
   assert.doesNotMatch(result.stdout, /\[Model Router\] ->/);
   assert.doesNotMatch(result.stdout, /noisy console log/);
+});
+
+test('local PreToolUse fast-skips PowerShell read-only commands with valid allow payload', { skip: CHILD_BLOCKED ? 'sandbox blocks child node processes' : false }, () => {
+  const homeDir = makeTempHome();
+  copyRuntime(homeDir, ['interceptor.js']);
+  writeExperienceCore(homeDir, `module.exports = {
+  interceptWithMeta: async () => {
+    throw new Error('read-only commands should not invoke intercept');
+  },
+  _activityLog: () => {},
+};`);
+
+  const result = runHook(homeDir, 'interceptor.js', {
+    hook_event_name: 'PreToolUse',
+    session_id: 'sess-local-pre-readonly',
+    tool_name: 'Bash',
+    tool_input: { command: 'Get-Content .quick-codex-flow\\\\quick-codex-subagents-design.md -TotalCount 220' },
+    cwd: '/repo/experience-engine',
+  });
+
+  assert.equal(result.status, 0);
+  assert.equal(result.stderr, '');
+  assert.equal(result.stdout, '');
 });
 
 test('local UserPromptSubmit emits valid JSON payload and suppresses stray stdout', { skip: CHILD_BLOCKED ? 'sandbox blocks child node processes' : false }, () => {
