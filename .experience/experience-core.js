@@ -96,8 +96,14 @@ function getModelTiers() {
   return getConfig().modelTiers || {
     claude:   { fast: 'claude-haiku-4-5',  balanced: 'claude-sonnet-4-6', premium: 'claude-opus-4-6' },
     gemini:   { fast: 'gemini-3-flash',    balanced: 'gemini-3-pro',      premium: 'gemini-3.1-pro' },
-    codex:    { fast: 'o4-mini',           balanced: 'gpt-5.2',           premium: 'gpt-5.4' },
+    codex:    { fast: 'gpt-5.4-mini',      balanced: 'gpt-5.2',           premium: 'gpt-5.4' },
     opencode: { fast: 'claude-haiku-4-5',  balanced: 'claude-sonnet-4-6', premium: 'claude-opus-4-6' },
+  };
+}
+
+function getReasoningEffortTiers() {
+  return getConfig().reasoningEffortTiers || {
+    codex: { fast: 'low', balanced: 'medium', premium: 'high' },
   };
 }
 
@@ -2543,6 +2549,40 @@ premium = complex, requires deep reasoning (multi-file architecture, race condit
 
 Task: "{TASK}"`;
 
+const TASK_ROUTE_PROMPT = `You are routing a coding task for a thin wrapper in front of Codex CLI.
+
+Choose the safest workflow route:
+- qc-flow = broad, ambiguous, multi-step, needs clarify/research/planning first
+- qc-lock = narrow, execution-focused, scope is already tight enough to lock
+- direct = read-only explanation or lightweight analysis; no workflow state needed yet
+
+If the user's intent is still ambiguous, do NOT guess. Instead set needs_disambiguation=true, route=null, and return 3-4 concrete options plus one free-text option.
+
+Return STRICT JSON only:
+{
+  "route": "qc-flow" | "qc-lock" | "direct" | null,
+  "confidence": 0.0,
+  "needs_disambiguation": false,
+  "reason": "short rationale",
+  "options": [
+    { "id": "plan-research", "label": "Plan and research first", "route": "qc-flow", "description": "..." },
+    { "id": "implement-now", "label": "Implement a narrow change", "route": "qc-lock", "description": "..." },
+    { "id": "explain-only", "label": "Explain or analyze", "route": "direct", "description": "..." },
+    { "id": "free-text", "label": "Enter a different task", "route": "free-text", "description": "..." }
+  ]
+}
+
+Rules:
+- prefer qc-flow when repo facts, boundaries, verification, or planning are still unclear
+- prefer qc-lock only when the request is already narrow enough for strict execution
+- prefer direct only for explanation/analysis requests
+- if an active run probably matches, you may include an option with route "continue-active-run"
+- confidence should be between 0 and 1
+- no markdown, no prose outside the JSON
+
+Task: "{TASK}"
+Context: {CONTEXT_JSON}`;
+
 // Keywords that hint at complexity level — used as a cheap pre-filter before brain call.
 // If files context contains these extensions/patterns, we can short-circuit.
 const COMPLEXITY_KEYWORDS = {
@@ -2706,11 +2746,126 @@ function normalizeTierResponse(raw) {
   return null;
 }
 
+function normalizeTaskRoute(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'qc-flow' || normalized === 'flow') return 'qc-flow';
+  if (normalized === 'qc-lock' || normalized === 'lock' || normalized === 'quick') return 'qc-lock';
+  if (normalized === 'direct') return 'direct';
+  if (normalized === 'continue-active-run' || normalized === 'continue') return 'continue-active-run';
+  if (normalized === 'free-text') return 'free-text';
+  return null;
+}
+
+function parseJsonObjectFromText(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  const directStart = trimmed.indexOf('{');
+  const directEnd = trimmed.lastIndexOf('}');
+  if (directStart !== -1 && directEnd > directStart) {
+    try {
+      return JSON.parse(trimmed.slice(directStart, directEnd + 1));
+    } catch { /* keep trying */ }
+  }
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) {
+    try {
+      return JSON.parse(fenced[1]);
+    } catch { /* ignore */ }
+  }
+  return null;
+}
+
+function defaultTaskRouteOptions(context) {
+  const options = [
+    {
+      id: 'plan-research',
+      label: 'Plan and research first',
+      route: 'qc-flow',
+      description: 'Clarify the goal, inspect the repo, and plan before coding.'
+    },
+    {
+      id: 'implement-now',
+      label: 'Implement a narrow change',
+      route: 'qc-lock',
+      description: 'Treat the task as a tight execution change with explicit verification.'
+    },
+    {
+      id: 'explain-only',
+      label: 'Explain or analyze',
+      route: 'direct',
+      description: 'Answer directly without opening workflow state unless scope expands.'
+    }
+  ];
+  if (context?.activeRunCandidate?.run || context?.activeRun?.run) {
+    options.push({
+      id: 'continue-active-run',
+      label: 'Continue the active run',
+      route: 'continue-active-run',
+      description: 'Resume the current artifact instead of starting a fresh route.'
+    });
+  }
+  options.push({
+    id: 'free-text',
+    label: 'Enter a different task',
+    route: 'free-text',
+    description: 'Type a clearer or more specific task if none of the options fit.'
+  });
+  return options;
+}
+
+function normalizeTaskRoutePayload(rawPayload, context) {
+  const parsed = typeof rawPayload === 'string' ? parseJsonObjectFromText(rawPayload) : rawPayload;
+  if (!parsed || typeof parsed !== 'object') return null;
+  const route = normalizeTaskRoute(parsed.route);
+  const needsDisambiguation = parsed.needs_disambiguation === true || parsed.needsDisambiguation === true;
+  const confidenceNumber = Number(parsed.confidence);
+  const confidence = Number.isFinite(confidenceNumber)
+    ? Math.max(0, Math.min(1, confidenceNumber))
+    : (needsDisambiguation ? 0.4 : 0.6);
+  const options = Array.isArray(parsed.options) && parsed.options.length > 0
+    ? parsed.options.map((option, index) => ({
+        id: option.id || `option-${index + 1}`,
+        label: option.label || `Option ${index + 1}`,
+        route: normalizeTaskRoute(option.route),
+        description: option.description || option.reason || ''
+      }))
+    : defaultTaskRouteOptions(context);
+  return {
+    route,
+    confidence,
+    needs_disambiguation: needsDisambiguation,
+    reason: String(parsed.reason || '').trim() || (needsDisambiguation
+      ? 'The task is ambiguous enough that the wrapper should ask the user to choose the safest route.'
+      : 'Brain task routing returned a normalized route verdict.'),
+    options
+  };
+}
+
+function buildTaskRoutePrompt(taskText, context) {
+  const contextJson = JSON.stringify({
+    projectSlug: context?.projectSlug || null,
+    localRoute: context?.localRoute || null,
+    localReason: context?.localReason || null,
+    activeRun: context?.activeRun || null,
+    activeRunCandidate: context?.activeRunCandidate || null
+  });
+  return TASK_ROUTE_PROMPT
+    .replace('{TASK}', taskText.slice(0, 500))
+    .replace('{CONTEXT_JSON}', contextJson.slice(0, 1200));
+}
+
 function resolveTierModel(tier, runtime) {
   if (!runtime) return null;
   const runtimeTiers = getModelTiers()[runtime];
   if (!runtimeTiers) return null;
   return runtimeTiers[tier] || runtimeTiers.balanced || null;
+}
+
+function resolveTierReasoningEffort(tier, runtime) {
+  if (!runtime) return null;
+  const runtimeEfforts = getReasoningEffortTiers()[runtime];
+  if (!runtimeEfforts) return null;
+  return runtimeEfforts[tier] || runtimeEfforts.balanced || null;
 }
 
 /**
@@ -2752,16 +2907,17 @@ async function storeRouteDecision(taskText, taskHash, tier, model, runtime, cont
  * @param {string} task - Task description (any language)
  * @param {object|null} context - { files, domain, phase } optional context
  * @param {string|null} runtime - 'claude' | 'gemini' | 'codex' | 'opencode' | null
- * @returns {Promise<{tier, model, confidence, source, reason, taskHash}>}
+ * @returns {Promise<{tier, model, reasoningEffort, confidence, source, reason, taskHash}>}
  */
 async function routeModel(task, context, runtime) {
   const taskText = (task || '').slice(0, 500);
   if (!taskText) {
     const tier = getRouterDefaultTier();
     const model = resolveTierModel(tier, runtime);
+    const reasoningEffort = resolveTierReasoningEffort(tier, runtime);
     printRouteDecision(tier, model, 'empty task', 'default');
     activityLog({ op: 'route', task: '', tier, model, source: 'default', confidence: 0 });
-    return { tier, model, confidence: 0, source: 'default', reason: 'empty task', taskHash: null };
+    return { tier, model, reasoningEffort, confidence: 0, source: 'default', reason: 'empty task', taskHash: null };
   }
 
   const taskHash = require('crypto').createHash('sha256').update(taskText).digest('hex').slice(0, 16);
@@ -2770,6 +2926,7 @@ async function routeModel(task, context, runtime) {
   const preFilterTier = preFilterComplexity(taskText, context);
   if (preFilterTier) {
     const model = resolveTierModel(preFilterTier, runtime);
+    const reasoningEffort = resolveTierReasoningEffort(preFilterTier, runtime);
     const reason = `${preFilterTier} complexity detected`;
     printRouteDecision(preFilterTier, model, reason, 'keyword');
     activityLog({ op: 'route', task: taskText.slice(0, 100), tier: preFilterTier, model, source: 'keyword', confidence: 0.70 });
@@ -2779,7 +2936,7 @@ async function routeModel(task, context, runtime) {
       if (vector) storeRouteDecision(taskText, taskHash, preFilterTier, model, runtime, context, vector);
     }).catch(() => {});
 
-    return { tier: preFilterTier, model, confidence: 0.70, source: 'keyword', reason, taskHash };
+    return { tier: preFilterTier, model, reasoningEffort, confidence: 0.70, source: 'keyword', reason, taskHash };
   }
 
   // Layer 1: History check (semantic search)
@@ -2801,10 +2958,11 @@ async function routeModel(task, context, runtime) {
             source = 'history-upgrade';
           }
           const model = resolveTierModel(tier, runtime);
+          const reasoningEffort = resolveTierReasoningEffort(tier, runtime);
           const reason = source === 'history-upgrade'
             ? `similar task ${data.outcome === 'cancelled' ? 'was cancelled' : 'failed'} on ${data.tier || 'lower tier'}`
             : 'similar task succeeded before';
-          const result = { tier, model, confidence: bestHit.score, source, reason, taskHash };
+          const result = { tier, model, reasoningEffort, confidence: bestHit.score, source, reason, taskHash };
           printRouteDecision(tier, model, reason, source);
           activityLog({ op: 'route', task: taskText.slice(0, 100), tier, model, source, confidence: bestHit.score });
           return result;
@@ -2821,9 +2979,10 @@ async function routeModel(task, context, runtime) {
       const normalizedTier = normalizeTierResponse(brainResult);
       const tier = normalizedTier || getRouterDefaultTier();
       const model = resolveTierModel(tier, runtime);
+      const reasoningEffort = resolveTierReasoningEffort(tier, runtime);
       const confidence = normalizedTier ? 0.75 : 0.50;
       const reason = `${tier} complexity task`;
-      const result = { tier, model, confidence, source: 'brain', reason, taskHash };
+      const result = { tier, model, reasoningEffort, confidence, source: 'brain', reason, taskHash };
       printRouteDecision(tier, model, reason, 'brain');
       activityLog({ op: 'route', task: taskText.slice(0, 100), tier, model, source: 'brain', confidence });
 
@@ -2840,9 +2999,77 @@ async function routeModel(task, context, runtime) {
   // Fallback: safe default
   const fallbackTier = getRouterDefaultTier();
   const model = resolveTierModel(fallbackTier, runtime);
+  const reasoningEffort = resolveTierReasoningEffort(fallbackTier, runtime);
   printRouteDecision(fallbackTier, model, 'classification unavailable', 'default');
   activityLog({ op: 'route', task: taskText.slice(0, 100), tier: fallbackTier, model, source: 'default', confidence: 0 });
-  return { tier: fallbackTier, model, confidence: 0, source: 'default', reason: 'fallback — classification unavailable', taskHash };
+  return { tier: fallbackTier, model, reasoningEffort, confidence: 0, source: 'default', reason: 'fallback — classification unavailable', taskHash };
+}
+
+/**
+ * Route a raw task to qc-flow, qc-lock, or direct.
+ * Uses the configured brain provider for the primary classification path and
+ * returns a disambiguation verdict when user intent is still unclear.
+ *
+ * @param {string} task
+ * @param {object|null} context
+ * @param {string|null} runtime
+ * @returns {Promise<{route:string|null, confidence:number, source:string, reason:string, needs_disambiguation:boolean, options:Array, taskHash:string|null}>}
+ */
+async function routeTask(task, context, runtime) { // runtime reserved for future routing variants
+  const taskText = (task || '').slice(0, 500);
+  if (!taskText) {
+    return {
+      route: null,
+      confidence: 0,
+      source: 'default',
+      reason: 'empty task',
+      needs_disambiguation: true,
+      options: defaultTaskRouteOptions(context),
+      taskHash: null
+    };
+  }
+
+  const taskHash = require('crypto').createHash('sha256').update(taskText).digest('hex').slice(0, 16);
+  const prompt = buildTaskRoutePrompt(taskText, context || null);
+
+  try {
+    const brainResult = await callBrainWithFallback(prompt, { source: 'route-task' });
+    const normalized = normalizeTaskRoutePayload(brainResult, context || null);
+    if (normalized) {
+      activityLog({
+        op: 'route-task',
+        task: taskText.slice(0, 100),
+        route: normalized.route || null,
+        source: 'brain',
+        confidence: normalized.confidence,
+        needsDisambiguation: normalized.needs_disambiguation
+      });
+      return {
+        ...normalized,
+        source: 'brain',
+        taskHash
+      };
+    }
+  } catch { /* fall through to default */ }
+
+  const fallback = {
+    route: 'qc-flow',
+    confidence: 0,
+    source: 'default',
+    reason: 'fallback — task classification unavailable',
+    needs_disambiguation: false,
+    options: [],
+    taskHash
+  };
+  activityLog({
+    op: 'route-task',
+    task: taskText.slice(0, 100),
+    route: fallback.route,
+    source: fallback.source,
+    confidence: fallback.confidence,
+    needsDisambiguation: false
+  });
+  return fallback;
 }
 
 /**
@@ -2931,4 +3158,4 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
 
 // --- Exports ---
 
-module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, recordSurface, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _applySurfaceUpdate: applySurfaceUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _recordSurfaceUpdatesFields: applySurfaceUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _reconcilePendingHints: reconcilePendingHints, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _isRouterEnabled: isRouterEnabled, _assessExtractedQaQuality: assessExtractedQaQuality, _normalizeExtractText: normalizeExtractText, _detectMistakes: detectMistakes, _shouldPromoteBehavioralToPrinciple: shouldPromoteBehavioralToPrinciple, _buildPrincipleText: buildPrincipleText, _getValidatedHitCount: getValidatedHitCount };
+module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, recordSurface, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeTask, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _applySurfaceUpdate: applySurfaceUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _recordSurfaceUpdatesFields: applySurfaceUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _reconcilePendingHints: reconcilePendingHints, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _isRouterEnabled: isRouterEnabled, _assessExtractedQaQuality: assessExtractedQaQuality, _normalizeExtractText: normalizeExtractText, _detectMistakes: detectMistakes, _shouldPromoteBehavioralToPrinciple: shouldPromoteBehavioralToPrinciple, _buildPrincipleText: buildPrincipleText, _getValidatedHitCount: getValidatedHitCount };

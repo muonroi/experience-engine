@@ -749,6 +749,7 @@ service supervision.
 | `POST` | `/api/principles/share` | Export principle as portable JSON |
 | `POST` | `/api/principles/import` | Import shared principle |
 | `POST` | `/api/feedback` | Report suggestion verdict (`FOLLOWED`, `IGNORED`, `IRRELEVANT`) |
+| `POST` | `/api/route-task` | Intelligent wrapper task routing (`qc-flow`, `qc-lock`, `direct`, or disambiguation) |
 | `POST` | `/api/route-model` | Intelligent model tier routing |
 | `POST` | `/api/route-feedback` | Record agent outcome for routing learning |
 | `POST` | `/api/brain` | Proxy LLM brain call through server — enables local agents on firewalled machines to reach brain API | `{ prompt, timeoutMs? }` |
@@ -783,7 +784,8 @@ curl -X POST http://localhost:8082/api/route-model \
 ```json
 {
   "tier": "premium",
-  "model": "opus",
+  "model": "gpt-5.4",
+  "reasoningEffort": "high",
   "confidence": 0.85,
   "source": "brain",
   "reason": "premium complexity task"
@@ -795,7 +797,29 @@ Three layers, fastest first:
 - **Layer 1 — History** (~50ms): Semantic search of past routing decisions. Reuses successful routes, upgrades failed ones
 - **Layer 2 — Brain** (~200ms): LLM classification via SiliconFlow Qwen2.5-7B. Only called when Layer 0+1 miss
 
-Supports: `claude` (haiku/sonnet/opus), `gemini` (flash/pro), `codex` (mini/o3), `opencode`. Returns tier only when `runtime` is null.
+Supports: `claude` (haiku/sonnet/opus), `gemini` (flash/pro), `codex` (`gpt-5.4-mini` / `gpt-5.2` / `gpt-5.4` by default), `opencode`. Returns tier only when `runtime` is null.
+
+### Example: Task Router
+
+Classify wrapper workflow route before execution. The server may return a direct route verdict or ask the client to disambiguate with concrete choices.
+
+```bash
+curl -X POST http://localhost:8082/api/route-task \
+  -H "Content-Type: application/json" \
+  -d '{"task": "fix a typo in README.md", "runtime": "codex", "context": {"localRoute": "qc-lock"}}'
+```
+
+```json
+{
+  "route": "qc-lock",
+  "confidence": 0.88,
+  "source": "brain",
+  "reason": "The task is already narrow and executable.",
+  "needs_disambiguation": false,
+  "options": [],
+  "taskHash": "d0dc22f18787a180"
+}
+```
 
 ### Example: Feedback
 
