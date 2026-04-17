@@ -17,6 +17,7 @@
  *   POST /api/principles/share      — Export a principle
  *   POST /api/principles/import     — Import a principle
  *   GET  /api/user                  — Current user identity
+ *   POST /api/route-task            — Intelligent wrapper task routing
  *   POST /api/route-model           — Intelligent model tier routing
  *   POST /api/route-feedback        — Record agent outcome for routing learning
  *   POST /api/brain                 — Proxy brain LLM calls (for clients behind firewall)
@@ -468,6 +469,19 @@ async function handleRouteModel(req, res) {
   res.end(JSON.stringify(result));
 }
 
+async function handleRouteTask(req, res) {
+  const body = await readBody(req);
+  if (!body.task || typeof body.task !== 'string') return error(res, 'task is required and must be a string');
+  if (body.task.length > 2000) return error(res, 'task must be 2000 characters or less');
+  if (body.runtime !== undefined && body.runtime !== null && !KNOWN_RUNTIMES.has(body.runtime)) {
+    return error(res, `runtime must be one of: ${[...KNOWN_RUNTIMES].join(', ')}, or null`);
+  }
+  const { routeTask } = loadExperienceCore();
+  const result = await routeTask(body.task, body.context || null, body.runtime || null);
+  res.writeHead(200, { 'Content-Type': 'application/json', 'X-Route-Source': result.source || 'default', ...CORS });
+  res.end(JSON.stringify(result));
+}
+
 async function handleRouteFeedback(req, res) {
   const body = await readBody(req);
   if (!body.taskHash || typeof body.taskHash !== 'string') return error(res, 'taskHash is required');
@@ -533,6 +547,7 @@ const server = http.createServer(async (req, res) => {
       if (p === '/api/principles/share') return await handleShare(req, res);
       if (p === '/api/principles/import') return await handleImport(req, res);
       if (p === '/api/feedback') return await handleFeedback(req, res);
+      if (p === '/api/route-task') return await handleRouteTask(req, res);
       if (p === '/api/route-model') return await handleRouteModel(req, res);
       if (p === '/api/route-feedback') return await handleRouteFeedback(req, res);
       if (p === '/api/brain') return await handleBrainProxy(req, res);

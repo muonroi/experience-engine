@@ -1,0 +1,120 @@
+#!/usr/bin/env node
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const http = require('node:http');
+
+let testHome;
+let fakeServer;
+let fakePort;
+let brainResponses = [];
+
+function writeConfig(extra = {}) {
+  fs.mkdirSync(path.join(testHome, '.experience'), { recursive: true });
+  fs.writeFileSync(path.join(testHome, '.experience', 'config.json'), JSON.stringify({
+    qdrantUrl: `http://127.0.0.1:${fakePort}`,
+    qdrantKey: 'test-key',
+    user: 'default',
+    brainProvider: 'custom',
+    brainEndpoint: `http://127.0.0.1:${fakePort}/v1/chat/completions`,
+    brainKey: 'test-brain-key',
+    ...extra,
+  }, null, 2));
+}
+
+function startFakeServer() {
+  fakeServer = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (chunk) => { raw += chunk; });
+    req.on('end', () => {
+      if (req.method === 'GET' && req.url === '/collections') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ result: { collections: [] } }));
+      }
+      if (req.method === 'GET' && req.url === '/collections/experience-routes') {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ status: 'missing' }));
+      }
+      if (req.method === 'PUT' && req.url === '/collections/experience-routes') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ result: { status: 'ok' } }));
+      }
+      if (req.method === 'POST' && req.url === '/v1/chat/completions') {
+        const next = brainResponses.shift() || { route: 'qc-flow', confidence: 0.61, needs_disambiguation: false, reason: 'default fake brain', options: [] };
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          choices: [{ message: { content: JSON.stringify(next) } }],
+        }));
+      }
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'not found', path: req.url, body: raw ? JSON.parse(raw) : null }));
+    });
+  });
+
+  return new Promise((resolve) => {
+    fakeServer.listen(0, '127.0.0.1', () => {
+      fakePort = fakeServer.address().port;
+      resolve();
+    });
+  });
+}
+
+test.before(async () => {
+  testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'exp-route-task-home-'));
+  process.env.HOME = testHome;
+  process.env.USERPROFILE = testHome;
+  await startFakeServer();
+  writeConfig();
+});
+
+test.after(async () => {
+  await new Promise((resolve) => fakeServer.close(resolve));
+  fs.rmSync(testHome, { recursive: true, force: true });
+});
+
+test('routeTask returns normalized brain verdict with disambiguation options', async () => {
+  const CORE_PATH = path.join(__dirname, '..', '.experience', 'experience-core.js');
+  delete require.cache[require.resolve(CORE_PATH)];
+  const { routeTask } = require(CORE_PATH);
+
+  brainResponses.push({
+    route: null,
+    confidence: 0.32,
+    needs_disambiguation: true,
+    reason: 'The task intent is ambiguous.',
+    options: [
+      { id: 'plan-research', label: 'Plan and research first', route: 'qc-flow', description: 'Clarify and inspect before coding.' },
+      { id: 'implement-now', label: 'Implement a narrow change', route: 'qc-lock', description: 'Treat as a bounded implementation.' },
+      { id: 'explain-only', label: 'Explain or analyze', route: 'direct', description: 'Answer directly without workflow state.' },
+      { id: 'free-text', label: 'Enter a different task', route: 'free-text', description: 'Provide a clearer task.' }
+    ]
+  });
+
+  const result = await routeTask('làm phần này cho ổn nhé', {
+    localRoute: 'qc-flow',
+    localReason: 'Task is ambiguous.',
+  }, 'codex');
+
+  assert.equal(result.source, 'brain');
+  assert.equal(result.route, null);
+  assert.equal(result.needs_disambiguation, true);
+  assert.equal(result.options.length, 4);
+  assert.equal(result.options[0].route, 'qc-flow');
+  assert.equal(result.options[1].route, 'qc-lock');
+});
+
+test('routeModel uses Codex-supported fast tier model mapping', async () => {
+  const CORE_PATH = path.join(__dirname, '..', '.experience', 'experience-core.js');
+  delete require.cache[require.resolve(CORE_PATH)];
+  const { routeModel } = require(CORE_PATH);
+
+  const result = await routeModel('fix a typo in README.md', null, 'codex');
+  assert.equal(result.tier, 'fast');
+  assert.equal(result.model, 'gpt-5.4-mini');
+  assert.equal(result.reasoningEffort, 'low');
+  assert.ok(['keyword', 'history', 'history-upgrade', 'brain', 'default'].includes(result.source));
+});
