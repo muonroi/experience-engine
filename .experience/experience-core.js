@@ -1431,8 +1431,12 @@ async function callBrainWithFallback(prompt, meta = {}) {
   const primary = BRAIN_FNS[brainProvider] || BRAIN_FNS.ollama;
   const units = estimateTextUnits(prompt, 4000);
 
+  // Allow callers (e.g. route-task) to enforce tighter time budgets than the default 15s.
+  const timeoutMs = Number(meta.timeoutMs ?? 0);
+  const signal = meta.signal || (Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined);
+
   let startedAt = Date.now();
-  let result = await primary(prompt);
+  let result = await primary(prompt, { signal });
   logCostCall('brain', brainProvider, meta.source || 'general', units, {
     ok: !!result,
     phase: 'primary',
@@ -1443,7 +1447,7 @@ async function callBrainWithFallback(prompt, meta = {}) {
   activityLog({ op: 'brain-failure', provider: brainProvider, phase: 'primary' });
   if (fallbackProvider && BRAIN_FNS[fallbackProvider]) {
     startedAt = Date.now();
-    result = await BRAIN_FNS[fallbackProvider](prompt);
+    result = await BRAIN_FNS[fallbackProvider](prompt, { signal });
     logCostCall('brain', fallbackProvider, meta.source || 'general', units, {
       ok: !!result,
       phase: 'fallback',
@@ -1530,13 +1534,13 @@ async function extractQA(mistake) {
   return callBrainWithFallback(prompt, { source: 'extract' });
 }
 
-async function brainOllama(prompt) {
+async function brainOllama(prompt, opts = {}) {
   try {
     const res = await fetch(getOllamaGenerateUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: getBrainModel(), prompt, stream: false, options: { temperature: 0.3 } }),
-      signal: AbortSignal.timeout(90000),
+      signal: opts.signal || AbortSignal.timeout(90000),
     });
     if (!res.ok) return null;
     const m = (await res.json()).response?.match(/\{[\s\S]*\}/);
@@ -1544,7 +1548,7 @@ async function brainOllama(prompt) {
   } catch { return null; }
 }
 
-async function brainOpenAI(prompt) {
+async function brainOpenAI(prompt, opts = {}) {
   // Reused for any OpenAI-compatible API (OpenAI, SiliconFlow, Together, Groq, etc.)
   const endpoint = getBrainEndpoint() || 'https://api.openai.com/v1/chat/completions';
   const body = { model: getBrainModel() || 'gpt-4o-mini', messages: [{ role:'user', content: prompt }], temperature: 0.3 };
@@ -1557,7 +1561,7 @@ async function brainOpenAI(prompt) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getBrainKey()}` },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(15000),
+      signal: opts.signal || AbortSignal.timeout(15000),
     });
     if (!res.ok) return null;
     const text = (await res.json()).choices?.[0]?.message?.content || '';
@@ -1568,14 +1572,14 @@ async function brainOpenAI(prompt) {
   } catch { return null; }
 }
 
-async function brainGemini(prompt) {
+async function brainGemini(prompt, opts = {}) {
   try {
     const model = getBrainModel() || 'gemini-2.0-flash';
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${getBrainKey()}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0.3 } }),
-      signal: AbortSignal.timeout(15000),
+      signal: opts.signal || AbortSignal.timeout(15000),
     });
     if (!res.ok) return null;
     const text = (await res.json()).candidates?.[0]?.content?.parts?.[0]?.text || '{}';
@@ -1583,13 +1587,13 @@ async function brainGemini(prompt) {
   } catch { return null; }
 }
 
-async function brainClaude(prompt) {
+async function brainClaude(prompt, opts = {}) {
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': getBrainKey(), 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({ model: getBrainModel() || 'claude-haiku-4-5-20251001', max_tokens: 512, messages: [{ role:'user', content: prompt }] }),
-      signal: AbortSignal.timeout(15000),
+      signal: opts.signal || AbortSignal.timeout(15000),
     });
     if (!res.ok) return null;
     const text = (await res.json()).content?.[0]?.text || '{}';
@@ -1598,13 +1602,13 @@ async function brainClaude(prompt) {
   } catch { return null; }
 }
 
-async function brainDeepSeek(prompt) {
+async function brainDeepSeek(prompt, opts = {}) {
   try {
     const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getBrainKey()}` },
       body: JSON.stringify({ model: getBrainModel() || 'deepseek-chat', messages: [{ role:'user', content: prompt }], temperature: 0.3, response_format: { type:'json_object' } }),
-      signal: AbortSignal.timeout(15000),
+      signal: opts.signal || AbortSignal.timeout(15000),
     });
     if (!res.ok) return null;
     return JSON.parse((await res.json()).choices?.[0]?.message?.content || '{}');
@@ -2756,6 +2760,83 @@ function normalizeTaskRoute(value) {
   return null;
 }
 
+function foldClassifierText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+const TASK_ROUTE_READ_ONLY_PATTERNS = [
+  /^(what|why|how|explain|summarize|compare|review|describe)\b/i,
+  /\b(question|explanation|summary|overview|walk through)\b/i,
+  /\b(giai thich|tom tat|so sanh|mo ta|phan tich|tong quan|huong dan)\b/i,
+  /\b(la gi|tai sao|nhu the nao)\b/i,
+];
+
+const TASK_ROUTE_IMPLEMENTATION_PATTERNS = [
+  /\b(fix|debug|refactor|rename|update|add|remove|implement|wire|create|extend|replace)\b/i,
+  /\b(test|failing|error|bug|regression)\b/i,
+  /\b(sua|go loi|doi ten|cap nhat|them|xoa|trien khai|noi day|mo rong|thay the)\b/i,
+  /\b(loi|bug|kiem thu|viet test)\b/i,
+];
+
+const TASK_ROUTE_NARROW_SCOPE_PATTERNS = [
+  /\b(single|one|small|narrow|tight|focused)\b/i,
+  /\b(file|module|command|test|function|readme)\b/i,
+  /\b(tep|tep tin|tap tin|lenh|ham|tai lieu)\b/i,
+  /`[^`]+\.[a-z0-9]+`/i,
+  /\b[a-z0-9/_-]+\.(js|ts|md|json|yaml|yml)\b/i,
+];
+
+const TASK_ROUTE_BROAD_SCOPE_PATTERNS = [
+  /\b(multi-step|multi file|multi-file|across files|architecture|system design)\b/i,
+  /\b(nhieu buoc|nhieu file|qua nhieu file|kien truc|thiet ke he thong)\b/i,
+];
+
+function preFilterTaskRoute(taskText) {
+  const normalized = foldClassifierText(taskText);
+  if (!normalized) return null;
+
+  const looksReadOnly = TASK_ROUTE_READ_ONLY_PATTERNS.some(pattern => pattern.test(normalized))
+    && !TASK_ROUTE_IMPLEMENTATION_PATTERNS.some(pattern => pattern.test(normalized));
+  if (looksReadOnly) {
+    return {
+      route: 'direct',
+      confidence: 0.78,
+      source: 'keyword',
+      reason: 'The task reads like a read-only explanation or analysis request.'
+    };
+  }
+
+  const looksNarrowExecution = TASK_ROUTE_IMPLEMENTATION_PATTERNS.some(pattern => pattern.test(normalized))
+    && TASK_ROUTE_NARROW_SCOPE_PATTERNS.some(pattern => pattern.test(normalized))
+    && !TASK_ROUTE_BROAD_SCOPE_PATTERNS.some(pattern => pattern.test(normalized));
+  if (looksNarrowExecution) {
+    return {
+      route: 'qc-lock',
+      confidence: 0.82,
+      source: 'keyword',
+      reason: 'The task is a narrow execution change with concrete implementation cues.'
+    };
+  }
+
+  if (TASK_ROUTE_BROAD_SCOPE_PATTERNS.some(pattern => pattern.test(normalized))) {
+    return {
+      route: 'qc-flow',
+      confidence: 0.8,
+      source: 'keyword',
+      reason: 'The task spans broad planning or multi-file implementation scope.'
+    };
+  }
+
+  return null;
+}
+
 function parseJsonObjectFromText(raw) {
   if (!raw || typeof raw !== 'string') return null;
   const trimmed = raw.trim();
@@ -3030,10 +3111,32 @@ async function routeTask(task, context, runtime) { // runtime reserved for futur
   }
 
   const taskHash = require('crypto').createHash('sha256').update(taskText).digest('hex').slice(0, 16);
+  const preFiltered = preFilterTaskRoute(taskText);
+  if (preFiltered) {
+    activityLog({
+      op: 'route-task',
+      task: taskText.slice(0, 100),
+      route: preFiltered.route,
+      source: preFiltered.source,
+      confidence: preFiltered.confidence,
+      needsDisambiguation: false
+    });
+    return {
+      ...preFiltered,
+      needs_disambiguation: false,
+      options: [],
+      taskHash
+    };
+  }
+
   const prompt = buildTaskRoutePrompt(taskText, context || null);
 
   try {
-    const brainResult = await callBrainWithFallback(prompt, { source: 'route-task' });
+    const timeoutMs = Number(cfgValue('routeTaskBrainTimeoutMs', 'EXPERIENCE_ROUTE_TASK_BRAIN_TIMEOUT_MS', 3500));
+    const brainResult = await callBrainWithFallback(prompt, {
+      source: 'route-task',
+      timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 3500
+    });
     const normalized = normalizeTaskRoutePayload(brainResult, context || null);
     if (normalized) {
       activityLog({
