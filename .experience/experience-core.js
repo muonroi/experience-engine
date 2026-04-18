@@ -3132,10 +3132,10 @@ async function routeTask(task, context, runtime) { // runtime reserved for futur
   const prompt = buildTaskRoutePrompt(taskText, context || null);
 
   try {
-    const timeoutMs = Number(cfgValue('routeTaskBrainTimeoutMs', 'EXPERIENCE_ROUTE_TASK_BRAIN_TIMEOUT_MS', 3500));
+    const timeoutMs = Number(cfgValue('routeTaskBrainTimeoutMs', 'EXPERIENCE_ROUTE_TASK_BRAIN_TIMEOUT_MS', 6500));
     const brainResult = await callBrainWithFallback(prompt, {
       source: 'route-task',
-      timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 3500
+      timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 6500
     });
     const normalized = normalizeTaskRoutePayload(brainResult, context || null);
     if (normalized) {
