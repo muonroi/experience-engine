@@ -107,6 +107,28 @@ test('routeTask returns normalized brain verdict with disambiguation options', a
   assert.equal(result.options[1].route, 'qc-lock');
 });
 
+test('routeTask prefilters Vietnamese narrow execution requests to qc-lock without waiting for brain classification', async () => {
+  const CORE_PATH = path.join(__dirname, '..', '.experience', 'experience-core.js');
+  delete require.cache[require.resolve(CORE_PATH)];
+  const { routeTask } = require(CORE_PATH);
+
+  const result = await routeTask('sửa lỗi chính tả trong README.md', null, 'codex');
+  assert.equal(result.route, 'qc-lock');
+  assert.equal(result.source, 'keyword');
+  assert.equal(result.needs_disambiguation, false);
+});
+
+test('routeTask prefilters Vietnamese read-only questions to direct', async () => {
+  const CORE_PATH = path.join(__dirname, '..', '.experience', 'experience-core.js');
+  delete require.cache[require.resolve(CORE_PATH)];
+  const { routeTask } = require(CORE_PATH);
+
+  const result = await routeTask('giải thích kiến trúc hiện tại của wrapper', null, 'codex');
+  assert.equal(result.route, 'direct');
+  assert.equal(result.source, 'keyword');
+  assert.equal(result.needs_disambiguation, false);
+});
+
 test('routeModel uses Codex-supported fast tier model mapping', async () => {
   const CORE_PATH = path.join(__dirname, '..', '.experience', 'experience-core.js');
   delete require.cache[require.resolve(CORE_PATH)];

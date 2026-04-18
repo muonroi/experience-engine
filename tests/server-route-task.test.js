@@ -133,7 +133,7 @@ async function startServer(config) {
   };
 }
 
-test('POST /api/route-task returns a real brain-backed task route verdict', async () => {
+test('POST /api/route-task returns a real task route verdict for narrow execution requests', async () => {
   const stub = await startBrainAndQdrantStub();
   const token = 'test-server-token';
   const runtime = await startServer({
@@ -164,13 +164,13 @@ test('POST /api/route-task returns a real brain-backed task route verdict', asyn
     });
 
     assert.equal(res.status, 200);
-    assert.equal(res.headers.get('x-route-source'), 'brain');
+    assert.equal(res.headers.get('x-route-source'), 'keyword');
 
     const body = await res.json();
     assert.equal(body.route, 'qc-lock');
-    assert.equal(body.source, 'brain');
+    assert.equal(body.source, 'keyword');
     assert.equal(body.needs_disambiguation, false);
-    assert.equal(body.reason, 'The task is already narrow and executable.');
+    assert.equal(body.reason, 'The task is a narrow execution change with concrete implementation cues.');
   } finally {
     await runtime.stop();
     await stub.stop();
