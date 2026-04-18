@@ -2596,6 +2596,8 @@ const COMPLEXITY_KEYWORDS = {
     'performance regression', 'memory leak', 'heap', 'profil', 'benchmark',
   ],
   fast: [
+    // Greetings / trivial pings should never consume balanced+ tiers.
+    'hello', 'hi', 'hey', 'ping', 'test',
     'rename ', 'fix typo', 'typo in ', 'delete unused', 'update import',
     'simple config', 'add comment', 'update version', 'format code',
   ],
