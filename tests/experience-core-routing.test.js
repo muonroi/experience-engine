@@ -85,7 +85,7 @@ test('routeFeedback paginates Qdrant scroll results until it finds the matching 
   delete require.cache[require.resolve(CORE_PATH)];
   const { routeFeedback } = require(CORE_PATH);
 
-  const ok = await routeFeedback('target-hash', 'balanced', 'gpt-5.2', 'success', 0, 1200);
+  const ok = await routeFeedback('target-hash', 'balanced', 'gpt-5.4-mini', 'success', 0, 1200);
   assert.equal(ok, true, 'routeFeedback should find the task hash after page 100');
   assert.ok(scrollCalls >= 2, 'routeFeedback should fetch the next Qdrant page when the first page misses');
   assert.equal(payloadUpdates.length, 1, 'routeFeedback should update the matched route payload');
@@ -93,5 +93,5 @@ test('routeFeedback paginates Qdrant scroll results until it finds the matching 
   const updated = JSON.parse(payloadUpdates[0].payload.json);
   assert.equal(updated.outcome, 'success');
   assert.equal(updated.tier, 'balanced');
-  assert.equal(updated.model, 'gpt-5.2');
+  assert.equal(updated.model, 'gpt-5.4-mini');
 });

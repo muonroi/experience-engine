@@ -188,9 +188,7 @@ describe('Multi-runtime tier resolution', () => {
       'gpt-5.4',
       'gpt-5.4-mini',
       'gpt-5.3-codex',
-      'gpt-5.3-codex-spark',
-      'gpt-5.2',
-      'gpt-5.1-codex-mini'
+      'gpt-5.3-codex-spark'
     ].includes(r.model),
       `codex model must stay within the supported Codex CLI allowlist, got "${r.model}"`);
   });
