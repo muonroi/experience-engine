@@ -141,3 +141,40 @@ test('routeModel uses Codex-supported fast tier model mapping', async () => {
   assert.equal(result.reasoningEffort, 'medium');
   assert.equal(result.source, 'brain');
 });
+
+test('routeModel caps qc-flow clarify tasks to balanced for codex when brain overcalls premium', async () => {
+  const CORE_PATH = path.join(__dirname, '..', '.experience', 'experience-core.js');
+  delete require.cache[require.resolve(CORE_PATH)];
+  const { routeModel } = require(CORE_PATH);
+
+  brainResponses.push('premium');
+  const result = await routeModel(
+    'I have a repository called Storyflow. Please explore it and review its anti-bot feature. I also have two Strong Crawler repositories—use them as a basis for evaluation.',
+    { gate: 'clarify', domain: 'qc-flow', phase: 'P1 / W0', projectSlug: 'Core' },
+    'codex'
+  );
+
+  assert.equal(result.tier, 'balanced');
+  assert.equal(result.model, 'gpt-5.3-codex');
+  assert.equal(result.reasoningEffort, 'medium');
+  assert.equal(result.source, 'brain');
+  assert.match(result.reason, /cost cap applied/);
+});
+
+test('routeModel keeps premium for qc-flow clarify tasks when explicit premium signals exist', async () => {
+  const CORE_PATH = path.join(__dirname, '..', '.experience', 'experience-core.js');
+  delete require.cache[require.resolve(CORE_PATH)];
+  const { routeModel } = require(CORE_PATH);
+
+  brainResponses.push('premium');
+  const result = await routeModel(
+    'Perform a multi-file security audit for a breaking migration across the authentication architecture.',
+    { gate: 'clarify', domain: 'qc-flow', phase: 'P1 / W0', projectSlug: 'Core' },
+    'codex'
+  );
+
+  assert.equal(result.tier, 'premium');
+  assert.equal(result.model, 'gpt-5.4');
+  assert.equal(result.reasoningEffort, 'high');
+  assert.equal(result.source, 'brain');
+});

@@ -2577,13 +2577,18 @@ migrateQdrantUserTags().catch(() => {});
 
 // --- Model Router (route-model spec) ---
 
-const CLASSIFY_PROMPT = `Classify this coding task complexity. Reply ONLY one word: fast, balanced, or premium.
+const CLASSIFY_PROMPT = `Classify this coding task complexity for cost-aware model routing. Reply ONLY one word: fast, balanced, or premium.
+
+Choose the cheapest tier that is still safe for the current task and workflow gate.
+Do NOT upgrade to premium just because the task is broad, ambiguous, or needs qc-flow clarify/research.
+Use premium only when the task truly needs deep reasoning, architecture tradeoffs, security-sensitive analysis, complex debugging, or a breaking migration.
 
 fast = trivial, mechanical, single action (rename, format, read file, delete unused, fix typo, update import, simple config change)
 balanced = moderate, requires understanding (implement feature, write tests, refactor single file, add endpoint, update logic)
 premium = complex, requires deep reasoning (multi-file architecture, race condition, security audit, system design, complex debug, breaking migration)
 
-Task: "{TASK}"`;
+Task: "{TASK}"
+Context: {CONTEXT_JSON}`;
 
 const TASK_ROUTE_PROMPT = `You are routing a coding task for a thin wrapper in front of Codex CLI.
 
@@ -2667,6 +2672,29 @@ function preFilterComplexity(taskText, context) {
   if (architectureFiles.length >= 2) return 'premium';
 
   return null; // inconclusive — let brain decide
+}
+
+function isQcFlowFrontHalfContext(context, runtime) {
+  if (runtime !== 'codex') return false;
+  const gate = String(context?.gate || '').trim().toLowerCase();
+  const domain = String(context?.domain || '').trim().toLowerCase();
+  return domain === 'qc-flow' && (gate === 'clarify' || gate === 'research');
+}
+
+function maybeCapTierForCost(tier, taskText, context, runtime) {
+  if (tier !== 'premium') return { tier, adjusted: false, reason: null };
+  if (!isQcFlowFrontHalfContext(context, runtime)) {
+    return { tier, adjusted: false, reason: null };
+  }
+  const explicitComplexity = preFilterComplexity(taskText, context);
+  if (explicitComplexity === 'premium') {
+    return { tier, adjusted: false, reason: null };
+  }
+  return {
+    tier: 'balanced',
+    adjusted: true,
+    reason: 'qc-flow front-half cost cap applied'
+  };
 }
 
 /**
@@ -2992,6 +3020,19 @@ function resolveTierReasoningEffort(tier, runtime) {
   return reasoningEffort;
 }
 
+function buildModelRoutePrompt(taskText, context) {
+  const contextJson = JSON.stringify({
+    projectSlug: context?.projectSlug || null,
+    phase: context?.phase || null,
+    gate: context?.gate || null,
+    domain: context?.domain || null,
+    run: context?.run || null
+  });
+  return CLASSIFY_PROMPT
+    .replace('{TASK}', taskText.slice(0, 300))
+    .replace('{CONTEXT_JSON}', contextJson.slice(0, 800));
+}
+
 function shouldSkipKeywordModelPrefilter(runtime) {
   return runtime === 'codex';
 }
@@ -3103,15 +3144,19 @@ async function routeModel(task, context, runtime) {
 
   // Layer 2: Brain classify (plain text — separate from callBrainWithFallback which expects JSON)
   try {
-    const prompt = CLASSIFY_PROMPT.replace('{TASK}', taskText.slice(0, 300));
+    const prompt = buildModelRoutePrompt(taskText, context);
     const brainResult = await classifyViaBrain(prompt);
     if (brainResult) {
       const normalizedTier = normalizeTierResponse(brainResult);
-      const tier = normalizedTier || getRouterDefaultTier();
+      const rawTier = normalizedTier || getRouterDefaultTier();
+      const tierAdjustment = maybeCapTierForCost(rawTier, taskText, context, runtime);
+      const tier = tierAdjustment.tier;
       const model = resolveTierModel(tier, runtime);
       const reasoningEffort = resolveTierReasoningEffort(tier, runtime);
       const confidence = normalizedTier ? 0.75 : 0.50;
-      const reason = `${tier} complexity task`;
+      const reason = tierAdjustment.adjusted
+        ? `${rawTier} complexity task; ${tierAdjustment.reason}`
+        : `${tier} complexity task`;
       const result = { tier, model, reasoningEffort, confidence, source: 'brain', reason, taskHash };
       printRouteDecision(tier, model, reason, 'brain');
       activityLog({ op: 'route', task: taskText.slice(0, 100), tier, model, source: 'brain', confidence });
