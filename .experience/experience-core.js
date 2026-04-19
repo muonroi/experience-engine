@@ -96,15 +96,47 @@ function getModelTiers() {
   return getConfig().modelTiers || {
     claude:   { fast: 'claude-haiku-4-5',  balanced: 'claude-sonnet-4-6', premium: 'claude-opus-4-6' },
     gemini:   { fast: 'gemini-3-flash',    balanced: 'gemini-3-pro',      premium: 'gemini-3.1-pro' },
-    codex:    { fast: 'gpt-5.4-mini',      balanced: 'gpt-5.2',           premium: 'gpt-5.4' },
+    codex:    { fast: 'gpt-5.1-codex-mini', balanced: 'gpt-5.3-codex',    premium: 'gpt-5.4' },
     opencode: { fast: 'claude-haiku-4-5',  balanced: 'claude-sonnet-4-6', premium: 'claude-opus-4-6' },
   };
 }
 
 function getReasoningEffortTiers() {
   return getConfig().reasoningEffortTiers || {
-    codex: { fast: 'low', balanced: 'medium', premium: 'high' },
+    codex: { fast: 'medium', balanced: 'medium', premium: 'high' },
   };
+}
+
+const CODEX_ALLOWED_MODEL_REASONING = {
+  'gpt-5.4': new Set(['low', 'medium', 'high', 'extra_high']),
+  'gpt-5.4-mini': new Set(['low', 'medium', 'high', 'extra_high']),
+  'gpt-5.3-codex': new Set(['low', 'medium', 'high', 'extra_high']),
+  'gpt-5.3-codex-spark': new Set(['low', 'medium', 'high', 'extra_high']),
+  'gpt-5.2': new Set(['low', 'medium', 'high', 'extra_high']),
+  'gpt-5.1-codex-mini': new Set(['medium', 'high']),
+};
+
+function normalizeReasoningEffort(value) {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/-/g, '_');
+  if (!normalized) return null;
+  if (normalized === 'extrahigh') return 'extra_high';
+  return normalized;
+}
+
+function validateCodexModel(model) {
+  return Object.prototype.hasOwnProperty.call(CODEX_ALLOWED_MODEL_REASONING, model) ? model : null;
+}
+
+function validateCodexReasoning(model, reasoningEffort) {
+  const normalizedModel = validateCodexModel(model);
+  if (!normalizedModel) return null;
+  const normalizedReasoning = normalizeReasoningEffort(reasoningEffort);
+  if (!normalizedReasoning) return null;
+  return CODEX_ALLOWED_MODEL_REASONING[normalizedModel].has(normalizedReasoning) ? normalizedReasoning : null;
 }
 
 function getOllamaEmbedUrl() {
@@ -2941,14 +2973,27 @@ function resolveTierModel(tier, runtime) {
   if (!runtime) return null;
   const runtimeTiers = getModelTiers()[runtime];
   if (!runtimeTiers) return null;
-  return runtimeTiers[tier] || runtimeTiers.balanced || null;
+  const model = runtimeTiers[tier] || runtimeTiers.balanced || null;
+  if (runtime === 'codex') {
+    return validateCodexModel(model) || 'gpt-5.3-codex';
+  }
+  return model;
 }
 
 function resolveTierReasoningEffort(tier, runtime) {
   if (!runtime) return null;
   const runtimeEfforts = getReasoningEffortTiers()[runtime];
   if (!runtimeEfforts) return null;
-  return runtimeEfforts[tier] || runtimeEfforts.balanced || null;
+  const reasoningEffort = runtimeEfforts[tier] || runtimeEfforts.balanced || null;
+  if (runtime === 'codex') {
+    const model = resolveTierModel(tier, runtime);
+    return validateCodexReasoning(model, reasoningEffort) || 'medium';
+  }
+  return reasoningEffort;
+}
+
+function shouldSkipKeywordModelPrefilter(runtime) {
+  return runtime === 'codex';
 }
 
 /**
@@ -3006,7 +3051,9 @@ async function routeModel(task, context, runtime) {
   const taskHash = require('crypto').createHash('sha256').update(taskText).digest('hex').slice(0, 16);
 
   // Layer 0: Keyword pre-filter (no API call)
-  const preFilterTier = preFilterComplexity(taskText, context);
+  const preFilterTier = shouldSkipKeywordModelPrefilter(runtime)
+    ? null
+    : preFilterComplexity(taskText, context);
   if (preFilterTier) {
     const model = resolveTierModel(preFilterTier, runtime);
     const reasoningEffort = resolveTierReasoningEffort(preFilterTier, runtime);
