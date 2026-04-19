@@ -1,6 +1,6 @@
 {
   "name": "@muonroi/experience-engine",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CLI installer and server runtime for Experience Engine",
   "license": "MIT",
   "type": "commonjs",
