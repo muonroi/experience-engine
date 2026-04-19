@@ -164,10 +164,10 @@ Maintainer release flow:
 
 ```bash
 # bump package.json version
-git commit -am "Release npm package v0.1.0"
+git commit -am "Release npm package v0.1.1"
 git push origin develop
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 Pushing a `v*` tag triggers the bundled GitHub Actions workflow, which runs `npm test`,
@@ -800,7 +800,7 @@ Three layers, fastest first:
 For `runtime="codex"`, model selection intentionally skips the keyword pre-filter and relies on `history -> brain -> default`, because Codex model switching should follow stronger task understanding than simple token matches.
 
 Supports: `claude` (haiku/sonnet/opus), `gemini` (flash/pro), `codex`, `opencode`. The default Codex tier mapping is now:
-- `fast` -> `gpt-5.1-codex-mini` + `medium`
+- `fast` -> `gpt-5.4-mini` + `medium`
 - `balanced` -> `gpt-5.3-codex` + `medium`
 - `premium` -> `gpt-5.4` + `high`
 
@@ -809,12 +809,9 @@ Codex model responses are validated against the supported CLI allowlist:
 - `gpt-5.4-mini`
 - `gpt-5.3-codex`
 - `gpt-5.3-codex-spark`
-- `gpt-5.2`
-- `gpt-5.1-codex-mini`
 
 Reasoning-effort validation for Codex:
-- `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.3-codex`, `gpt-5.3-codex-spark`, `gpt-5.2` -> `low | medium | high | extra_high`
-- `gpt-5.1-codex-mini` -> `medium | high`
+- `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.3-codex`, `gpt-5.3-codex-spark` -> `low | medium | high | extra_high`
 
 Returns tier only when `runtime` is null.
 
