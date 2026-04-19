@@ -137,7 +137,7 @@ test('routeModel uses Codex-supported fast tier model mapping', async () => {
   brainResponses.push('fast');
   const result = await routeModel('fix a typo in README.md', null, 'codex');
   assert.equal(result.tier, 'fast');
-  assert.equal(result.model, 'gpt-5.1-codex-mini');
+  assert.equal(result.model, 'gpt-5.4-mini');
   assert.equal(result.reasoningEffort, 'medium');
   assert.equal(result.source, 'brain');
 });

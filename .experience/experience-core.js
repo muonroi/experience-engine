@@ -96,7 +96,7 @@ function getModelTiers() {
   return getConfig().modelTiers || {
     claude:   { fast: 'claude-haiku-4-5',  balanced: 'claude-sonnet-4-6', premium: 'claude-opus-4-6' },
     gemini:   { fast: 'gemini-3-flash',    balanced: 'gemini-3-pro',      premium: 'gemini-3.1-pro' },
-    codex:    { fast: 'gpt-5.1-codex-mini', balanced: 'gpt-5.3-codex',    premium: 'gpt-5.4' },
+    codex:    { fast: 'gpt-5.4-mini',      balanced: 'gpt-5.3-codex',    premium: 'gpt-5.4' },
     opencode: { fast: 'claude-haiku-4-5',  balanced: 'claude-sonnet-4-6', premium: 'claude-opus-4-6' },
   };
 }
@@ -112,8 +112,6 @@ const CODEX_ALLOWED_MODEL_REASONING = {
   'gpt-5.4-mini': new Set(['low', 'medium', 'high', 'extra_high']),
   'gpt-5.3-codex': new Set(['low', 'medium', 'high', 'extra_high']),
   'gpt-5.3-codex-spark': new Set(['low', 'medium', 'high', 'extra_high']),
-  'gpt-5.2': new Set(['low', 'medium', 'high', 'extra_high']),
-  'gpt-5.1-codex-mini': new Set(['medium', 'high']),
 };
 
 function normalizeReasoningEffort(value) {
