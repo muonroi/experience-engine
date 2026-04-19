@@ -184,8 +184,15 @@ describe('Multi-runtime tier resolution', () => {
   it('resolves codex runtime', async () => {
     const r = await routeModel(testTask, null, 'codex');
     assertRouteShape(r, 'codex');
-    assert.ok(['o4-mini', 'gpt-5.2', 'gpt-5.4'].includes(r.model),
-      `codex model must be o4-mini/gpt-5.2/gpt-5.4, got "${r.model}"`);
+    assert.ok([
+      'gpt-5.4',
+      'gpt-5.4-mini',
+      'gpt-5.3-codex',
+      'gpt-5.3-codex-spark',
+      'gpt-5.2',
+      'gpt-5.1-codex-mini'
+    ].includes(r.model),
+      `codex model must stay within the supported Codex CLI allowlist, got "${r.model}"`);
   });
 
   it('resolves opencode runtime', async () => {

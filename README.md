@@ -797,7 +797,26 @@ Three layers, fastest first:
 - **Layer 1 — History** (~50ms): Semantic search of past routing decisions. Reuses successful routes, upgrades failed ones
 - **Layer 2 — Brain** (~200ms): LLM classification via SiliconFlow Qwen2.5-7B. Only called when Layer 0+1 miss
 
-Supports: `claude` (haiku/sonnet/opus), `gemini` (flash/pro), `codex` (`gpt-5.4-mini` / `gpt-5.2` / `gpt-5.4` by default), `opencode`. Returns tier only when `runtime` is null.
+For `runtime="codex"`, model selection intentionally skips the keyword pre-filter and relies on `history -> brain -> default`, because Codex model switching should follow stronger task understanding than simple token matches.
+
+Supports: `claude` (haiku/sonnet/opus), `gemini` (flash/pro), `codex`, `opencode`. The default Codex tier mapping is now:
+- `fast` -> `gpt-5.1-codex-mini` + `medium`
+- `balanced` -> `gpt-5.3-codex` + `medium`
+- `premium` -> `gpt-5.4` + `high`
+
+Codex model responses are validated against the supported CLI allowlist:
+- `gpt-5.4`
+- `gpt-5.4-mini`
+- `gpt-5.3-codex`
+- `gpt-5.3-codex-spark`
+- `gpt-5.2`
+- `gpt-5.1-codex-mini`
+
+Reasoning-effort validation for Codex:
+- `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.3-codex`, `gpt-5.3-codex-spark`, `gpt-5.2` -> `low | medium | high | extra_high`
+- `gpt-5.1-codex-mini` -> `medium | high`
+
+Returns tier only when `runtime` is null.
 
 ### Example: Task Router
 

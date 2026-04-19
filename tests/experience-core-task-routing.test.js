@@ -47,7 +47,7 @@ function startFakeServer() {
         const next = brainResponses.shift() || { route: 'qc-flow', confidence: 0.61, needs_disambiguation: false, reason: 'default fake brain', options: [] };
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({
-          choices: [{ message: { content: JSON.stringify(next) } }],
+          choices: [{ message: { content: typeof next === 'string' ? next : JSON.stringify(next) } }],
         }));
       }
       res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -134,9 +134,10 @@ test('routeModel uses Codex-supported fast tier model mapping', async () => {
   delete require.cache[require.resolve(CORE_PATH)];
   const { routeModel } = require(CORE_PATH);
 
+  brainResponses.push('fast');
   const result = await routeModel('fix a typo in README.md', null, 'codex');
   assert.equal(result.tier, 'fast');
-  assert.equal(result.model, 'gpt-5.4-mini');
-  assert.equal(result.reasoningEffort, 'low');
-  assert.ok(['keyword', 'history', 'history-upgrade', 'brain', 'default'].includes(result.source));
+  assert.equal(result.model, 'gpt-5.1-codex-mini');
+  assert.equal(result.reasoningEffort, 'medium');
+  assert.equal(result.source, 'brain');
 });
