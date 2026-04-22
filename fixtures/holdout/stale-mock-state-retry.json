@@ -1,0 +1,32 @@
+{
+  "suites": [
+    {
+      "name": "stale-mock-state-retry",
+      "family": "stale-mock-state-across-retry-requests",
+      "principleId": "family-stale-mock-state",
+      "targetCollection": "experience-principles",
+      "seed": [
+        {
+          "id": "seed-retry-login-mock",
+          "text": "A retry test expected the second request to pass, but stale mock state from the first request caused a false 500 failure."
+        },
+        {
+          "id": "seed-shared-fixture-state",
+          "text": "The fixture reused response state across requests, so the next assertion observed leftover mock state instead of a clean retry path."
+        }
+      ],
+      "holdout": [
+        {
+          "id": "holdout-second-call-leaks-state",
+          "text": "The second API call inherited mock state from the first call because the test double was never reset between requests.",
+          "projectSlug": "experience-engine"
+        },
+        {
+          "id": "holdout-reused-stub-cache",
+          "text": "A reused stub cache polluted the next request in a retry flow, making the later assertion fail even though the handler logic was correct.",
+          "projectSlug": "experience-engine"
+        }
+      ]
+    }
+  ]
+}

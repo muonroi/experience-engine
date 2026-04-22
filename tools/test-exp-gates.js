@@ -8,6 +8,8 @@ const {
   computeDedupAndHygiene,
   computeInterceptionPrecision,
   computeOrganicExtractionStats,
+  computePrincipleQualityStats,
+  computeNovelProofStats,
   computeRecurrenceReduction,
   computeCostStability,
 } = require('./exp-gates.js');
@@ -58,6 +60,39 @@ test('computeOrganicExtractionStats counts only quality organic session-extracto
 
   assert.equal(stats.totalOrganic, 2);
   assert.equal(stats.qualityOrganic, 1);
+});
+
+test('computePrincipleQualityStats counts abstraction-ready principle payloads', () => {
+  const stats = computePrincipleQualityStats([
+    pointFrom({ principle: 'When x do y because z', failureMode: 'rerun loop hides root cause', judgment: 'inspect and change state before rerunning', conditions: ['rerun', 'failure'] }),
+    pointFrom({ principle: 'Incomplete principle', failureMode: 'test fixture drift' }),
+  ]);
+
+  assert.equal(stats.total, 2);
+  assert.equal(stats.withFailureMode, 2);
+  assert.equal(stats.withJudgment, 1);
+  assert.equal(stats.withConditions, 1);
+  assert.equal(stats.qualityReady, 1);
+});
+
+test('computeNovelProofStats prefers holdout evidence and retains legacy fallback counts', () => {
+  const stats = computeNovelProofStats([
+    pointFrom({
+      principle: 'When failure wording changes, abstract by judgment',
+      novelCaseEvidence: { holdoutMatchedCount: 2, holdoutTestedCount: 3 },
+    }),
+    pointFrom({
+      principle: 'Legacy principle',
+      hitCount: 4,
+    }),
+  ]);
+
+  assert.equal(stats.principlesWithNovelHit, 2);
+  assert.equal(stats.holdoutMatched, 2);
+  assert.equal(stats.holdoutTested, 3);
+  assert.equal(stats.legacyNovelHits, 1);
+  assert.equal(stats.holdoutMatchRate, 67);
+  assert.equal(stats.pass, true);
 });
 
 test('computeRecurrenceReduction compares recent mistakes against the prior week by project and type', () => {

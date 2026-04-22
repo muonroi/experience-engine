@@ -6,7 +6,8 @@
   "type": "commonjs",
   "bin": {
     "experience-engine": "bin/experience-engine.js",
-    "exp-engine": "bin/experience-engine.js"
+    "exp-engine": "bin/experience-engine.js",
+    "qdrant-find": "tools/qdrant-find.js"
   },
   "files": [
     "bin/",
@@ -38,12 +39,15 @@
     "tools/exp-demote.js",
     "tools/exp-dogfood-loop.js",
     "tools/exp-gates.js",
+    "tools/exp-holdout-harness.js",
     "tools/exp-portable-backup.js",
     "tools/exp-portable-restore.js",
     "tools/exp-replay-sessions.js",
     "tools/exp-server-maintain.js",
     "tools/exp-stats.js",
+    "tools/qdrant-find.js",
     "tools/experience-bulk-seed.js",
+    "fixtures/holdout/",
     "server.js",
     "README.md",
     "LICENSE",
@@ -58,9 +62,11 @@
   },
   "scripts": {
     "test": "node --test --test-concurrency=1 tests/*.test.js",
+    "test:holdout": "node --test tools/test-exp-holdout-harness.js tools/test-exp-holdout-fixtures.js",
     "test:health": "node --test .experience/test-health-check.js",
     "test:server": "node tools/test-server.js",
-    "test:ci": "npm test && npm run test:health && npm run test:server",
+    "test:ci": "npm test && npm run test:holdout && npm run test:health && npm run test:server",
+    "replay:holdout": "node tools/exp-holdout-harness.js --fixture fixtures/holdout --json",
     "pack:dry-run": "npm pack --dry-run"
   },
   "publishConfig": {
