@@ -54,6 +54,7 @@ if [ -z "$SERVER_URL" ]; then
 fi
 
 mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/tmp" "$INSTALL_DIR/offline-queue"
+rm -rf "$INSTALL_DIR/tmp/bootstrap.lock"
 
 ensure_line_in_file() {
   local file="$1" line="$2"
