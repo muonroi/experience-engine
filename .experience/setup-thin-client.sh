@@ -9,6 +9,7 @@ SERVER_URL=""
 SERVER_TOKEN=""
 SERVER_READ_TOKEN=""
 CLEAN_MODE=false
+CONFIG_FALLBACK_FILE="${HOME}/.experience/config.json"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -31,13 +32,16 @@ while [ $# -gt 0 ]; do
     --help|-h)
       cat <<'EOF'
 Usage:
-  bash .experience/setup-thin-client.sh --server http://your-vps:8082 [--token TOKEN] [--read-token TOKEN] [--clean]
+  bash .experience/setup-thin-client.sh [--server http://your-vps:8082] [--token TOKEN] [--read-token TOKEN] [--clean]
 
 Options:
-  --server   Required. Experience Engine VPS base URL.
+  --server   Optional if ~/.experience/config.json already contains serverBaseUrl.
   --token    Optional. Bearer token used by POST endpoints.
   --read-token Optional. Read-only token for /api/stats and /api/gates.
   --clean    Backup and remove old local brain state so this machine becomes a true thin client.
+Fallback:
+  When flags are omitted, the script reuses serverBaseUrl/serverAuthToken/serverReadAuthToken
+  from ~/.experience/config.json if that file already exists.
 EOF
       exit 0
       ;;
@@ -48,8 +52,42 @@ EOF
   esac
 done
 
+load_config_fallback() {
+  local key="$1"
+  local config_file="$2"
+  if [ ! -f "$config_file" ]; then
+    return 0
+  fi
+
+  node -e '
+    const fs = require("fs");
+    const [configFile, key] = process.argv.slice(1);
+    try {
+      const raw = fs.readFileSync(configFile, "utf8");
+      const parsed = JSON.parse(raw);
+      const value = parsed[key];
+      if (typeof value === "string") process.stdout.write(value);
+    } catch (error) {
+      process.stderr.write(`[WARN] Failed to read ${configFile}: ${error.message}\n`);
+      process.exit(1);
+    }
+  ' "$config_file" "$key"
+}
+
 if [ -z "$SERVER_URL" ]; then
-  echo "[ERROR] --server is required" >&2
+  SERVER_URL="$(load_config_fallback serverBaseUrl "$CONFIG_FALLBACK_FILE")"
+fi
+
+if [ -z "$SERVER_TOKEN" ]; then
+  SERVER_TOKEN="$(load_config_fallback serverAuthToken "$CONFIG_FALLBACK_FILE")"
+fi
+
+if [ -z "$SERVER_READ_TOKEN" ]; then
+  SERVER_READ_TOKEN="$(load_config_fallback serverReadAuthToken "$CONFIG_FALLBACK_FILE")"
+fi
+
+if [ -z "$SERVER_URL" ]; then
+  echo "[ERROR] --server is required (or set serverBaseUrl in $CONFIG_FALLBACK_FILE)" >&2
   exit 1
 fi
 

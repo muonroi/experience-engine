@@ -388,11 +388,11 @@ Repo clone flow:
 
 ```bash
 git pull
-bash .experience/setup-thin-client.sh \
-  --server http://your-vps:8082 \
-  --token YOUR_SERVER_AUTH_TOKEN \
-  --clean
+bash .experience/setup-thin-client.sh --clean
 ```
+
+If `~/.experience/config.json` does not exist yet, pass `--server` and tokens explicitly on the
+first run.
 
 npm package flow:
 
