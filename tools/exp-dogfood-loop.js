@@ -122,6 +122,17 @@ function buildDogfoodToolInput(candidate, iteration) {
   };
 }
 
+function buildForcedSurface(pointId, candidate, collection = SELFQA_COLLECTION) {
+  return {
+    id: pointId,
+    collection,
+    solution: candidate.solution,
+    scope: candidate.scope || null,
+    projectSlug: candidate._projectSlug || null,
+    domain: candidate.domain || null,
+  };
+}
+
 async function postJson(baseUrl, requestPath, body, token) {
   const res = await fetch(`${baseUrl}${requestPath}`, {
     method: 'POST',
@@ -177,7 +188,12 @@ async function runDogfoodLoop(args = {}) {
     }, token);
     const surfacedIds = Array.isArray(intercept.surfacedIds) ? intercept.surfacedIds : [];
     const surfacedTarget = surfacedIds.find((item) => item.id === picked.point.id);
-    if (!surfacedTarget) {
+    const effectiveSurfacedIds = surfacedTarget
+      ? surfacedIds
+      : args.pointId
+        ? [buildForcedSurface(picked.point.id, candidate)]
+        : surfacedIds;
+    if (effectiveSurfacedIds.length === 0) {
       throw new Error(`candidate ${picked.point.id} did not surface on iteration ${iteration}`);
     }
 
@@ -185,7 +201,7 @@ async function runDogfoodLoop(args = {}) {
       toolName: 'Edit',
       toolInput,
       toolOutput: { output: 'dogfood confirmation applied' },
-      surfacedIds,
+      surfacedIds: effectiveSurfacedIds,
       sourceKind: 'dogfood-loop',
       sourceRuntime: 'codex',
       sourceSession,
@@ -200,7 +216,8 @@ async function runDogfoodLoop(args = {}) {
     results.push({
       iteration,
       sourceSession,
-      surfacedCount: surfacedIds.length,
+      surfacedCount: effectiveSurfacedIds.length,
+      forcedTarget: !surfacedTarget,
       reconcile: posttool.reconcile || null,
       evolve,
       currentCollection: current?.collection || null,
@@ -244,5 +261,6 @@ module.exports = {
   parseArgs,
   pickDogfoodCandidate,
   buildDogfoodToolInput,
+  buildForcedSurface,
   runDogfoodLoop,
 };
