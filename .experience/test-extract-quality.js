@@ -46,3 +46,14 @@ test('accepts concrete reusable lesson', () => {
   assert.equal(result.ok, true);
   assert.equal(result.reason, null);
 });
+
+test('rejects workflow-meta lessons extracted from lock/process chatter', () => {
+  const result = _assessExtractedQaQuality({
+    trigger: 'narrow locked scope for wave 2 artifact locking',
+    question: 'risk of unintended scope expansion',
+    solution: 'strictly adhere to the locked scope by only touching stop-extractor, extract-compact, related tests, and deploy/verify',
+    why: 'qc-lock artifact drift',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'meta_workflow_extract');
+});

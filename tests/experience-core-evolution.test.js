@@ -14,7 +14,7 @@ process.env.EXPERIENCE_QDRANT_URL = 'http://127.0.0.1:1';
 
 const CORE_PATH = path.join(__dirname, '..', '.experience', 'experience-core.js');
 delete require.cache[require.resolve(CORE_PATH)];
-const { evolve } = require(CORE_PATH);
+const { evolve, _recordHitUpdatesFields: applyHitUpdate } = require(CORE_PATH);
 
 const STORE_DIR = path.join(TEST_HOME, '.experience', 'store', process.env.EXP_USER || 'default');
 
@@ -109,4 +109,74 @@ test('evolve ignores legacy surfaced hitCount without validated evidence', async
   const t1 = readCollection('experience-behavioral');
   assert.equal(selfqa.length, 1, 'legacy entry should remain in T2');
   assert.equal(t1.length, 0, 'no T1 entry should be created from legacy surfaced-only signal');
+});
+
+test('evolve fast-promotes fresh organic T2 after repeated distinct session confirmations', async () => {
+  resetStore([
+    makeEntry('fresh-organic-dogfood', {
+      trigger: 'when a repeated fix/test loop keeps hitting the same failure',
+      question: 'retrying the same failing path without changing the cause',
+      solution: 'pause and inspect the failure before rerunning so the next action changes the state',
+      createdAt: new Date(Date.now() - (2 * 60 * 60 * 1000)).toISOString(),
+      createdFrom: 'session-extractor',
+      confidence: 0.5,
+      hitCount: 2,
+      validatedCount: 2,
+      confirmedAt: ['2026-04-22T10:00:00Z', '2026-04-22T10:05:00Z'],
+      confirmedSessions: ['dogfood-1', 'dogfood-2'],
+    }),
+  ]);
+
+  const results = await evolve('dogfood');
+  assert.equal(results.promoted, 1, 'distinct session confirmations should bypass the stale age gate for fresh organic entries');
+
+  const selfqa = readCollection('experience-selfqa');
+  const t1 = readCollection('experience-behavioral');
+  assert.equal(selfqa.length, 0);
+  assert.equal(t1.length, 1);
+
+  const promoted = JSON.parse(t1[0].payload.json);
+  assert.equal(promoted.promotedVia, 'dogfood-confirmation');
+  assert.deepEqual(promoted.confirmedSessions, ['dogfood-1', 'dogfood-2']);
+});
+
+test('dogfood-confirmed organic behavioral entries can promote to principle with repeated session evidence', async () => {
+  writeCollection('experience-selfqa', []);
+  writeCollection('experience-principles', []);
+  writeCollection('experience-edges', []);
+  writeCollection('experience-behavioral', [
+    makeEntry('dogfood-principle', {
+      trigger: 'when the same failure repeats after a no-op rerun',
+      question: 'rerun loop hides the real cause',
+      solution: 'inspect the failure and change code, fixture, or command inputs before rerunning',
+      createdAt: new Date(Date.now() - (6 * 60 * 60 * 1000)).toISOString(),
+      createdFrom: 'session-extractor',
+      tier: 1,
+      confidence: 0.5,
+      hitCount: 0,
+      validatedCount: 0,
+      confirmedAt: [],
+      confirmedSessions: [],
+    }),
+  ]);
+
+  const entries = readCollection('experience-behavioral');
+  const data = JSON.parse(entries[0].payload.json);
+  for (const sessionId of ['dogfood-a', 'dogfood-b', 'dogfood-c', 'dogfood-d']) {
+    applyHitUpdate(data);
+    data.confirmedSessions.push(sessionId);
+  }
+  writeCollection('experience-behavioral', [makeEntry('dogfood-principle', data)]);
+
+  const results = await evolve('dogfood');
+  assert.equal(results.promoted, 1, 'repeated dogfood-confirmed organic behavioral entries should promote to principle');
+
+  const t1 = readCollection('experience-behavioral');
+  const t0 = readCollection('experience-principles');
+  assert.equal(t1.length, 0);
+  assert.equal(t0.length, 1);
+
+  const principle = JSON.parse(t0[0].payload.json);
+  assert.equal(principle.tier, 0);
+  assert.match(principle.principle, /\bwhen\b/i, 'promoted principle should be normalized into principle text');
 });

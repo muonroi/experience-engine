@@ -36,6 +36,7 @@
     ".experience/stop-extractor.js",
     ".experience/sync-install.sh",
     "tools/exp-demote.js",
+    "tools/exp-dogfood-loop.js",
     "tools/exp-gates.js",
     "tools/exp-portable-backup.js",
     "tools/exp-portable-restore.js",

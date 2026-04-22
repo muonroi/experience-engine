@@ -59,6 +59,7 @@
 | Path | Purpose |
 |------|---------|
 | `tools/exp-gates.js` | Gate inspection and management |
+| `tools/exp-dogfood-loop.js` | Controlled live confirmation loop for organic lessons |
 | `tools/exp-stats.js` | Stats reporting |
 | `tools/exp-demote.js` | Demotion or reclassification operations |
 | `tools/exp-portable-backup.js` | Portable export/backup |
