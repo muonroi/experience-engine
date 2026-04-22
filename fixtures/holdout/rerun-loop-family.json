@@ -1,0 +1,32 @@
+{
+  "suites": [
+    {
+      "name": "rerun-loop-family",
+      "family": "rerun-loop-hides-root-cause",
+      "principleId": "family-rerun-loop",
+      "targetCollection": "experience-principles",
+      "seed": [
+        {
+          "id": "seed-rerun-test-loop",
+          "text": "The same failing test was rerun again and again without changing code or fixture state, which hid the real cause."
+        },
+        {
+          "id": "seed-rerun-command-loop",
+          "text": "A command was retried on the same broken path without any state change, so the loop produced noise instead of new evidence."
+        }
+      ],
+      "holdout": [
+        {
+          "id": "holdout-rerun-build-step",
+          "text": "The build step was executed repeatedly even though no config or source input changed, so the same failure kept returning.",
+          "projectSlug": "experience-engine"
+        },
+        {
+          "id": "holdout-rerun-e2e",
+          "text": "An end-to-end scenario was retried with identical inputs after a failure, masking the root problem instead of testing a new fix.",
+          "projectSlug": "experience-engine"
+        }
+      ]
+    }
+  ]
+}

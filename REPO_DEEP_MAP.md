@@ -60,6 +60,7 @@
 |------|---------|
 | `tools/exp-gates.js` | Gate inspection and management |
 | `tools/exp-dogfood-loop.js` | Controlled live confirmation loop for organic lessons |
+| `tools/exp-holdout-harness.js` | Seed-vs-holdout replay harness for novel-case proof |
 | `tools/exp-stats.js` | Stats reporting |
 | `tools/exp-demote.js` | Demotion or reclassification operations |
 | `tools/exp-portable-backup.js` | Portable export/backup |
@@ -87,6 +88,8 @@
 | Path | Purpose |
 |------|---------|
 | `docs/` | Additional repo-local documentation |
+| `docs/specs/2026-04-22-experience-formation-vnext.md` | Canonical roadmap/spec for abstraction quality, natural bootstrap, novel-case proof, and gate semantics |
+| `fixtures/holdout/` | Curated holdout fixture suites for concrete failure families used by the replay harness |
 | `demo.svg`, `demo.tape`, `demo.yml` | Demo assets |
 | `.quick-codex-flow/` | Local Quick Codex artifacts used during repo work |
 
@@ -100,4 +103,5 @@
 | Modify CLI/install flow | `package.json`, `bin/experience-engine.js`, `.experience/setup*.sh` |
 | Modify hook behavior | `.experience/interceptor*.js`, `.experience/experience-core.js` |
 | Modify server behavior | `server.js`, `.experience/remote-client.js`, `tools/` |
+| Modify learning semantics / gates | `docs/specs/2026-04-22-experience-formation-vnext.md`, `tools/exp-gates.js`, `tools/exp-dogfood-loop.js`, `tests/experience-core-evolution.test.js` |
 | Work on SDK | `sdk/python/` |

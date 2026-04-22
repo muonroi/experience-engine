@@ -1596,7 +1596,7 @@ async function brainRelevanceFilter(actionQuery, suggestionLines, signal, projec
 }
 
 async function extractQA(mistake) {
-  const prompt = `Given this session excerpt where something went wrong:\n${mistake.excerpt.slice(0, 1500)}\n\nExtract ONE reusable lesson as JSON (no markdown).\nRules:\n- trigger must be a concrete condition rooted in the excerpt, never placeholders like "when this fires"\n- question must briefly name the mistake being prevented\n- solution must be a concrete preventive action, never placeholders like "what to do"\n- if the excerpt is mainly about workflow management, lock artifacts, planning scope, deploy checklist, or AI execution process rather than a reusable coding/runtime mistake, return {"skip":true,"reason":"meta_workflow"}\n- if there is no concrete reusable lesson, return {"skip":true,"reason":"no_reusable_lesson"}\n\nReturn JSON only:\n{"trigger":"specific trigger from the excerpt","question":"brief mistake description","reasoning":["step1","step2"],"solution":"specific preventive action","why":"root cause or incident that created this rule","scope":{"lang":"C#|JavaScript|all","repos":[],"filePattern":"*.cs"}}`;
+  const prompt = `Given this session excerpt where something went wrong:\n${mistake.excerpt.slice(0, 1500)}\n\nExtract ONE reusable lesson as JSON (no markdown).\nRules:\n- trigger must be a concrete condition rooted in the excerpt, never placeholders like "when this fires"\n- question must briefly name the mistake being prevented\n- solution must be a concrete preventive action, never placeholders like "what to do"\n- failureMode must name the underlying class of failure, not the literal log line\n- judgment must express the portable preventive judgment, not just a one-off fix\n- conditions must be 2-4 short applicability keywords\n- evidenceClass must be one of: log, test, runtime, review, user-correction, other\n- if the excerpt is mainly about workflow management, lock artifacts, planning scope, deploy checklist, or AI execution process rather than a reusable coding/runtime mistake, return {"skip":true,"reason":"meta_workflow"}\n- if there is no concrete reusable lesson, return {"skip":true,"reason":"no_reusable_lesson"}\n\nReturn JSON only:\n{"trigger":"specific trigger from the excerpt","question":"brief mistake description","reasoning":["step1","step2"],"solution":"specific preventive action","why":"root cause or incident that created this rule","failureMode":"underlying failure family","judgment":"portable preventive judgment","conditions":["keyword1","keyword2"],"evidenceClass":"log|test|runtime|review|user-correction|other","scope":{"lang":"C#|JavaScript|all","repos":[],"filePattern":"*.cs"}}`;
   return callBrainWithFallback(prompt, { source: 'extract' });
 }
 
@@ -1722,11 +1722,33 @@ async function isDuplicate(qa) {
 function buildStorePayload(id, qa, domain, projectSlug) {
   // Wave 2: Tag natural language for cross-lingual matching
   const naturalLang = detectNaturalLang(`${qa.trigger} ${qa.solution}`);
+  const normalizedConditions = normalizeConditions(qa.conditions, `${qa.trigger} ${qa.solution}`);
+  const evidenceClass = normalizeEvidenceClass(qa.evidenceClass, qa);
+  const failureMode = normalizeFailureMode(qa.failureMode, qa);
+  const judgment = normalizeJudgment(qa.judgment, qa);
   return {
     id, trigger: qa.trigger, question: qa.question,
     reasoning: qa.reasoning || [], solution: qa.solution,
     why: qa.why || null,    // v2: root cause / incident motivation
     scope: qa.scope || null, // v2: {lang, repos, filePattern} — hard filter gate
+    failureMode,
+    judgment,
+    conditions: normalizedConditions,
+    evidenceClass,
+    provenance: {
+      kind: 'seed',
+      source: 'session-extractor',
+      sourceSession: qa.sourceSession || null,
+    },
+    novelCaseEvidence: {
+      seedSupportCount: 1,
+      seedEntryIds: [id],
+      holdoutMatchedCount: 0,
+      holdoutTestedCount: 0,
+      holdoutSessions: [],
+      holdoutProjects: [],
+      lastMatchedAt: null,
+    },
     confidence: 0.5, hitCount: 0, validatedCount: 0, surfaceCount: 0, signalVersion: 2, tier: 2,
     lastHitAt: null, ignoreCount: 0, unusedCount: 0,
     confirmedAt: [],  // Phase 108: temporal trace
@@ -2044,6 +2066,139 @@ function ensureSignalMetrics(data) {
   if (typeof data.validatedCount !== 'number') data.validatedCount = 0;
   if (!Array.isArray(data.confirmedAt)) data.confirmedAt = [];
   data.signalVersion = 2;
+  ensureAbstractionFields(data);
+  ensureNovelCaseEvidence(data);
+  return data;
+}
+
+function normalizeEvidenceClass(value, qa = {}) {
+  const allowed = new Set(['log', 'test', 'runtime', 'review', 'user-correction', 'other']);
+  const normalized = String(value || '').trim().toLowerCase();
+  if (allowed.has(normalized)) return normalized;
+  const combined = `${qa.trigger || ''} ${qa.question || ''} ${qa.solution || ''}`.toLowerCase();
+  if (/\b(test|assert|fixture|expect|jest|vitest|mocha)\b/.test(combined)) return 'test';
+  if (/\b(log|trace|stack|stderr|stdout)\b/.test(combined)) return 'log';
+  if (/\b(review|comment|requested changes)\b/.test(combined)) return 'review';
+  if (/\b(user correction|corrected by user)\b/.test(combined)) return 'user-correction';
+  return 'runtime';
+}
+
+function normalizeConditions(conditions, fallbackText = '') {
+  const fallbackTokens = String(fallbackText || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, ' ')
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 4);
+  const combined = []
+    .concat(Array.isArray(conditions) ? conditions : [])
+    .concat(fallbackTokens.slice(0, 4));
+  const seen = new Set();
+  const normalized = [];
+  for (const item of combined) {
+    const value = String(item || '').trim().toLowerCase();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    normalized.push(value);
+    if (normalized.length >= 4) break;
+  }
+  return normalized;
+}
+
+function normalizeFailureMode(value, qa = {}) {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+  if (normalized) return normalized;
+  const why = String(qa.why || '').replace(/\s+/g, ' ').trim();
+  if (why) return why;
+  return String(qa.question || qa.trigger || '').replace(/\s+/g, ' ').trim() || null;
+}
+
+function normalizeJudgment(value, qa = {}) {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+  if (normalized) return normalized;
+  return String(qa.solution || '').replace(/\s+/g, ' ').trim() || null;
+}
+
+function ensureAbstractionFields(data) {
+  if (!data || typeof data !== 'object') return data;
+  if (!data.failureMode) data.failureMode = normalizeFailureMode(data.failureMode, data);
+  if (!data.judgment) data.judgment = normalizeJudgment(data.judgment, data);
+  data.conditions = normalizeConditions(data.conditions, `${data.trigger || ''} ${data.solution || ''}`);
+  if (!data.evidenceClass) data.evidenceClass = normalizeEvidenceClass(data.evidenceClass, data);
+  if (!data.provenance || typeof data.provenance !== 'object') {
+    data.provenance = {
+      kind: data.tier === 0 ? 'principle' : data.tier === 1 ? 'behavioral' : 'seed',
+      source: data.createdFrom || 'unknown',
+      sourceSession: data.lastConfirmedSession || null,
+    };
+  }
+  return data;
+}
+
+function ensureNovelCaseEvidence(data) {
+  if (!data || typeof data !== 'object') return data;
+  if (!data.novelCaseEvidence || typeof data.novelCaseEvidence !== 'object') data.novelCaseEvidence = {};
+  const evidence = data.novelCaseEvidence;
+  if (typeof evidence.seedSupportCount !== 'number') evidence.seedSupportCount = data.tier === 2 ? 1 : 0;
+  if (!Array.isArray(evidence.seedEntryIds)) evidence.seedEntryIds = [];
+  if (typeof evidence.holdoutMatchedCount !== 'number') evidence.holdoutMatchedCount = 0;
+  if (typeof evidence.holdoutTestedCount !== 'number') evidence.holdoutTestedCount = 0;
+  if (!Array.isArray(evidence.holdoutTestedKeys)) evidence.holdoutTestedKeys = [];
+  if (!Array.isArray(evidence.holdoutMatchedKeys)) evidence.holdoutMatchedKeys = [];
+  if (!Array.isArray(evidence.holdoutSessions)) evidence.holdoutSessions = [];
+  if (!Array.isArray(evidence.holdoutProjects)) evidence.holdoutProjects = [];
+  if (!('lastMatchedAt' in evidence)) evidence.lastMatchedAt = null;
+  return data;
+}
+
+function isPrincipleLikeEntry(data) {
+  return !!(data?.principle || data?.tier === 0 || data?.createdFrom === 'evolution-abstraction');
+}
+
+function recordNovelCaseEvidence(data, context = {}) {
+  if (!isPrincipleLikeEntry(data)) return data;
+  ensureNovelCaseEvidence(data);
+  const evidence = data.novelCaseEvidence;
+  const sourceSession = String(context.sourceSession || '').trim();
+  const projectSlug = String(context.projectSlug || '').trim();
+  const dedupeKey = sourceSession || `${projectSlug || 'unknown-project'}:${data.lastHitAt || new Date().toISOString()}`;
+  recordHoldoutOutcomeOnData(data, { holdoutKey: dedupeKey, matched: true, projectSlug, sourceSession });
+  if (projectSlug && !evidence.holdoutProjects.includes(projectSlug)) {
+    evidence.holdoutProjects.push(projectSlug);
+    if (evidence.holdoutProjects.length > 20) evidence.holdoutProjects = evidence.holdoutProjects.slice(-20);
+  }
+  return data;
+}
+
+function recordHoldoutOutcomeOnData(data, outcome = {}) {
+  if (!isPrincipleLikeEntry(data)) return data;
+  ensureNovelCaseEvidence(data);
+  const evidence = data.novelCaseEvidence;
+  const holdoutKey = String(outcome.holdoutKey || outcome.sourceSession || '').trim()
+    || `${String(outcome.projectSlug || 'unknown-project').trim()}:${String(outcome.label || 'holdout').trim()}`;
+  const projectSlug = String(outcome.projectSlug || '').trim();
+  const sourceSession = String(outcome.sourceSession || '').trim();
+  const matched = outcome.matched === true;
+
+  if (!evidence.holdoutTestedKeys.includes(holdoutKey)) {
+    evidence.holdoutTestedKeys.push(holdoutKey);
+    if (evidence.holdoutTestedKeys.length > 100) evidence.holdoutTestedKeys = evidence.holdoutTestedKeys.slice(-100);
+    evidence.holdoutTestedCount += 1;
+  }
+  if (matched && !evidence.holdoutMatchedKeys.includes(holdoutKey)) {
+    evidence.holdoutMatchedKeys.push(holdoutKey);
+    if (evidence.holdoutMatchedKeys.length > 100) evidence.holdoutMatchedKeys = evidence.holdoutMatchedKeys.slice(-100);
+    evidence.holdoutMatchedCount += 1;
+    evidence.lastMatchedAt = data.lastHitAt || new Date().toISOString();
+  }
+  if (sourceSession && !evidence.holdoutSessions.includes(sourceSession)) {
+    evidence.holdoutSessions.push(sourceSession);
+    if (evidence.holdoutSessions.length > 50) evidence.holdoutSessions = evidence.holdoutSessions.slice(-50);
+  }
+  if (projectSlug && !evidence.holdoutProjects.includes(projectSlug)) {
+    evidence.holdoutProjects.push(projectSlug);
+    if (evidence.holdoutProjects.length > 20) evidence.holdoutProjects = evidence.holdoutProjects.slice(-20);
+  }
   return data;
 }
 
@@ -2095,6 +2250,7 @@ function applyHitUpdateWithContext(context = {}) {
       if (data.confirmedSourceKinds.length > 20) data.confirmedSourceKinds = data.confirmedSourceKinds.slice(-20);
       data.lastConfirmedSourceKind = sourceKind;
     }
+    recordNovelCaseEvidence(data, context);
     return data;
   };
 }
@@ -2105,6 +2261,10 @@ async function recordHit(collection, pointId) {
 
 async function recordSurface(collection, pointId) {
   await updatePointPayload(collection, pointId, applySurfaceUpdate);
+}
+
+async function recordHoldoutOutcome(collection, pointId, outcome = {}) {
+  await updatePointPayload(collection, pointId, (data) => recordHoldoutOutcomeOnData(data, outcome));
 }
 
 // --- recordFeedback: explicit agent feedback on surfaced suggestions ---
@@ -2267,6 +2427,12 @@ function shouldPromoteBehavioralToPrinciple(data, now = Date.now()) {
 function buildPrincipleText(data) {
   if (!data) return '';
   if (data.principle) return data.principle;
+  if (data.failureMode && data.judgment) {
+    const because = String(data.why || '').replace(/\s+/g, ' ').trim();
+    return because
+      ? `When ${data.failureMode}, ${data.judgment} because ${because}`
+      : `When ${data.failureMode}, ${data.judgment}`;
+  }
   if (data.trigger && data.solution) {
     return /^(when|if|always|never)\b/i.test(data.trigger)
       ? `${data.trigger} ${data.solution}`.trim()
@@ -2283,6 +2449,7 @@ async function evolve(trigger) {
   const t2Entries = await getAllEntries('experience-selfqa');
   for (const entry of t2Entries) {
     const data = parsePayload(entry);
+    ensureSignalMetrics(data);
     const quality = assessExtractedQaQuality(data);
     if (data?.createdFrom === 'session-extractor' && !quality.ok) {
       await deleteEntry('experience-selfqa', entry.id);
@@ -2297,6 +2464,11 @@ async function evolve(trigger) {
       && hasRepeatedSessionConfirmations(data, T2_TO_T1_HIT_THRESHOLD);
     if (ageMs < T2_TO_T1_MIN_AGE_MS && !fastDogfoodPromote) continue;
     resetPromotionProbation(data, 1);
+    data.provenance = {
+      kind: 'seed-support',
+      source: data.createdFrom || 'session-extractor',
+      sourceSession: data.lastConfirmedSession || null,
+    };
     data.promotedAt = new Date().toISOString();
     if (fastDogfoodPromote) data.promotedVia = 'dogfood-confirmation';
     const vector = entry.vector || await getEmbedding(`${data.trigger} ${data.solution}`);
@@ -2311,6 +2483,7 @@ async function evolve(trigger) {
   const t1PrincipleEntries = await getAllEntries('experience-behavioral');
   for (const entry of t1PrincipleEntries) {
     const data = parsePayload(entry);
+    ensureSignalMetrics(data);
     if (!data) continue;
     const promoteProbationary = data.createdFrom === 'evolution-abstraction' && getValidatedHitCount(data) >= PROBATIONARY_PRINCIPLE_HIT_THRESHOLD;
     const promoteMatureBehavioral = shouldPromoteBehavioralToPrinciple(data);
@@ -2318,6 +2491,11 @@ async function evolve(trigger) {
     resetPromotionProbation(data, 0);
     data.principle = buildPrincipleText(data);
     data.promotedToT0At = new Date().toISOString();
+    data.provenance = {
+      kind: 'principle',
+      source: data.createdFrom || 'unknown',
+      sourceSession: data.lastConfirmedSession || null,
+    };
     if (promoteMatureBehavioral) data.promotedFromBehavioralAt = new Date().toISOString();
     const vector = entry.vector || await getEmbedding(buildPrincipleText(data));
     if (!vector) continue;
@@ -2338,7 +2516,7 @@ async function evolve(trigger) {
     }).filter(Boolean);
 
     // Wave 3: Structured conditions[] — principle carries preconditions for constraint checking
-    const prompt = `Given these ${summaries.length} related experiences, extract ONE general principle covering all cases. Format as JSON: {"principle":"When [condition], always [action] because [reason]","conditions":["keyword1","keyword2","keyword3"]}\nConditions = 2-4 keywords that MUST be present for this principle to apply.\n\n${summaries.join('\n')}`;
+    const prompt = `Given these ${summaries.length} related experiences, extract ONE general principle covering all cases. Format as JSON: {"principle":"When [condition], do [action] because [reason]","failureMode":"shared failure family","judgment":"portable preventive judgment","conditions":["keyword1","keyword2","keyword3"],"evidenceClass":"log|test|runtime|review|user-correction|other"}\nConditions = 2-4 keywords that MUST be present for this principle to apply.\nFailure mode must describe the root cause class, not the literal trigger wording.\nJudgment must be portable to a novel case in the same family.\n\n${summaries.join('\n')}`;
 
     const result = await callBrainWithFallback(prompt, { source: 'evolve' });
     if (!result?.principle) continue;
@@ -2361,7 +2539,24 @@ async function evolve(trigger) {
     // Wave 1: Principle probation — start at T1 (behavioral), promote to T0 after 3 hits
     await upsertEntry('experience-behavioral', id, vector, {
       id, principle: result.principle, solution: result.principle,
+      failureMode: normalizeFailureMode(result.failureMode, { question: summaries[0], why: result.principle }),
+      judgment: normalizeJudgment(result.judgment, { solution: result.principle }),
       conditions: Array.isArray(result.conditions) ? result.conditions.slice(0, 4) : [],
+      evidenceClass: normalizeEvidenceClass(result.evidenceClass, { solution: result.principle }),
+      provenance: {
+        kind: 'seed-support',
+        source: 'evolution-abstraction',
+        seedEntryIds: cluster.map((entry) => entry.id),
+      },
+      novelCaseEvidence: {
+        seedSupportCount: cluster.length,
+        seedEntryIds: cluster.map((entry) => entry.id),
+        holdoutMatchedCount: 0,
+        holdoutTestedCount: 0,
+        holdoutSessions: [],
+        holdoutProjects: [],
+        lastMatchedAt: null,
+      },
       tier: 1, confidence: Math.min(0.80, 0.50 + (cluster.length / 10) * 0.30), hitCount: 0,
       createdAt: new Date().toISOString(), createdFrom: 'evolution-abstraction',
       sourceCount: cluster.length,
@@ -3463,4 +3658,4 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
 
 // --- Exports ---
 
-module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, recordSurface, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeTask, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _applySurfaceUpdate: applySurfaceUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _recordSurfaceUpdatesFields: applySurfaceUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _reconcilePendingHints: reconcilePendingHints, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _resolveRuntimeFromSourceMeta: resolveRuntimeFromSourceMeta, _isRouterEnabled: isRouterEnabled, _assessExtractedQaQuality: assessExtractedQaQuality, _normalizeExtractText: normalizeExtractText, _detectMistakes: detectMistakes, _shouldPromoteBehavioralToPrinciple: shouldPromoteBehavioralToPrinciple, _buildPrincipleText: buildPrincipleText, _getValidatedHitCount: getValidatedHitCount };
+module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, recordSurface, recordHoldoutOutcome, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeTask, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _applySurfaceUpdate: applySurfaceUpdate, _applyHoldoutOutcome: recordHoldoutOutcomeOnData, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _recordSurfaceUpdatesFields: applySurfaceUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _reconcilePendingHints: reconcilePendingHints, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _resolveRuntimeFromSourceMeta: resolveRuntimeFromSourceMeta, _isRouterEnabled: isRouterEnabled, _assessExtractedQaQuality: assessExtractedQaQuality, _normalizeExtractText: normalizeExtractText, _detectMistakes: detectMistakes, _shouldPromoteBehavioralToPrinciple: shouldPromoteBehavioralToPrinciple, _buildPrincipleText: buildPrincipleText, _getValidatedHitCount: getValidatedHitCount };
