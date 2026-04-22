@@ -662,6 +662,15 @@ function normalizeSourceMeta(meta) {
   };
 }
 
+function resolveRuntimeFromSourceMeta(sourceMeta, fallbackRuntime) {
+  const normalized = String(sourceMeta?.sourceRuntime || '').trim().toLowerCase();
+  if (normalized.startsWith('codex')) return 'codex';
+  if (normalized.startsWith('claude')) return 'claude';
+  if (normalized.startsWith('gemini')) return 'gemini';
+  if (normalized.startsWith('opencode')) return 'opencode';
+  return fallbackRuntime;
+}
+
 function extractProjectPath(toolInput) {
   const raw = toolInput?.file_path || toolInput?.path || '';
   if (raw) return raw.replace(/\\/g, '/');
@@ -882,6 +891,7 @@ function isReadOnlyCommand(toolName, toolInput) {
 
 async function interceptWithMeta(toolName, toolInput, signal, meta) {
   const sourceMeta = normalizeSourceMeta(meta);
+  const runtime = resolveRuntimeFromSourceMeta(sourceMeta, detectRuntime(toolName));
   // P5: Skip read-only commands — no code mutation = no risk = no warning needed
   if (isReadOnlyCommand(toolName, toolInput)) {
     return { suggestions: null, surfacedIds: [] };
@@ -915,7 +925,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
 
   // Route model in parallel with searches when routing is enabled (zero added latency)
   const routePromise = isRouterEnabled()
-    ? routeModel(query, { files: [filePath].filter(Boolean), domain: queryDomain }, detectRuntime(toolName)).catch(() => null)
+    ? routeModel(query, { files: [filePath].filter(Boolean), domain: queryDomain }, runtime).catch(() => null)
     : Promise.resolve(null);
 
   const [t0, t1, t2, routeResult] = await Promise.all([
@@ -3353,4 +3363,4 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
 
 // --- Exports ---
 
-module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, recordSurface, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeTask, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _applySurfaceUpdate: applySurfaceUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _recordSurfaceUpdatesFields: applySurfaceUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _reconcilePendingHints: reconcilePendingHints, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _isRouterEnabled: isRouterEnabled, _assessExtractedQaQuality: assessExtractedQaQuality, _normalizeExtractText: normalizeExtractText, _detectMistakes: detectMistakes, _shouldPromoteBehavioralToPrinciple: shouldPromoteBehavioralToPrinciple, _buildPrincipleText: buildPrincipleText, _getValidatedHitCount: getValidatedHitCount };
+module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, recordSurface, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeTask, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _applySurfaceUpdate: applySurfaceUpdate, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _recordSurfaceUpdatesFields: applySurfaceUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _reconcilePendingHints: reconcilePendingHints, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _resolveRuntimeFromSourceMeta: resolveRuntimeFromSourceMeta, _isRouterEnabled: isRouterEnabled, _assessExtractedQaQuality: assessExtractedQaQuality, _normalizeExtractText: normalizeExtractText, _detectMistakes: detectMistakes, _shouldPromoteBehavioralToPrinciple: shouldPromoteBehavioralToPrinciple, _buildPrincipleText: buildPrincipleText, _getValidatedHitCount: getValidatedHitCount };

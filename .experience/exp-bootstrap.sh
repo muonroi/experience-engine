@@ -10,7 +10,10 @@ HEALTH_SCRIPT="$EXP_DIR/health-check.sh"
 STATUS_DIR="$EXP_DIR/status"
 TMP_DIR="$EXP_DIR/tmp"
 LOCK_DIR="$TMP_DIR/bootstrap.lock"
+LOCK_PID_FILE="$LOCK_DIR/pid"
+LOCK_TS_FILE="$LOCK_DIR/started-at"
 LOG_FILE="$STATUS_DIR/bootstrap.log"
+STALE_LOCK_SECONDS=300
 
 REASON="manual"
 QUIET=false
@@ -38,10 +41,44 @@ done
 
 mkdir -p "$STATUS_DIR" "$TMP_DIR"
 
-if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-  exit 0
+acquire_lock() {
+  mkdir "$LOCK_DIR" 2>/dev/null
+}
+
+lock_is_active() {
+  [ -f "$LOCK_PID_FILE" ] || return 1
+  local pid
+  pid="$(cat "$LOCK_PID_FILE" 2>/dev/null)"
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+lock_is_stale() {
+  [ -d "$LOCK_DIR" ] || return 1
+  if lock_is_active; then
+    return 1
+  fi
+  local now_ts started_at
+  now_ts="$(date +%s 2>/dev/null)"
+  started_at="$(cat "$LOCK_TS_FILE" 2>/dev/null)"
+  if [ -n "$started_at" ] && [ -n "$now_ts" ] 2>/dev/null; then
+    [ $((now_ts - started_at)) -ge "$STALE_LOCK_SECONDS" ]
+    return
+  fi
+  return 0
+}
+
+if ! acquire_lock; then
+  if lock_is_stale; then
+    rm -rf "$LOCK_DIR" 2>/dev/null
+    acquire_lock || exit 0
+  else
+    exit 0
+  fi
 fi
-trap 'rmdir "$LOCK_DIR" 2>/dev/null' EXIT
+trap 'rm -rf "$LOCK_DIR" 2>/dev/null' EXIT
+printf '%s\n' "$$" >"$LOCK_PID_FILE" 2>/dev/null
+date +%s >"$LOCK_TS_FILE" 2>/dev/null
 
 say() {
   $QUIET || printf '%s\n' "$*"

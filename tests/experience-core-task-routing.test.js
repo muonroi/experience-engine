@@ -142,6 +142,25 @@ test('routeModel uses Codex-supported fast tier model mapping', async () => {
   assert.equal(result.source, 'brain');
 });
 
+test('sourceRuntime codex-wsl resolves to codex runtime for remote hook requests', async () => {
+  const CORE_PATH = path.join(__dirname, '..', '.experience', 'experience-core.js');
+  delete require.cache[require.resolve(CORE_PATH)];
+  const { _resolveRuntimeFromSourceMeta } = require(CORE_PATH);
+
+  assert.equal(
+    _resolveRuntimeFromSourceMeta({ sourceRuntime: 'codex-wsl' }, 'claude'),
+    'codex'
+  );
+  assert.equal(
+    _resolveRuntimeFromSourceMeta({ sourceRuntime: 'codex-windows' }, 'claude'),
+    'codex'
+  );
+  assert.equal(
+    _resolveRuntimeFromSourceMeta({ sourceRuntime: 'claude-code' }, 'codex'),
+    'claude'
+  );
+});
+
 test('routeModel caps qc-flow clarify tasks to balanced for codex when brain overcalls premium', async () => {
   const CORE_PATH = path.join(__dirname, '..', '.experience', 'experience-core.js');
   delete require.cache[require.resolve(CORE_PATH)];
