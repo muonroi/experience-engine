@@ -8,6 +8,7 @@ const {
   parseArgs,
   pickDogfoodCandidate,
   buildDogfoodToolInput,
+  buildForcedSurface,
 } = require('./exp-dogfood-loop.js');
 
 test('parseArgs reads point id and iteration overrides', () => {
@@ -64,4 +65,17 @@ test('buildDogfoodToolInput uses the candidate language to choose a file extensi
   assert.match(input.file_path, /\.ts$/);
   assert.match(input.new_string, /dogfood confirmation 2/);
   assert.match(input.new_string, /when x/);
+});
+
+test('buildForcedSurface carries enough metadata for controlled posttool fallback', () => {
+  const forced = buildForcedSurface('point-1', {
+    solution: 'do y',
+    scope: { lang: 'Shell' },
+    _projectSlug: 'experience-engine',
+    domain: 'Shell',
+  });
+  assert.equal(forced.id, 'point-1');
+  assert.equal(forced.collection, 'experience-selfqa');
+  assert.equal(forced.projectSlug, 'experience-engine');
+  assert.equal(forced.domain, 'Shell');
 });
