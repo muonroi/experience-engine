@@ -34,6 +34,7 @@ test('computeInterceptionPrecision measures surfaced-hint precision rather than 
     { ts: '2026-04-14T05:00:00Z', op: 'intercept', stage: 'budget_capped', result: null },
     { ts: '2026-04-14T05:01:00Z', op: 'intercept', stage: 'search_done', result: 'suggestion' },
     { ts: '2026-04-14T05:02:00Z', op: 'intercept', stage: 'search_done', result: 'suggestion' },
+    { ts: '2026-04-14T05:02:30Z', op: 'implicit-touch', reason: 'project_match' },
     { ts: '2026-04-14T05:03:00Z', op: 'judge-feedback', verdict: 'FOLLOWED' },
     { ts: '2026-04-14T05:04:00Z', op: 'judge-feedback', verdict: 'IRRELEVANT' },
     { ts: '2026-04-14T05:05:00Z', op: 'implicit-unused', reason: 'wrong_task' },
@@ -42,10 +43,10 @@ test('computeInterceptionPrecision measures surfaced-hint precision rather than 
   const stats = computeInterceptionPrecision(activity, now);
   assert.equal(stats.interceptEvents.length, 3);
   assert.equal(stats.surfacedSuggestions.length, 2);
-  assert.equal(stats.classified, 3);
-  assert.equal(stats.relevant, 1);
+  assert.equal(stats.classified, 4);
+  assert.equal(stats.relevant, 2);
   assert.equal(stats.irrelevant, 2);
-  assert.equal(stats.precision, 33);
+  assert.equal(stats.precision, 50);
 });
 
 test('computeOrganicExtractionStats counts only quality organic session-extractor entries', () => {

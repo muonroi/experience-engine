@@ -92,7 +92,7 @@ if (!fs.existsSync(normalised)) process.exit(0);
   const { surfacedIds = [], toolName = '', toolInput = '', toolInputObj = {}, toolOutcome = null } = data;
 
   // Load core functions from experience-core.js
-  let classifyViaBrain, recordJudgeFeedback, activityLog, extractProjectPath, extractProjectSlug, detectContext;
+  let classifyViaBrain, recordJudgeFeedback, activityLog, extractProjectPath, extractProjectSlug, detectContext, assessHintUsage;
   try {
     const core = require(path.join(EXP_DIR, 'experience-core.js'));
     classifyViaBrain    = core.classifyViaBrain;
@@ -101,6 +101,7 @@ if (!fs.existsSync(normalised)) process.exit(0);
     extractProjectPath  = core._extractProjectPath;
     extractProjectSlug  = core._extractProjectSlug;
     detectContext       = core._detectContext;
+    assessHintUsage     = core._assessHintUsage;
   } catch {
     try { fs.unlinkSync(normalised); } catch {}
     process.exit(0);
@@ -180,6 +181,12 @@ if (!fs.existsSync(normalised)) process.exit(0);
 
     // Hybrid signal: error outcome + UNCLEAR → IGNORED
     if (verdict === 'UNCLEAR' && toolOutcome === 'error') verdict = 'IGNORED';
+    if (verdict === 'UNCLEAR' && toolOutcome === 'success' && typeof assessHintUsage === 'function') {
+      try {
+        const assessment = assessHintUsage(surface, toolName, parsedToolInput, {});
+        if (assessment?.touched) verdict = 'FOLLOWED';
+      } catch { /* stay UNCLEAR */ }
+    }
     const noiseReason = verdict === 'IRRELEVANT'
       ? inferNoiseReason(surface, parsedToolInput, { extractProjectPath, extractProjectSlug, detectContext })
       : null;

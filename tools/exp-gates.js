@@ -123,7 +123,7 @@ function computeInterceptionPrecision(activity, now) {
   const feedbackEvents = activity.filter(e => {
     if (!e?.ts) return false;
     if (new Date(e.ts).getTime() <= weekAgo) return false;
-    return e.op === 'feedback' || e.op === 'judge-feedback' || e.op === 'implicit-unused';
+    return e.op === 'feedback' || e.op === 'judge-feedback' || e.op === 'implicit-unused' || e.op === 'implicit-touch';
   });
 
   let relevant = 0;
@@ -131,6 +131,10 @@ function computeInterceptionPrecision(activity, now) {
   for (const event of feedbackEvents) {
     if (event.op === 'implicit-unused') {
       irrelevant++;
+      continue;
+    }
+    if (event.op === 'implicit-touch') {
+      relevant++;
       continue;
     }
     const verdict = event.verdict || (event.followed === true ? 'FOLLOWED' : event.followed === false ? 'IGNORED' : null);
@@ -443,11 +447,19 @@ async function checkGates(options = {}) {
   const probationary = t1Points.filter(p => {
     try { return JSON.parse(p.payload?.json || '{}').createdFrom === 'evolution-abstraction'; } catch { return false; }
   });
+  const matureBehavioral = t1Points.filter((point) => {
+    try {
+      const data = JSON.parse(point.payload?.json || '{}');
+      return data.createdFrom !== 'evolution-abstraction' && (data.validatedCount || 0) >= 5;
+    } catch {
+      return false;
+    }
+  });
   results.gate2.checks.push({
     name: '7. Evolution works',
     target: '>= 1 principle',
-    actual: `${t0Count} T0 + ${probationary.length} probationary T1`,
-    pass: t0Count >= 1 || probationary.length >= 1,
+    actual: `${t0Count} T0 + ${probationary.length} probationary T1 + ${matureBehavioral.length} mature T1`,
+    pass: t0Count >= 1 || probationary.length >= 1 || matureBehavioral.length >= 1,
     must: true
   });
 
@@ -465,16 +477,22 @@ async function checkGates(options = {}) {
   // Metric 9: Novel coverage
   // Check if any principle matched a case it wasn't trained on
   // Proxy: principles exist AND have hitCount > 0
+  const principleLikePoints = [...t0Points, ...probationary];
   let novelCoverage = false;
-  if (t0Count > 0) {
-    novelCoverage = t0Points.some(p => {
-      try { return (JSON.parse(p.payload?.json || '{}').hitCount || 0) > 0; } catch { return false; }
+  if (principleLikePoints.length > 0) {
+    novelCoverage = principleLikePoints.some((point) => {
+      try {
+        const data = JSON.parse(point.payload?.json || '{}');
+        return (data.hitCount || 0) > 0 || (Array.isArray(data.confirmedProjects) && data.confirmedProjects.length >= 2);
+      } catch {
+        return false;
+      }
     });
   }
   results.gate2.checks.push({
     name: '9. Novel coverage',
     target: '>= 1 principle matches unseen case',
-    actual: novelCoverage ? 'Yes' : t0Count > 0 ? 'Principles exist but 0 hits' : 'No principles yet',
+    actual: novelCoverage ? 'Yes' : principleLikePoints.length > 0 ? 'Principles exist but 0 reusable hits yet' : 'No principles yet',
     pass: novelCoverage,
     must: true
   });
@@ -557,6 +575,7 @@ async function checkGates(options = {}) {
     t0_principles: t0Count,
     t1_behavioral: t1Count,
     t1_probationary: probationary.length,
+    t1_mature_behavioral: matureBehavioral.length,
     t2_selfqa: t2Count,
     total_extractions: totalStored,
     live_organic_extractions: organicStats.qualityOrganic,

@@ -6,8 +6,10 @@ const os = require('os');
 const path = require('path');
 const { compactTranscript } = require('./extract-compact');
 
-const MIN_NEW_LINES = 8;
-const SESSION_MAX_AGE_MS = 10 * 60 * 1000;
+const MIN_NEW_LINES = 5;
+const SESSION_MAX_AGE_MS = 30 * 60 * 1000;
+const MIN_IMPORTANT_SIGNALS = 4;
+const MIN_SIGNAL_TRANSCRIPT_CHARS = 180;
 
 function getHomeDir() {
   return process.env.HOME || os.homedir();
@@ -298,6 +300,14 @@ function buildSessionData(session, startLine) {
   return buildClaudeSessionData(session.file, startLine);
 }
 
+function countImportantSignals(transcript) {
+  return String(transcript || '')
+    .split('\n')
+    .filter((line) => /^(User:|Assistant:|ToolCall |ToolOutput:|Bash result:|Session cwd:)/.test(line)
+      || /\b(error|fail|exception|fatal|denied|timeout|unauthorized|not found)\b/i.test(line))
+    .length;
+}
+
 async function maybeEvolve(homeDir = getHomeDir()) {
   try {
     const markerPath = getEvolveMarkerPath(homeDir);
@@ -326,7 +336,10 @@ async function runStopExtractor(options = {}) {
   const startLine = marker.file === session.file ? (marker.line || 0) : 0;
   const sessionData = buildSessionData(session, startLine);
   const newLines = sessionData.totalLines - startLine;
-  if (newLines < minNewLines) {
+  const importantSignals = countImportantSignals(sessionData.transcript);
+  const hasDenseSignal = importantSignals >= MIN_IMPORTANT_SIGNALS
+    && String(sessionData.transcript || '').length >= MIN_SIGNAL_TRANSCRIPT_CHARS;
+  if (newLines < minNewLines && !hasDenseSignal) {
     return { session, extracted: 0, skipped: 'not-enough-new-lines', newLines };
   }
 
@@ -401,6 +414,8 @@ if (require.main === module) {
 module.exports = {
   MIN_NEW_LINES,
   SESSION_MAX_AGE_MS,
+  MIN_IMPORTANT_SIGNALS,
+  MIN_SIGNAL_TRANSCRIPT_CHARS,
   extractProjectSlug,
   findLatestClaudeSession,
   findLatestCodexSession,
@@ -408,6 +423,7 @@ module.exports = {
   buildClaudeSessionData,
   buildCodexSessionData,
   buildSessionData,
+  countImportantSignals,
   runStopExtractor,
   normalizeToolName,
   formatToolCall,
