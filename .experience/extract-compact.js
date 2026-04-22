@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-const MAX_TRANSCRIPT_CHARS = 12_000;
+const MAX_TRANSCRIPT_CHARS = 18_000;
 const MAX_LINE_CHARS = 280;
 const MAX_DUPLICATE_LINES = 2;
 const ERROR_PATTERN = /error|fail|exception|fatal|denied|timeout|unauthorized|not found|Bash exit [1-9]/i;
@@ -15,8 +15,22 @@ function isImportantLine(line) {
     /^User:/.test(line) ||
     /^Assistant:/.test(line) ||
     /^ToolCall /.test(line) ||
+    /^ToolOutput:/.test(line) ||
+    /^Bash result:/.test(line) ||
+    /^Session cwd:/.test(line) ||
     ERROR_PATTERN.test(line)
   );
+}
+
+function collectImportantWindows(lines, radius = 1) {
+  const keep = new Set();
+  for (let index = 0; index < lines.length; index++) {
+    if (!isImportantLine(lines[index])) continue;
+    const start = Math.max(0, index - radius);
+    const end = Math.min(lines.length - 1, index + radius);
+    for (let cursor = start; cursor <= end; cursor++) keep.add(lines[cursor]);
+  }
+  return keep;
 }
 
 function dedupeLines(lines) {
@@ -57,8 +71,10 @@ function compactTranscript(transcript, maxChars = MAX_TRANSCRIPT_CHARS) {
 
   const important = lines.filter(isImportantLine);
   const unimportant = lines.filter((line) => !isImportantLine(line));
+  const importantWindowSet = collectImportantWindows(lines, 1);
+  const importantWithContext = lines.filter((line) => importantWindowSet.has(line));
 
-  const selected = fitRecentLines(important, maxChars);
+  const selected = fitRecentLines(importantWithContext, maxChars);
   let selectedText = selected.join('\n');
   if (selectedText.length >= maxChars) return selectedText.slice(-maxChars);
 

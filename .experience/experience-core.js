@@ -427,7 +427,7 @@ function assessHintUsage(surface, toolName, toolInput, runtimeMeta = {}) {
 }
 
 async function reconcilePendingHints(surfacedPoints, toolName, toolInput, meta = {}) {
-  const track = readSessionTrack();
+  const track = readSessionTrack(meta);
   if (!track.pending || typeof track.pending !== 'object' || Array.isArray(track.pending)) track.pending = {};
   const nowIso = new Date().toISOString();
   const nowMs = Date.now();
@@ -456,7 +456,11 @@ async function reconcilePendingHints(surfacedPoints, toolName, toolInput, meta =
 
     const assessment = assessHintUsage(pending, toolName, toolInput, meta);
     if (assessment.touched) {
-      await updatePointPayload(pending.collection, pending.id, applyHitUpdate);
+      await updatePointPayload(
+        pending.collection,
+        pending.id,
+        applyHitUpdateWithContext({ projectSlug: assessment.actionProject || null })
+      );
       activityLog({
         op: 'implicit-touch',
         collection: pending.collection,
@@ -500,7 +504,7 @@ async function reconcilePendingHints(surfacedPoints, toolName, toolInput, meta =
     });
   }
 
-  writeSessionTrack(track);
+  writeSessionTrack(track, meta);
   return results;
 }
 
@@ -966,9 +970,9 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
   }
 
   // Rerank by quality score before formatting (Phase 103, 104)
-  const r0 = dedupePointsBySource(rerankByQuality(applyScopeFilter(t0), queryDomain, queryProjectSlug), COLLECTIONS[0].name);
-  const r1 = dedupePointsBySource(rerankByQuality(applyScopeFilter(t1), queryDomain, queryProjectSlug), COLLECTIONS[1].name);
-  const r2 = dedupePointsBySource(rerankByQuality(applyScopeFilter(t2), queryDomain, queryProjectSlug), COLLECTIONS[2].name);
+  const r0 = dedupePointsBySource(rerankByQuality(applyScopeFilter(t0), queryDomain, queryProjectSlug, query), COLLECTIONS[0].name);
+  const r1 = dedupePointsBySource(rerankByQuality(applyScopeFilter(t1), queryDomain, queryProjectSlug, query), COLLECTIONS[1].name);
+  const r2 = dedupePointsBySource(rerankByQuality(applyScopeFilter(t2), queryDomain, queryProjectSlug, query), COLLECTIONS[2].name);
 
   const lines = [
     ...applyBudget(formatPoints(r0), COLLECTIONS[0].budgetChars),
@@ -1890,9 +1894,10 @@ function computeEffectiveConfidence(data) {
   return base * ageFactor;
 }
 
-function computeEffectiveScore(point, data, queryDomain, queryProjectSlug) {
+function computeEffectiveScore(point, data, queryDomain, queryProjectSlug, queryText = '') {
   const cosine = point.score || 0;
   const hitBoost = Math.log2(1 + (data.hitCount || 0)) * 0.08;
+  const normalizedQuery = String(queryText || '').toLowerCase();
   const daysSinceHit = data.lastHitAt
     ? (Date.now() - new Date(data.lastHitAt).getTime()) / 86400000
     : 0;
@@ -1918,7 +1923,10 @@ function computeEffectiveScore(point, data, queryDomain, queryProjectSlug) {
   let projectPenalty = 0;
   if (queryProjectSlug && data._projectSlug) {
     const scopeLang = data.scope?.lang;
-    if (queryProjectSlug !== data._projectSlug && scopeLang !== 'all') projectPenalty = 0.70;
+    const principleLike = !!data.principle || data.createdFrom === 'evolution-abstraction' || getValidatedHitCount(data) >= SEEDED_BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD;
+    if (queryProjectSlug !== data._projectSlug && scopeLang !== 'all') {
+      projectPenalty = principleLike ? 0.18 : 0.70;
+    }
   }
   // Phase 108: temporal boost/penalty from confirmedAt trace
   let temporalAdj = 0;
@@ -1929,20 +1937,29 @@ function computeEffectiveScore(point, data, queryDomain, queryProjectSlug) {
     if (daysSinceConfirm <= 7) temporalAdj = 0.05;       // recently confirmed — boost
     else if (daysSinceConfirm > 60) temporalAdj = -0.08;  // stale — penalty
   }
+  let conditionAdj = 0;
+  if (Array.isArray(data.conditions) && data.conditions.length > 0) {
+    const normalizedConditions = data.conditions
+      .map((condition) => String(condition || '').trim().toLowerCase())
+      .filter(Boolean);
+    const matchedConditions = normalizedConditions.filter((condition) => normalizedQuery.includes(condition));
+    if (matchedConditions.length === 0) conditionAdj = -0.14;
+    else conditionAdj = Math.min(0.12, matchedConditions.length * 0.04);
+  }
   // Phase 108: superseded experience penalty
   const supersededPenalty = data.superseded ? 0.15 : 0;
   // Wave 3: Confidence weighting — low-confidence entries rank lower
   const confWeight = computeEffectiveConfidence(data);
-  const rawScore = cosine + hitBoost - recencyPenalty - ignorePenalty - irrelevantPenalty - unusedPenalty - noiseReasonPenalty - domainPenalty - projectPenalty + temporalAdj - supersededPenalty;
+  const rawScore = cosine + hitBoost - recencyPenalty - ignorePenalty - irrelevantPenalty - unusedPenalty - noiseReasonPenalty - domainPenalty - projectPenalty + temporalAdj + conditionAdj - supersededPenalty;
   return rawScore * (0.6 + 0.4 * confWeight); // scale: 0.6 floor to avoid zeroing out
 }
 
-function rerankByQuality(points, queryDomain, queryProjectSlug) {
+function rerankByQuality(points, queryDomain, queryProjectSlug, queryText = '') {
   return points
     .map(p => {
       let data = {};
       try { data = JSON.parse(p.payload?.json || '{}'); } catch { /* default */ }
-      return { ...p, _effectiveScore: computeEffectiveScore(p, data, queryDomain, queryProjectSlug) };
+      return { ...p, _effectiveScore: computeEffectiveScore(p, data, queryDomain, queryProjectSlug, queryText) };
     })
     .sort((a, b) => b._effectiveScore - a._effectiveScore);
 }
@@ -2028,6 +2045,20 @@ function applyHitUpdate(data) {
   data.confirmedAt.push(data.lastHitAt);
   if (data.confirmedAt.length > 50) data.confirmedAt = data.confirmedAt.slice(-50);
   return data;
+}
+
+function applyHitUpdateWithContext(context = {}) {
+  return function applyHitWithContext(data) {
+    applyHitUpdate(data);
+    const projectSlug = String(context.projectSlug || '').trim();
+    if (projectSlug) {
+      if (!Array.isArray(data.confirmedProjects)) data.confirmedProjects = [];
+      if (!data.confirmedProjects.includes(projectSlug)) data.confirmedProjects.push(projectSlug);
+      if (data.confirmedProjects.length > 20) data.confirmedProjects = data.confirmedProjects.slice(-20);
+      data.lastConfirmedProject = projectSlug;
+    }
+    return data;
+  };
 }
 
 async function recordHit(collection, pointId) {
@@ -2138,9 +2169,14 @@ function getEdgesOfType(type) {
 
 // --- Evolution Engine (per D-03) ---
 
-const BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD = 20;
-const BEHAVIORAL_TO_PRINCIPLE_MIN_CONFIDENCE = 0.9;
-const BEHAVIORAL_TO_PRINCIPLE_MIN_AGE_MS = 5 * 24 * 60 * 60 * 1000;
+const T2_TO_T1_HIT_THRESHOLD = 2;
+const T2_TO_T1_MIN_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+const PROBATIONARY_PRINCIPLE_HIT_THRESHOLD = 2;
+const BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD = 8;
+const BEHAVIORAL_TO_PRINCIPLE_MIN_CONFIDENCE = 0.78;
+const BEHAVIORAL_TO_PRINCIPLE_MIN_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+const SEEDED_BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD = 5;
+const SEEDED_BEHAVIORAL_TO_PRINCIPLE_MIN_CONFIDENCE = 0.72;
 
 function resetPromotionProbation(data, tier) {
   ensureSignalMetrics(data);
@@ -2160,8 +2196,12 @@ function resetPromotionProbation(data, tier) {
 
 function shouldPromoteBehavioralToPrinciple(data, now = Date.now()) {
   if (!data || data.createdFrom === 'evolution-abstraction') return false;
-  if (getValidatedHitCount(data) < BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD) return false;
-  if ((data.confidence || 0) < BEHAVIORAL_TO_PRINCIPLE_MIN_CONFIDENCE) return false;
+  const organicHits = getValidatedHitCount(data);
+  const isSeeded = data.createdFrom === 'bulk-seed' || data.createdFrom === 'imported';
+  const minHits = isSeeded ? SEEDED_BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD : BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD;
+  const minConfidence = isSeeded ? SEEDED_BEHAVIORAL_TO_PRINCIPLE_MIN_CONFIDENCE : BEHAVIORAL_TO_PRINCIPLE_MIN_CONFIDENCE;
+  if (organicHits < minHits) return false;
+  if ((data.confidence || 0) < minConfidence) return false;
   const createdAt = new Date(data.createdAt || 0).getTime();
   if (!createdAt || Number.isNaN(createdAt)) return false;
   return (now - createdAt) >= BEHAVIORAL_TO_PRINCIPLE_MIN_AGE_MS;
@@ -2193,10 +2233,10 @@ async function evolve(trigger) {
       activityLog({ op: 'evolve-low-quality-cleanup', id: entry.id.slice(0, 8), reason: quality.reason });
       continue;
     }
-    if (!data || getValidatedHitCount(data) < 3) continue;
-    // Wave 1: Minimum 7-day age before promotion — prevent rapid-fire poisoning
+    if (!data || getValidatedHitCount(data) < T2_TO_T1_HIT_THRESHOLD) continue;
+    // Bootstrap faster: organic lessons should reach T1 while still fresh enough to matter.
     const ageMs = Date.now() - new Date(data.createdAt || 0).getTime();
-    if (ageMs < 7 * 24 * 60 * 60 * 1000) continue;
+    if (ageMs < T2_TO_T1_MIN_AGE_MS) continue;
     resetPromotionProbation(data, 1);
     data.promotedAt = new Date().toISOString();
     const vector = entry.vector || await getEmbedding(`${data.trigger} ${data.solution}`);
@@ -2212,7 +2252,7 @@ async function evolve(trigger) {
   for (const entry of t1PrincipleEntries) {
     const data = parsePayload(entry);
     if (!data) continue;
-    const promoteProbationary = data.createdFrom === 'evolution-abstraction' && getValidatedHitCount(data) >= 3;
+    const promoteProbationary = data.createdFrom === 'evolution-abstraction' && getValidatedHitCount(data) >= PROBATIONARY_PRINCIPLE_HIT_THRESHOLD;
     const promoteMatureBehavioral = shouldPromoteBehavioralToPrinciple(data);
     if (!promoteProbationary && !promoteMatureBehavioral) continue;
     resetPromotionProbation(data, 0);
