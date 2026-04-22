@@ -459,7 +459,11 @@ async function reconcilePendingHints(surfacedPoints, toolName, toolInput, meta =
       await updatePointPayload(
         pending.collection,
         pending.id,
-        applyHitUpdateWithContext({ projectSlug: assessment.actionProject || null })
+        applyHitUpdateWithContext({
+          projectSlug: assessment.actionProject || null,
+          sourceSession: meta.sourceSession || null,
+          sourceKind: meta.sourceKind || null,
+        })
       );
       activityLog({
         op: 'implicit-touch',
@@ -1170,6 +1174,23 @@ function isPlaceholderExtractField(field, value) {
   return !!placeholders && placeholders.has(normalized);
 }
 
+function isMetaWorkflowExtract(qa) {
+  if (!qa || typeof qa !== 'object') return false;
+  const trigger = normalizeExtractText(qa.trigger);
+  const question = normalizeExtractText(qa.question);
+  const solution = normalizeExtractText(qa.solution);
+  const why = normalizeExtractText(qa.why);
+  const combined = [trigger, question, solution, why].filter(Boolean).join(' ');
+
+  if (!combined) return false;
+  if (/^(narrow )?locked scope\b/.test(trigger)) return true;
+  if (/\brisk of unintended scope expansion\b/.test(question)) return true;
+  if (/\bstrictly adhere to the locked scope\b/.test(solution)) return true;
+
+  return /\b(qc-lock|qc-flow|artifact locking|scope expansion|protected boundaries|affected area|phase purpose|covers requirements|execution mode|relock)\b/.test(combined)
+    || (/\blocked scope\b/.test(combined) && /\b(related tests|deploy|verify|artifact)\b/.test(combined));
+}
+
 function assessExtractedQaQuality(qa) {
   if (!qa || typeof qa !== 'object') return { ok: false, reason: 'missing_qa' };
   const trigger = normalizeExtractText(qa.trigger);
@@ -1186,6 +1207,7 @@ function assessExtractedQaQuality(qa) {
   if (/^(implement|update|debug|review)\b/.test(solution) && solution.length < 80) {
     return { ok: false, reason: 'generic_solution' };
   }
+  if (isMetaWorkflowExtract(qa)) return { ok: false, reason: 'meta_workflow_extract' };
   if (trigger.length < 8) return { ok: false, reason: 'trigger_too_short' };
   if (solution.length < 12) return { ok: false, reason: 'solution_too_short' };
   return { ok: true, reason: null };
@@ -1574,7 +1596,7 @@ async function brainRelevanceFilter(actionQuery, suggestionLines, signal, projec
 }
 
 async function extractQA(mistake) {
-  const prompt = `Given this session excerpt where something went wrong:\n${mistake.excerpt.slice(0, 1500)}\n\nExtract ONE reusable lesson as JSON (no markdown).\nRules:\n- trigger must be a concrete condition rooted in the excerpt, never placeholders like "when this fires"\n- question must briefly name the mistake being prevented\n- solution must be a concrete preventive action, never placeholders like "what to do"\n- if there is no concrete reusable lesson, return {"skip":true,"reason":"no_reusable_lesson"}\n\nReturn JSON only:\n{"trigger":"specific trigger from the excerpt","question":"brief mistake description","reasoning":["step1","step2"],"solution":"specific preventive action","why":"root cause or incident that created this rule","scope":{"lang":"C#|JavaScript|all","repos":[],"filePattern":"*.cs"}}`;
+  const prompt = `Given this session excerpt where something went wrong:\n${mistake.excerpt.slice(0, 1500)}\n\nExtract ONE reusable lesson as JSON (no markdown).\nRules:\n- trigger must be a concrete condition rooted in the excerpt, never placeholders like "when this fires"\n- question must briefly name the mistake being prevented\n- solution must be a concrete preventive action, never placeholders like "what to do"\n- if the excerpt is mainly about workflow management, lock artifacts, planning scope, deploy checklist, or AI execution process rather than a reusable coding/runtime mistake, return {"skip":true,"reason":"meta_workflow"}\n- if there is no concrete reusable lesson, return {"skip":true,"reason":"no_reusable_lesson"}\n\nReturn JSON only:\n{"trigger":"specific trigger from the excerpt","question":"brief mistake description","reasoning":["step1","step2"],"solution":"specific preventive action","why":"root cause or incident that created this rule","scope":{"lang":"C#|JavaScript|all","repos":[],"filePattern":"*.cs"}}`;
   return callBrainWithFallback(prompt, { source: 'extract' });
 }
 
@@ -2044,6 +2066,8 @@ function applyHitUpdate(data) {
   // Phase 108: temporal trace — append to confirmedAt (cap at 50)
   data.confirmedAt.push(data.lastHitAt);
   if (data.confirmedAt.length > 50) data.confirmedAt = data.confirmedAt.slice(-50);
+  const confidenceFloor = 0.50 + Math.min(0.18, (data.validatedCount || 0) * 0.04);
+  data.confidence = Math.max(Number(data.confidence || 0), confidenceFloor);
   return data;
 }
 
@@ -2056,6 +2080,20 @@ function applyHitUpdateWithContext(context = {}) {
       if (!data.confirmedProjects.includes(projectSlug)) data.confirmedProjects.push(projectSlug);
       if (data.confirmedProjects.length > 20) data.confirmedProjects = data.confirmedProjects.slice(-20);
       data.lastConfirmedProject = projectSlug;
+    }
+    const sourceSession = String(context.sourceSession || '').trim();
+    if (sourceSession) {
+      if (!Array.isArray(data.confirmedSessions)) data.confirmedSessions = [];
+      if (!data.confirmedSessions.includes(sourceSession)) data.confirmedSessions.push(sourceSession);
+      if (data.confirmedSessions.length > 20) data.confirmedSessions = data.confirmedSessions.slice(-20);
+      data.lastConfirmedSession = sourceSession;
+    }
+    const sourceKind = String(context.sourceKind || '').trim();
+    if (sourceKind) {
+      if (!Array.isArray(data.confirmedSourceKinds)) data.confirmedSourceKinds = [];
+      if (!data.confirmedSourceKinds.includes(sourceKind)) data.confirmedSourceKinds.push(sourceKind);
+      if (data.confirmedSourceKinds.length > 20) data.confirmedSourceKinds = data.confirmedSourceKinds.slice(-20);
+      data.lastConfirmedSourceKind = sourceKind;
     }
     return data;
   };
@@ -2177,6 +2215,17 @@ const BEHAVIORAL_TO_PRINCIPLE_MIN_CONFIDENCE = 0.78;
 const BEHAVIORAL_TO_PRINCIPLE_MIN_AGE_MS = 3 * 24 * 60 * 60 * 1000;
 const SEEDED_BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD = 5;
 const SEEDED_BEHAVIORAL_TO_PRINCIPLE_MIN_CONFIDENCE = 0.72;
+const DOGFOOD_BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD = 4;
+const DOGFOOD_BEHAVIORAL_TO_PRINCIPLE_MIN_CONFIDENCE = 0.64;
+
+function uniqueConfirmationCount(data, field) {
+  const values = Array.isArray(data?.[field]) ? data[field] : [];
+  return new Set(values.map((value) => String(value || '').trim()).filter(Boolean)).size;
+}
+
+function hasRepeatedSessionConfirmations(data, minCount) {
+  return uniqueConfirmationCount(data, 'confirmedSessions') >= minCount;
+}
 
 function resetPromotionProbation(data, tier) {
   ensureSignalMetrics(data);
@@ -2196,6 +2245,14 @@ function resetPromotionProbation(data, tier) {
 
 function shouldPromoteBehavioralToPrinciple(data, now = Date.now()) {
   if (!data || data.createdFrom === 'evolution-abstraction') return false;
+  if (
+    data.createdFrom === 'session-extractor'
+    && getValidatedHitCount(data) >= DOGFOOD_BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD
+    && (data.confidence || 0) >= DOGFOOD_BEHAVIORAL_TO_PRINCIPLE_MIN_CONFIDENCE
+    && hasRepeatedSessionConfirmations(data, DOGFOOD_BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD)
+  ) {
+    return true;
+  }
   const organicHits = getValidatedHitCount(data);
   const isSeeded = data.createdFrom === 'bulk-seed' || data.createdFrom === 'imported';
   const minHits = isSeeded ? SEEDED_BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD : BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD;
@@ -2236,9 +2293,12 @@ async function evolve(trigger) {
     if (!data || getValidatedHitCount(data) < T2_TO_T1_HIT_THRESHOLD) continue;
     // Bootstrap faster: organic lessons should reach T1 while still fresh enough to matter.
     const ageMs = Date.now() - new Date(data.createdAt || 0).getTime();
-    if (ageMs < T2_TO_T1_MIN_AGE_MS) continue;
+    const fastDogfoodPromote = data.createdFrom === 'session-extractor'
+      && hasRepeatedSessionConfirmations(data, T2_TO_T1_HIT_THRESHOLD);
+    if (ageMs < T2_TO_T1_MIN_AGE_MS && !fastDogfoodPromote) continue;
     resetPromotionProbation(data, 1);
     data.promotedAt = new Date().toISOString();
+    if (fastDogfoodPromote) data.promotedVia = 'dogfood-confirmation';
     const vector = entry.vector || await getEmbedding(`${data.trigger} ${data.solution}`);
     if (!vector) continue;
     await upsertEntry('experience-behavioral', entry.id, vector, data);
