@@ -18,6 +18,10 @@ env:
   PROD_HOST: ${{ secrets.VPS_HOST }}
   PROD_PORT: ${{ secrets.VPS_PORT }}
   PROD_USER: ${{ secrets.VPS_USER }}
+  TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+  TS_TAGS: ${{ secrets.TS_TAGS }}
+  HAS_TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY != '' }}
+  HAS_TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET != '' }}
 
 jobs:
   deploy:
@@ -35,7 +39,40 @@ jobs:
       - name: CI test suite
         run: npm run test:ci
 
-      - name: Connect to Tailscale
+      - name: Validate deployment secrets
+        env:
+          HAS_VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          missing=0
+          if [ -z "$PROD_HOST" ]; then
+            echo "::error::Missing required secret VPS_HOST"
+            missing=1
+          fi
+          if [ -z "$PROD_USER" ]; then
+            echo "::error::Missing required secret VPS_USER"
+            missing=1
+          fi
+          if [ "$HAS_VPS_SSH_PRIVATE_KEY" != "true" ]; then
+            echo "::error::Missing required secret VPS_SSH_PRIVATE_KEY"
+            missing=1
+          fi
+          if [ "$HAS_TAILSCALE_AUTHKEY" != "true" ] && { [ -z "$TS_OAUTH_CLIENT_ID" ] || [ "$HAS_TS_OAUTH_SECRET" != "true" ] || [ -z "$TS_TAGS" ]; }; then
+            echo "::error::Missing Tailscale credentials. Set TAILSCALE_AUTHKEY, or set TS_OAUTH_CLIENT_ID, TS_OAUTH_SECRET, and TS_TAGS."
+            missing=1
+          fi
+          exit "$missing"
+
+      - name: Connect to Tailscale with OAuth
+        if: ${{ env.HAS_TAILSCALE_AUTHKEY == 'false' && env.TS_OAUTH_CLIENT_ID != '' && env.HAS_TS_OAUTH_SECRET == 'true' && env.TS_TAGS != '' }}
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: ${{ secrets.TS_TAGS }}
+
+      - name: Connect to Tailscale with auth key
+        if: ${{ env.HAS_TAILSCALE_AUTHKEY == 'true' }}
         uses: tailscale/github-action@v4
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
