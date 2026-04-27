@@ -179,7 +179,7 @@ test('remote prompt hook proxies prompt search to VPS', { skip: REMOTE_POSITIVE_
       res.end(JSON.stringify({
         suggestions: '💡 [Suggestion] Remote prompt hint',
         hasSuggestions: true,
-        surfacedIds: [],
+        surfacedIds: [{ collection: 'experience-selfqa', id: 'prompt-remote-1', solution: 'remote prompt hint' }],
         route: null,
       }));
     });
@@ -206,8 +206,14 @@ test('remote prompt hook proxies prompt search to VPS', { skip: REMOTE_POSITIVE_
       assert.equal(promptOut.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
     }
     assert.match(promptText, /Remote prompt hint/);
+    assert.doesNotMatch(promptText, /\[Model Route\]/);
     assert.equal(received[0].url, '/api/intercept');
     assert.equal(received[0].body.toolName, 'UserPrompt');
+    const statePath = path.join(homeDir, '.experience', 'tmp', 'last-suggestions.json');
+    assert.equal(fs.existsSync(statePath), true);
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    assert.equal(state.tool, 'UserPrompt');
+    assert.equal(state.surfacedIds[0].id, 'prompt-remote-1');
   } finally {
     server.close();
   }

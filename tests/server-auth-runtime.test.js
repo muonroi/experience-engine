@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
+const { Readable } = require('node:stream');
 const { spawn } = require('node:child_process');
 
 const REPO_ROOT = path.join(__dirname, '..');
@@ -83,6 +84,31 @@ async function startServer(config) {
   };
 }
 
+function makeJsonRequest(body) {
+  const req = Readable.from([Buffer.from(JSON.stringify(body))]);
+  req.headers = {};
+  return req;
+}
+
+function makeJsonResponse() {
+  let statusCode = null;
+  let payload = '';
+  return {
+    writeHead(status) {
+      statusCode = status;
+    },
+    end(chunk) {
+      payload += chunk || '';
+    },
+    get statusCode() {
+      return statusCode;
+    },
+    json() {
+      return JSON.parse(payload || '{}');
+    },
+  };
+}
+
 test('protected GET endpoints require auth when token is configured', async () => {
   const token = 'test-server-token';
   const runtime = await startServer({
@@ -124,6 +150,51 @@ test('server resolves runtime helpers from the repo .experience directory', () =
   assert.equal(serverModule.isReadOnlyApiPath('/api/user'), false);
   const core = serverModule.loadExperienceCore();
   assert.equal(typeof core.intercept, 'function');
+});
+
+test('POST /api/intercept reuses loaded core and returns hook-mode route null', async () => {
+  const serverModule = require(path.join(REPO_ROOT, 'server.js'));
+  const corePath = path.join(REPO_ROOT, '.experience', 'experience-core.js');
+  const core = serverModule.loadExperienceCore();
+  const originalInterceptWithMeta = core.interceptWithMeta;
+  let called = 0;
+  core.interceptWithMeta = async (toolName, toolInput, _signal, meta) => {
+    called += 1;
+    assert.equal(toolName, 'UserPrompt');
+    assert.equal(toolInput.command, 'fix hook fast path');
+    assert.equal(meta.sourceKind, 'codex-hook');
+    return {
+      suggestions: '💡 [Suggestion] cached core response',
+      surfacedIds: [{ collection: 'experience-selfqa', id: 'cached-1' }],
+      route: null,
+    };
+  };
+
+  try {
+    const req = makeJsonRequest({
+      toolName: 'UserPrompt',
+      toolInput: { command: 'fix hook fast path' },
+      sourceKind: 'codex-hook',
+      sourceRuntime: 'codex-wsl',
+      sourceSession: 'server-intercept-test',
+      cwd: '/repo/experience-engine',
+    });
+    const res = makeJsonResponse();
+    const started = Date.now();
+    await serverModule.handleIntercept(req, res);
+    const body = res.json();
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(called, 1, 'handleIntercept should use the already loaded module instance');
+    assert.ok(Date.now() - started < 1000, 'hook-mode server intercept should not block on a fresh module load');
+    assert.equal(body.suggestions, '💡 [Suggestion] cached core response');
+    assert.equal(body.hasSuggestions, true);
+    assert.deepEqual(body.surfacedIds, [{ collection: 'experience-selfqa', id: 'cached-1' }]);
+    assert.equal(body.route, null);
+    assert.equal(require.cache[require.resolve(corePath)]?.exports.interceptWithMeta, core.interceptWithMeta);
+  } finally {
+    core.interceptWithMeta = originalInterceptWithMeta;
+  }
 });
 
 test('read auth token only unlocks observability endpoints', async () => {

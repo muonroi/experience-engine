@@ -14,7 +14,15 @@ process.env.EXPERIENCE_QDRANT_URL = 'http://127.0.0.1:1';
 
 const CORE_PATH = path.join(__dirname, '..', '.experience', 'experience-core.js');
 delete require.cache[require.resolve(CORE_PATH)];
-const { evolve, _recordHitUpdatesFields: applyHitUpdate, _buildStorePayload: buildStorePayload, _applyHoldoutOutcome: applyHoldoutOutcome } = require(CORE_PATH);
+const {
+  evolve,
+  _recordHitUpdatesFields: applyHitUpdate,
+  _buildStorePayload: buildStorePayload,
+  _applyHoldoutOutcome: applyHoldoutOutcome,
+  _formatPoints: formatPoints,
+  _selectProbationaryT2Points: selectProbationaryT2Points,
+  _isProbationaryT2Candidate: isProbationaryT2Candidate,
+} = require(CORE_PATH);
 
 const STORE_DIR = path.join(TEST_HOME, '.experience', 'store', process.env.EXP_USER || 'default');
 
@@ -39,6 +47,16 @@ function makeEntry(id, data) {
   };
 }
 
+function makeScoredPoint(collection, id, score, data) {
+  return {
+    id,
+    score,
+    _effectiveScore: score,
+    _collection: collection,
+    payload: { json: JSON.stringify({ id, ...data }) },
+  };
+}
+
 function resetStore(selfqaEntries) {
   writeCollection('experience-selfqa', selfqaEntries);
   writeCollection('experience-behavioral', []);
@@ -48,6 +66,86 @@ function resetStore(selfqaEntries) {
 
 test.after(() => {
   fs.rmSync(TEST_HOME, { recursive: true, force: true });
+});
+
+test('fresh high-scoring T2 can surface as one probationary suggestion without becoming high confidence', () => {
+  const freshT2 = makeScoredPoint('experience-selfqa', 'fresh-t2', 0.92, {
+    trigger: 'prompt-time hook guidance',
+    question: 'fast path misses relevant prompt guidance',
+    solution: 'Surface one high-score fresh T2 as probationary so it can receive feedback.',
+    confidence: 0.5,
+    hitCount: 0,
+    validatedCount: 0,
+    surfaceCount: 0,
+    signalVersion: 2,
+    tier: 2,
+  });
+  const secondFreshT2 = makeScoredPoint('experience-selfqa', 'fresh-t2-second', 0.91, {
+    trigger: 'second prompt-time hook guidance',
+    question: 'second fresh hint',
+    solution: 'Do not surface more than one probationary T2 in a single intercept.',
+    confidence: 0.5,
+    hitCount: 0,
+    validatedCount: 0,
+    surfaceCount: 0,
+    signalVersion: 2,
+    tier: 2,
+  });
+
+  const selected = selectProbationaryT2Points([freshT2, secondFreshT2]);
+  assert.equal(isProbationaryT2Candidate(freshT2), true);
+  assert.equal(selected.filter(point => point._probationaryT2).length, 1);
+
+  const lines = formatPoints(selected);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /Probationary Suggestion/);
+  assert.doesNotMatch(lines[0], /Experience - High Confidence/);
+  assert.match(lines[0], /\[id:fresh-t2 col:experience-selfqa\]/);
+});
+
+test('probationary T2 does not surface after surface limit, debt, or low raw score', () => {
+  const base = {
+    trigger: 'prompt-time hook guidance',
+    question: 'fresh hint',
+    solution: 'Only fresh high-score T2 entries with clean debt can surface probationarily.',
+    confidence: 0.5,
+    hitCount: 0,
+    validatedCount: 0,
+    surfaceCount: 0,
+    signalVersion: 2,
+    tier: 2,
+  };
+
+  const overLimit = makeScoredPoint('experience-selfqa', 'over-limit', 0.92, { ...base, surfaceCount: 2 });
+  const ignored = makeScoredPoint('experience-selfqa', 'ignored', 0.92, { ...base, ignoreCount: 1 });
+  const irrelevant = makeScoredPoint('experience-selfqa', 'irrelevant', 0.92, { ...base, irrelevantCount: 1 });
+  const lowScore = makeScoredPoint('experience-selfqa', 'low-score', 0.77, base);
+
+  for (const point of [overLimit, ignored, irrelevant, lowScore]) {
+    assert.equal(isProbationaryT2Candidate(point), false, `${point.id} should not be probationary`);
+  }
+  assert.equal(formatPoints(selectProbationaryT2Points([overLimit, ignored, irrelevant, lowScore])).length, 0);
+});
+
+test('T1 and T0 keep normal confidence filtering and high-confidence formatting', () => {
+  const lowConfidenceT1 = makeScoredPoint('experience-behavioral', 'low-t1', 0.95, {
+    solution: 'Low-confidence T1 should not bypass the normal confidence floor.',
+    confidence: 0.5,
+    hitCount: 0,
+    tier: 1,
+  });
+  const highConfidenceT0 = makeScoredPoint('experience-principles', 'high-t0', 0.9, {
+    solution: 'High-confidence T0 still formats as a high-confidence warning.',
+    confidence: 0.9,
+    hitCount: 2,
+    tier: 0,
+  });
+
+  assert.equal(formatPoints([lowConfidenceT1]).length, 0);
+  const lines = formatPoints([highConfidenceT0]);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /Experience - High Confidence/);
+  assert.doesNotMatch(lines[0], /Probationary Suggestion/);
 });
 
 test('evolve promotes validated T2 entries and clears stale demotion debt', async () => {

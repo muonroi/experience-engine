@@ -189,7 +189,7 @@ async function handleIntercept(req, res) {
     sourceSession: body.sourceSession || null,
     cwd: body.cwd || null,
   };
-  const { interceptWithMeta, intercept: interceptFresh } = loadExperienceCore({ fresh: true });
+  const { interceptWithMeta, intercept: interceptFresh } = loadExperienceCore();
   const resultMeta = typeof interceptWithMeta === 'function'
     ? await interceptWithMeta(body.toolName, body.toolInput || {}, undefined, meta)
     : {

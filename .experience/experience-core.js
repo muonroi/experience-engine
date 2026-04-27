@@ -161,6 +161,8 @@ const VALID_FEEDBACK_VERDICTS = new Set(['FOLLOWED', 'IGNORED', 'IRRELEVANT']);
 const VALID_NOISE_REASONS = new Set(['wrong_repo', 'wrong_language', 'wrong_task', 'stale_rule']);
 const UNUSED_NO_TOUCH_THRESHOLD = 3;
 const PENDING_HINT_TTL_MS = 20 * 60 * 1000;
+const PROBATIONARY_T2_RAW_SCORE_THRESHOLD = 0.78;
+const PROBATIONARY_T2_SURFACE_LIMIT = 2;
 
 // --- Session-persistent tracking (file-based, survives process restarts) ---
 // Each hook invocation is a NEW process, so in-memory arrays are useless.
@@ -679,6 +681,12 @@ function resolveRuntimeFromSourceMeta(sourceMeta, fallbackRuntime) {
   return fallbackRuntime;
 }
 
+function isHookRealtimeFastPath(toolName, sourceMeta) {
+  const runtime = String(sourceMeta?.sourceRuntime || '').trim().toLowerCase();
+  return sourceMeta?.sourceKind === 'codex-hook'
+    || (String(toolName || '') === 'UserPrompt' && runtime.startsWith('codex'));
+}
+
 function extractProjectPath(toolInput) {
   const raw = toolInput?.file_path || toolInput?.path || '';
   if (raw) return raw.replace(/\\/g, '/');
@@ -900,6 +908,7 @@ function isReadOnlyCommand(toolName, toolInput) {
 async function interceptWithMeta(toolName, toolInput, signal, meta) {
   const sourceMeta = normalizeSourceMeta(meta);
   const runtime = resolveRuntimeFromSourceMeta(sourceMeta, detectRuntime(toolName));
+  const hookRealtimeFastPath = isHookRealtimeFastPath(toolName, sourceMeta);
   // P5: Skip read-only commands — no code mutation = no risk = no warning needed
   if (isReadOnlyCommand(toolName, toolInput)) {
     return { suggestions: null, surfacedIds: [] };
@@ -931,8 +940,9 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
   const vector = await getEmbedding(query, signal);
   if (!vector) return null;
 
-  // Route model in parallel with searches when routing is enabled (zero added latency)
-  const routePromise = isRouterEnabled()
+  // Route model in parallel with searches for non-hook callers. Realtime hooks
+  // must not block on routing before the agent sees prompt-time guidance.
+  const routePromise = !hookRealtimeFastPath && isRouterEnabled()
     ? routeModel(query, { files: [filePath].filter(Boolean), domain: queryDomain }, runtime).catch(() => null)
     : Promise.resolve(null);
 
@@ -976,7 +986,9 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
   // Rerank by quality score before formatting (Phase 103, 104)
   const r0 = dedupePointsBySource(rerankByQuality(applyScopeFilter(t0), queryDomain, queryProjectSlug, query), COLLECTIONS[0].name);
   const r1 = dedupePointsBySource(rerankByQuality(applyScopeFilter(t1), queryDomain, queryProjectSlug, query), COLLECTIONS[1].name);
-  const r2 = dedupePointsBySource(rerankByQuality(applyScopeFilter(t2), queryDomain, queryProjectSlug, query), COLLECTIONS[2].name);
+  const r2 = selectProbationaryT2Points(
+    dedupePointsBySource(rerankByQuality(applyScopeFilter(t2), queryDomain, queryProjectSlug, query), COLLECTIONS[2].name)
+  );
 
   const lines = [
     ...applyBudget(formatPoints(r0), COLLECTIONS[0].budgetChars),
@@ -1017,7 +1029,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
   const surfaced = allReranked.filter(p => {
     try {
       const exp = JSON.parse(p.payload?.json || '{}');
-      return exp.solution && computeEffectiveConfidence(exp) >= getMinConfidence();
+      return exp.solution && (p._probationaryT2 || computeEffectiveConfidence(exp) >= getMinConfidence());
     } catch { return false; }
   });
   if (surfaced.length > 0) {
@@ -1070,8 +1082,9 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
     }
   }
 
-  // P6: Brain relevance filter — ask brain if remaining suggestions are relevant to THIS action
-  if (lines.length > 0 && getConfig().brainFilter !== false) {
+  // P6: Brain relevance filter — ask brain if remaining suggestions are relevant
+  // to THIS action. Realtime hooks skip this blocking brain call.
+  if (!hookRealtimeFastPath && lines.length > 0 && getConfig().brainFilter !== false) {
     try {
       const kept = await brainRelevanceFilter(query, lines, signal, queryProjectSlug);
       if (kept !== null) {
@@ -2008,6 +2021,42 @@ function rerankByQuality(points, queryDomain, queryProjectSlug, queryText = '') 
     .sort((a, b) => b._effectiveScore - a._effectiveScore);
 }
 
+function getSurfaceCountForProbation(data) {
+  if (!data || typeof data !== 'object') return 0;
+  if (typeof data.surfaceCount === 'number') return data.surfaceCount;
+  return (data.signalVersion || 0) >= 2 ? 0 : (data.hitCount || 0);
+}
+
+function hasProbationaryT2Debt(data) {
+  if (!data || typeof data !== 'object') return true;
+  if ((data.ignoreCount || 0) > 0) return true;
+  if ((data.irrelevantCount || 0) > 0) return true;
+  const noiseCounts = data.noiseReasonCounts || {};
+  return Object.values(noiseCounts).some(value => Number(value || 0) > 0);
+}
+
+function isProbationaryT2Candidate(point) {
+  if (!point || point._collection !== SELFQA_COLLECTION) return false;
+  const rawScore = Number(point.score || 0);
+  if (rawScore < PROBATIONARY_T2_RAW_SCORE_THRESHOLD) return false;
+  let data;
+  try { data = JSON.parse(point.payload?.json || '{}'); } catch { return false; }
+  if (!data.solution) return false;
+  if (computeEffectiveConfidence(data) >= getMinConfidence()) return false;
+  if (getSurfaceCountForProbation(data) >= PROBATIONARY_T2_SURFACE_LIMIT) return false;
+  if (hasProbationaryT2Debt(data)) return false;
+  return true;
+}
+
+function selectProbationaryT2Points(points) {
+  let selected = false;
+  return (points || []).map(point => {
+    if (selected || !isProbationaryT2Candidate(point)) return point;
+    selected = true;
+    return { ...point, _probationaryT2: true };
+  });
+}
+
 // --- Formatting ---
 
 function formatPoints(points) {
@@ -2018,11 +2067,13 @@ function formatPoints(points) {
     if (!exp.solution) continue;
     // Use effective confidence for the MIN_CONFIDENCE filter (NOISE-03)
     const effConf = computeEffectiveConfidence(exp);
-    if (effConf < getMinConfidence()) continue;
+    if (effConf < getMinConfidence() && !point._probationaryT2) continue;
     // Use _effectiveScore (from rerankByQuality) for display, fallback to raw score
     const displayScore = point._effectiveScore ?? point.score ?? 0;
     let line;
-    if (displayScore >= getHighConfidence()) {
+    if (point._probationaryT2) {
+      line = `💡 [Probationary Suggestion (${displayScore.toFixed(2)})]: ${exp.solution}`;
+    } else if (displayScore >= getHighConfidence()) {
       line = `⚠️ [Experience - High Confidence (${displayScore.toFixed(2)})]: ${exp.solution}`;
     } else {
       line = `💡 [Suggestion (${displayScore.toFixed(2)})]: ${exp.solution}`;
@@ -3658,4 +3709,4 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
 
 // --- Exports ---
 
-module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, recordSurface, recordHoldoutOutcome, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeTask, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _applySurfaceUpdate: applySurfaceUpdate, _applyHoldoutOutcome: recordHoldoutOutcomeOnData, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _recordSurfaceUpdatesFields: applySurfaceUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _reconcilePendingHints: reconcilePendingHints, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _resolveRuntimeFromSourceMeta: resolveRuntimeFromSourceMeta, _isRouterEnabled: isRouterEnabled, _assessExtractedQaQuality: assessExtractedQaQuality, _normalizeExtractText: normalizeExtractText, _detectMistakes: detectMistakes, _shouldPromoteBehavioralToPrinciple: shouldPromoteBehavioralToPrinciple, _buildPrincipleText: buildPrincipleText, _getValidatedHitCount: getValidatedHitCount };
+module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, recordSurface, recordHoldoutOutcome, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeTask, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _applySurfaceUpdate: applySurfaceUpdate, _applyHoldoutOutcome: recordHoldoutOutcomeOnData, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _isProbationaryT2Candidate: isProbationaryT2Candidate, _selectProbationaryT2Points: selectProbationaryT2Points, _isHookRealtimeFastPath: isHookRealtimeFastPath, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _recordSurfaceUpdatesFields: applySurfaceUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _reconcilePendingHints: reconcilePendingHints, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _resolveRuntimeFromSourceMeta: resolveRuntimeFromSourceMeta, _isRouterEnabled: isRouterEnabled, _assessExtractedQaQuality: assessExtractedQaQuality, _normalizeExtractText: normalizeExtractText, _detectMistakes: detectMistakes, _shouldPromoteBehavioralToPrinciple: shouldPromoteBehavioralToPrinciple, _buildPrincipleText: buildPrincipleText, _getValidatedHitCount: getValidatedHitCount };
