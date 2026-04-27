@@ -197,6 +197,55 @@ test('POST /api/intercept reuses loaded core and returns hook-mode route null', 
   }
 });
 
+test('POST /api/prompt-stale calls loaded core helper and returns bounded result', async () => {
+  const serverModule = require(path.join(REPO_ROOT, 'server.js'));
+  const core = serverModule.loadExperienceCore();
+  const originalHelper = core._reconcileStalePromptSuggestions;
+  let called = 0;
+  core._reconcileStalePromptSuggestions = async (state, nextPromptMeta) => {
+    called += 1;
+    assert.equal(state.tool, 'UserPrompt');
+    assert.equal(nextPromptMeta.prompt, 'next prompt');
+    return {
+      ok: true,
+      unused: [{ collection: 'experience-selfqa', id: 'prompt-stale-1', reason: 'unused' }],
+      irrelevant: [],
+      expired: [],
+      extraIgnored: true,
+    };
+  };
+
+  try {
+    const req = makeJsonRequest({
+      state: {
+        ts: new Date(Date.now() - 11_000).toISOString(),
+        tool: 'UserPrompt',
+        sourceHook: 'UserPromptSubmit',
+        surfacedIds: [{ collection: 'experience-selfqa', id: 'prompt-stale-1' }],
+      },
+      nextPromptMeta: {
+        prompt: 'next prompt',
+        cwd: '/repo/experience-engine',
+        sourceKind: 'codex-hook',
+      },
+    });
+    const res = makeJsonResponse();
+    await serverModule.handlePromptStale(req, res);
+    const body = res.json();
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(called, 1);
+    assert.deepEqual(body, {
+      ok: true,
+      unused: [{ collection: 'experience-selfqa', id: 'prompt-stale-1', reason: 'unused' }],
+      irrelevant: [],
+      expired: [],
+    });
+  } finally {
+    core._reconcileStalePromptSuggestions = originalHelper;
+  }
+});
+
 test('read auth token only unlocks observability endpoints', async () => {
   const token = 'test-server-token';
   const readToken = 'test-read-token';

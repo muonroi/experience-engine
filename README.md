@@ -576,10 +576,11 @@ subgraph SERVER["VPS Brain Server"]
     subgraph API["server.js / API Layer"]
         I1["POST /api/intercept"]
         I2["POST /api/posttool"]
-        I3["POST /api/extract"]
-        I4["POST /api/feedback"]
-        I5["GET /api/gates"]
-        I6["POST /api/brain"]
+        I3["POST /api/prompt-stale"]
+        I4["POST /api/extract"]
+        I5["POST /api/feedback"]
+        I6["GET /api/gates"]
+        I7["POST /api/brain"]
     end
 
     subgraph CORE_LAYER["Processing"]
@@ -739,6 +740,7 @@ service supervision.
 | `GET` | `/health` | Qdrant + FileStore status |
 | `POST` | `/api/intercept` | Query experience before tool call |
 | `POST` | `/api/posttool` | Canonical post-tool reconciliation + judge enqueue |
+| `POST` | `/api/prompt-stale` | Reconcile stale prompt-only suggestions from thin clients |
 | `POST` | `/api/extract` | Extract lessons from session transcript |
 | `POST` | `/api/evolve` | Trigger evolution cycle |
 | `GET` | `/api/stats` | Observability data (`?since=7d`, `?all=true`) |

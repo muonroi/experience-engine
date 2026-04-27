@@ -22,6 +22,7 @@ const {
   _formatPoints: formatPoints,
   _selectProbationaryT2Points: selectProbationaryT2Points,
   _isProbationaryT2Candidate: isProbationaryT2Candidate,
+  _reconcileStalePromptSuggestions: reconcileStalePromptSuggestions,
 } = require(CORE_PATH);
 
 const STORE_DIR = path.join(TEST_HOME, '.experience', 'store', process.env.EXP_USER || 'default');
@@ -146,6 +147,101 @@ test('T1 and T0 keep normal confidence filtering and high-confidence formatting'
   assert.equal(lines.length, 1);
   assert.match(lines[0], /Experience - High Confidence/);
   assert.doesNotMatch(lines[0], /Probationary Suggestion/);
+});
+
+test('stale prompt-only state increments unused without validated signal', async () => {
+  resetStore([
+    makeEntry('prompt-unused', {
+      trigger: 'prompt-time hook guidance',
+      question: 'prompt hint was not acted on',
+      solution: 'Only keep prompt hints that lead to later action.',
+      confidence: 0.5,
+      hitCount: 0,
+      validatedCount: 0,
+      unusedCount: 0,
+      irrelevantCount: 0,
+      tier: 2,
+    }),
+  ]);
+
+  const result = await reconcileStalePromptSuggestions({
+    ts: new Date(Date.now() - 11_000).toISOString(),
+    tool: 'UserPrompt',
+    sourceHook: 'UserPromptSubmit',
+    surfacedIds: [{ collection: 'experience-selfqa', id: 'prompt-unused' }],
+    prompt: 'previous prompt',
+    cwd: '/mnt/d/Personal/Core/experience-engine',
+  }, {
+    prompt: 'continue implementing the current task',
+    cwd: '/mnt/d/Personal/Core/experience-engine',
+    sourceKind: 'codex-hook',
+    sourceRuntime: 'codex-wsl',
+    sourceSession: 'prompt-unused-test',
+  });
+
+  assert.equal(result.unused.length, 1);
+  assert.equal(result.irrelevant.length, 0);
+  const stored = JSON.parse(readCollection('experience-selfqa')[0].payload.json);
+  assert.equal(stored.unusedCount, 1);
+  assert.equal(stored.validatedCount, 0);
+});
+
+test('stale prompt-only state records wrong_task as irrelevant reason when clear', async () => {
+  resetStore([
+    makeEntry('prompt-wrong-task', {
+      trigger: 'when editing TypeScript component behavior',
+      question: 'component implementation hint on docs task',
+      solution: 'Use the component test harness before changing TypeScript behavior.',
+      confidence: 0.5,
+      hitCount: 0,
+      validatedCount: 0,
+      unusedCount: 0,
+      irrelevantCount: 0,
+      scope: { lang: 'typescript' },
+      domain: 'typescript',
+      tier: 2,
+    }),
+  ]);
+
+  const result = await reconcileStalePromptSuggestions({
+    ts: new Date(Date.now() - 11_000).toISOString(),
+    tool: 'UserPrompt',
+    sourceHook: 'UserPromptSubmit',
+    surfacedIds: [{ collection: 'experience-selfqa', id: 'prompt-wrong-task', scope: { lang: 'typescript' }, domain: 'typescript' }],
+    prompt: 'previous prompt',
+    cwd: '/mnt/d/Personal/Core/experience-engine',
+  }, {
+    prompt: 'update README.md documentation only',
+    cwd: '/mnt/d/Personal/Core/experience-engine',
+    sourceKind: 'codex-hook',
+    sourceRuntime: 'codex-wsl',
+    sourceSession: 'prompt-wrong-task-test',
+  });
+
+  assert.equal(result.unused.length, 1);
+  assert.equal(result.irrelevant.length, 1);
+  assert.equal(result.irrelevant[0].reason, 'wrong_task');
+  const stored = JSON.parse(readCollection('experience-selfqa')[0].payload.json);
+  assert.equal(stored.unusedCount, 1);
+  assert.equal(stored.irrelevantCount, 1);
+  assert.equal(stored.noiseReasonCounts?.wrong_task, 1);
+  assert.equal(stored.validatedCount, 0);
+});
+
+test('validated touch update still increments validatedCount', () => {
+  const data = {
+    hitCount: 0,
+    validatedCount: 0,
+    unusedCount: 1,
+    confirmedAt: [],
+  };
+
+  applyHitUpdate(data);
+
+  assert.equal(data.validatedCount, 1);
+  assert.equal(data.hitCount, 1);
+  assert.equal(data.unusedCount, 0);
+  assert.equal(data.confirmedAt.length, 1);
 });
 
 test('evolve promotes validated T2 entries and clears stale demotion debt', async () => {

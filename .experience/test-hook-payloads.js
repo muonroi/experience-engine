@@ -66,6 +66,18 @@ function noisyCoreFixture() {
 };`;
 }
 
+function scoredPromptCoreFixture(score, label, id) {
+  const prefix = score >= 0.60 ? '⚠️ [Experience - High Confidence' : '💡 [Suggestion';
+  return `module.exports = {
+  interceptWithMeta: async () => ({
+    suggestions: '${prefix} (${score.toFixed(2)})]: ${label}\\n   [id:${id} col:experience-selfqa]',
+    surfacedIds: [{ collection: 'experience-selfqa', id: '${id}', solution: '${label}' }],
+    route: null,
+  }),
+  _activityLog: () => {},
+};`;
+}
+
 function slowCoreFixture() {
   return `module.exports = {
   interceptWithMeta: async (_tool, _toolInput, signal) => {
@@ -152,8 +164,91 @@ test('local UserPromptSubmit emits valid JSON payload and suppresses stray stdou
   assert.equal(fs.existsSync(statePath), true);
   const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
   assert.equal(state.tool, 'UserPrompt');
+  assert.equal(state.sourceHook, 'UserPromptSubmit');
+  assert.equal(state.prompt, 'verify quick-codex should be preferred for codex cli');
+  assert.equal(state.cwd, '/repo/experience-engine');
+  assert.equal(state.sourceSession, 'sess-local-prompt');
   assert.equal(state.surfacedIds.length, 1);
   assert.equal(state.surfacedIds[0].id, 'stub-1');
+});
+
+test('local UserPromptSubmit suppresses low-score prompt suggestions', { skip: CHILD_BLOCKED ? 'sandbox blocks child node processes' : false }, () => {
+  const homeDir = makeTempHome();
+  copyRuntime(homeDir, ['interceptor-prompt.js']);
+  writeExperienceCore(homeDir, scoredPromptCoreFixture(0.17, 'Low score prompt noise', 'lowscore'));
+
+  const result = runHook(homeDir, 'interceptor-prompt.js', {
+    hook_event_name: 'UserPromptSubmit',
+    session_id: 'sess-low-score-prompt',
+    user_prompt: 'please inspect the repo and decide what to change',
+    cwd: '/repo/experience-engine',
+  });
+
+  assert.equal(result.status, 0);
+  assert.equal(result.stderr, '');
+  assert.equal(result.stdout, '');
+  assert.equal(fs.existsSync(path.join(homeDir, '.experience', 'tmp', 'last-suggestions.json')), false);
+});
+
+test('local UserPromptSubmit keeps high-score prompt suggestions', { skip: CHILD_BLOCKED ? 'sandbox blocks child node processes' : false }, () => {
+  const homeDir = makeTempHome();
+  copyRuntime(homeDir, ['interceptor-prompt.js']);
+  writeExperienceCore(homeDir, scoredPromptCoreFixture(0.72, 'High score prompt guidance', 'highscor'));
+
+  const result = runHook(homeDir, 'interceptor-prompt.js', {
+    hook_event_name: 'UserPromptSubmit',
+    session_id: 'sess-high-score-prompt',
+    user_prompt: 'please implement the prompt stale feedback loop',
+    cwd: '/repo/experience-engine',
+  });
+
+  assert.equal(result.status, 0);
+  assert.equal(result.stderr, '');
+  const payload = JSON.parse(result.stdout || '{}');
+  assert.match(payload.hookSpecificOutput?.additionalContext || '', /High score prompt guidance/);
+  const state = JSON.parse(fs.readFileSync(path.join(homeDir, '.experience', 'tmp', 'last-suggestions.json'), 'utf8'));
+  assert.equal(state.surfacedIds[0].id, 'highscor');
+});
+
+test('local UserPromptSubmit reconciles stale prompt-only state before next prompt', { skip: CHILD_BLOCKED ? 'sandbox blocks child node processes' : false }, () => {
+  const homeDir = makeTempHome();
+  copyRuntime(homeDir, ['interceptor-prompt.js']);
+  writeExperienceCore(homeDir, `module.exports = {
+  interceptWithMeta: async () => ({ suggestions: null, surfacedIds: [], route: null }),
+  _reconcileStalePromptSuggestions: async (state, nextPromptMeta) => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    fs.writeFileSync(path.join(process.env.HOME, '.experience', 'tmp', 'reconciled.json'), JSON.stringify({ state, nextPromptMeta }, null, 2));
+    return { ok: true, unused: [{ collection: 'experience-selfqa', id: 'oldhint' }], irrelevant: [], expired: [] };
+  },
+  _activityLog: () => {},
+};`);
+  const statePath = path.join(homeDir, '.experience', 'tmp', 'last-suggestions.json');
+  fs.writeFileSync(statePath, JSON.stringify({
+    ts: new Date(Date.now() - 11_000).toISOString(),
+    tool: 'UserPrompt',
+    sourceHook: 'UserPromptSubmit',
+    surfacedIds: [{ collection: 'experience-selfqa', id: 'oldhint' }],
+    prompt: 'previous prompt that showed a hint',
+    cwd: '/repo/experience-engine',
+    sourceSession: 'sess-old-prompt',
+  }, null, 2));
+
+  const result = runHook(homeDir, 'interceptor-prompt.js', {
+    hook_event_name: 'UserPromptSubmit',
+    session_id: 'sess-next-prompt',
+    user_prompt: 'continue with the implementation now',
+    cwd: '/repo/experience-engine',
+  });
+
+  assert.equal(result.status, 0);
+  assert.equal(result.stderr, '');
+  assert.equal(result.stdout, '');
+  assert.equal(fs.existsSync(statePath), false);
+  const reconciled = JSON.parse(fs.readFileSync(path.join(homeDir, '.experience', 'tmp', 'reconciled.json'), 'utf8'));
+  assert.equal(reconciled.state.prompt, 'previous prompt that showed a hint');
+  assert.equal(reconciled.nextPromptMeta.prompt, 'continue with the implementation now');
+  assert.equal(reconciled.nextPromptMeta.sourceSession, 'sess-next-prompt');
 });
 
 test('local hooks exit cleanly on timeout without emitting partial payload', { skip: CHILD_BLOCKED ? 'sandbox blocks child node processes' : false }, () => {

@@ -7,6 +7,7 @@
  *   GET  /health                    — Qdrant + FileStore status
  *   POST /api/intercept             — Query experience before tool call
  *   POST /api/posttool              — Canonical post-tool reconciliation + judge enqueue
+ *   POST /api/prompt-stale          — Reconcile stale prompt-only suggestions
  *   POST /api/extract               — Extract lessons from session transcript
  *   POST /api/evolve                — Trigger evolution cycle
  *   GET  /api/stats                 — Observability data (?since=7d, ?all=true)
@@ -287,6 +288,23 @@ async function handlePostTool(req, res) {
   json(res, { ok: true, reconcile, judgeQueued: surfacedIds.length > 0, toolOutcome });
 }
 
+async function handlePromptStale(req, res) {
+  const body = await readBody(req);
+  const core = loadExperienceCore();
+  const reconcileStalePromptSuggestions = core._reconcileStalePromptSuggestions;
+  const empty = { ok: true, unused: [], irrelevant: [], expired: [] };
+  if (typeof reconcileStalePromptSuggestions !== 'function') {
+    return json(res, empty);
+  }
+  const result = await reconcileStalePromptSuggestions(body.state || {}, body.nextPromptMeta || {});
+  json(res, {
+    ok: result?.ok !== false,
+    unused: result?.unused || [],
+    irrelevant: result?.irrelevant || [],
+    expired: result?.expired || [],
+  });
+}
+
 async function handleExtract(req, res) {
   const body = await readBody(req);
   if (!body.transcript) return error(res, 'transcript is required');
@@ -542,6 +560,7 @@ const server = http.createServer(async (req, res) => {
       if (!requireAuth(req, res)) return;
       if (p === '/api/intercept') return await handleIntercept(req, res);
       if (p === '/api/posttool') return await handlePostTool(req, res);
+      if (p === '/api/prompt-stale') return await handlePromptStale(req, res);
       if (p === '/api/extract') return await handleExtract(req, res);
       if (p === '/api/evolve') return await handleEvolve(req, res);
       if (p === '/api/principles/share') return await handleShare(req, res);
@@ -579,6 +598,7 @@ module.exports = {
   handleHealth,
   handleIntercept,
   handlePostTool,
+  handlePromptStale,
   handleExtract,
   handleEvolve,
   handleStats,
