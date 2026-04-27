@@ -1,0 +1,67 @@
+name: Deploy VPS
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experience-engine-vps
+  cancel-in-progress: true
+
+env:
+  PROD_HOST: ${{ secrets.VPS_HOST }}
+  PROD_PORT: ${{ secrets.VPS_PORT }}
+  PROD_USER: ${{ secrets.VPS_USER }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: CI test suite
+        run: npm run test:ci
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+
+      - name: Deploy to VPS
+        env:
+          DEPLOY_BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ssh -p "${PROD_PORT:-22}" -o StrictHostKeyChecking=no "${PROD_USER}@${PROD_HOST}" \
+            DEPLOY_BRANCH="$DEPLOY_BRANCH" \
+            'bash -se' <<'EOF'
+          set -euo pipefail
+          cd "$HOME/experience-engine"
+          bash scripts/deploy-vps.sh
+          EOF
+
+      - name: Disconnect Tailscale
+        if: always()
+        run: |
+          set +e
+          if command -v tailscale >/dev/null 2>&1; then
+            sudo tailscale logout || sudo tailscale down || true
+          fi
