@@ -842,6 +842,9 @@ curl -X POST http://localhost:8082/api/route-task \
 ### Example: Feedback
 
 Report the verdict for a surfaced hint. Supports short ID prefix (8 chars).
+Agents should use this when the outcome is clear. The engine can also learn noise automatically
+from PostToolUse reconciliation, prompt-stale reconciliation, and the async judge, but explicit
+feedback shortens the learning loop for all agents sharing the brain.
 
 Helper command:
 
@@ -866,6 +869,12 @@ Valid verdicts:
 
 Legacy compatibility:
 - older clients may still send `followed: true|false`, which maps to `FOLLOWED` / `IGNORED`
+
+Automatic noise learning:
+- repeated post-tool no-touch can record `unused` and, when deterministic, `irrelevant`
+- stale prompt-only suggestions can record deterministic noise reasons
+- judge-worker can classify surfaced hints as followed, ignored, irrelevant, or unclear
+- repeated clear noise may suppress future surfacing only when the same mismatch still applies
 
 ## Python SDK
 
@@ -1006,6 +1015,7 @@ Chained commands (`&&`, `||`, `;`) skip only if ALL parts are read-only.
 - **Project penalty** — cross-project suggestions penalized -0.30
 - **Session dedup** — same warning never shown twice per session
 - **Session budget** — max 8 unique warnings per session
+- **Noise suppression** — repeated clear `wrong_repo`, `wrong_language`, `wrong_task`, or `stale_rule` noise is suppressed conservatively, unless the hint was recently validated
 
 **Layer 3 — Brain relevance filter (LLM, ~1 token output, fail-open)**
 
@@ -1029,6 +1039,10 @@ followed, ignored, or irrelevant. Irrelevant hints are tagged with a noise reaso
 (`wrong_repo`, `wrong_language`, `wrong_task`, or `stale_rule`) before being fed back into the
 experience engine, closing the loop without requiring any agent cooperation.
 
+Manual feedback still matters: when an agent knows the verdict, `exp-feedback followed`,
+`exp-feedback ignored`, or `exp-feedback noise` gives the engine a stronger signal than waiting for
+automatic reconciliation.
+
 ## Judge Worker — Auto-Feedback Loop
 
 The judge-worker runs as a detached background process after each tool call, evaluating whether
@@ -1042,9 +1056,13 @@ no agent cooperation required.
 3. The judge assigns one of 4 verdicts:
    - `FOLLOWED` — agent used the hint correctly → positive feedback
    - `IGNORED` — agent had the hint and ignored it → negative feedback
-   - `IRRELEVANT` — hint was not applicable to this call → neutral (no feedback)
+   - `IRRELEVANT` — hint was not applicable to this call → neutral noise feedback with a reason
    - `UNCLEAR` — judge cannot determine → no feedback (abstain)
 4. Verdict is recorded through the same feedback handler used by `/api/feedback`
+
+The worker also runs deterministic relevance checks before applying fallback rules. For example,
+`UNCLEAR + tool error` is not treated as `IGNORED` when the hint is clearly irrelevant to the
+repo, language, task, or stale state.
 
 ### Brain proxy support
 
