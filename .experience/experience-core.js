@@ -78,6 +78,7 @@ function getBrainKey()       { return cfgValue('brainKey', 'EXPERIENCE_BRAIN_KEY
 function getEmbedDim()       { return cfgValue('embedDim', 'EXPERIENCE_EMBED_DIM', 768); }
 function getMinConfidence()  { return cfgValue('minConfidence', 'EXPERIENCE_MIN_CONFIDENCE', 0.42); }
 function getHighConfidence() { return cfgValue('highConfidence', 'EXPERIENCE_HIGH_CONFIDENCE', 0.60); }
+function getPromptHookMinScore() { return cfgValue('promptHookMinScore', 'EXPERIENCE_PROMPT_HOOK_MIN_SCORE', getHighConfidence()); }
 
 // --- Model Router config ---
 function isRouterEnabled() {
@@ -161,6 +162,7 @@ const VALID_FEEDBACK_VERDICTS = new Set(['FOLLOWED', 'IGNORED', 'IRRELEVANT']);
 const VALID_NOISE_REASONS = new Set(['wrong_repo', 'wrong_language', 'wrong_task', 'stale_rule']);
 const UNUSED_NO_TOUCH_THRESHOLD = 3;
 const PENDING_HINT_TTL_MS = 20 * 60 * 1000;
+const PROMPT_STALE_RECONCILE_MS = 10 * 1000;
 const PROBATIONARY_T2_RAW_SCORE_THRESHOLD = 0.78;
 const PROBATIONARY_T2_SURFACE_LIMIT = 2;
 
@@ -514,6 +516,75 @@ async function reconcilePendingHints(surfacedPoints, toolName, toolInput, meta =
   return results;
 }
 
+function promptStateSurfacedIds(state) {
+  return Array.isArray(state?.surfacedIds)
+    ? state.surfacedIds.filter(surface => surface?.collection && surface?.id)
+    : [];
+}
+
+function isPromptOnlySuggestionState(state) {
+  if (!state || typeof state !== 'object') return false;
+  return state.sourceHook === 'UserPromptSubmit' || state.tool === 'UserPrompt';
+}
+
+async function reconcileStalePromptSuggestions(state, nextPromptMeta = {}) {
+  const surfacedIds = promptStateSurfacedIds(state);
+  const result = { ok: true, unused: [], irrelevant: [], expired: [] };
+  if (!isPromptOnlySuggestionState(state) || surfacedIds.length === 0) return result;
+
+  const surfacedAtMs = state?.ts ? new Date(state.ts).getTime() : 0;
+  const ageMs = surfacedAtMs ? Date.now() - surfacedAtMs : Number.POSITIVE_INFINITY;
+  if (Number.isFinite(ageMs) && ageMs < PROMPT_STALE_RECONCILE_MS) return result;
+
+  if (Number.isFinite(ageMs) && ageMs > PENDING_HINT_TTL_MS) {
+    result.expired.push(...surfacedIds.map(surface => ({ collection: surface.collection, id: surface.id })));
+    activityLog({
+      op: 'prompt-stale-expired',
+      surfacedCount: surfacedIds.length,
+      ageMs,
+      ...normalizeSourceMeta(nextPromptMeta),
+    });
+    return result;
+  }
+
+  const meta = {
+    ...normalizeSourceMeta({
+      sourceKind: nextPromptMeta.sourceKind || state.sourceKind || 'codex-hook',
+      sourceRuntime: nextPromptMeta.sourceRuntime || state.sourceRuntime || null,
+      sourceSession: nextPromptMeta.sourceSession || state.sourceSession || null,
+    }),
+    cwd: nextPromptMeta.cwd || state.cwd || null,
+  };
+  const prompt = String(nextPromptMeta.prompt || nextPromptMeta.userPrompt || nextPromptMeta.user_prompt || '');
+  const toolInput = { command: prompt, _promptHook: true };
+
+  for (const surface of surfacedIds) {
+    let assessment = { touched: false, reason: 'unused' };
+    try {
+      assessment = assessHintUsage(surface, 'UserPrompt', toolInput, meta);
+    } catch {}
+    const wrongTask = assessment?.reason === 'wrong_task';
+    await updatePointPayload(surface.collection, surface.id, (data) => {
+      incrementUnusedData(data);
+      if (wrongTask) incrementIrrelevantWithReasonData('wrong_task')(data);
+      return data;
+    });
+    result.unused.push({ collection: surface.collection, id: surface.id, reason: assessment?.reason || 'unused' });
+    if (wrongTask) {
+      result.irrelevant.push({ collection: surface.collection, id: surface.id, reason: 'wrong_task' });
+    }
+  }
+
+  activityLog({
+    op: 'prompt-stale-reconcile',
+    unused: result.unused.length,
+    irrelevant: result.irrelevant.length,
+    expired: result.expired.length,
+    ...meta,
+  });
+  return result;
+}
+
 function ensureNoiseReasonCounts(data) {
   if (!data.noiseReasonCounts || typeof data.noiseReasonCounts !== 'object' || Array.isArray(data.noiseReasonCounts)) {
     data.noiseReasonCounts = {};
@@ -685,6 +756,29 @@ function isHookRealtimeFastPath(toolName, sourceMeta) {
   const runtime = String(sourceMeta?.sourceRuntime || '').trim().toLowerCase();
   return sourceMeta?.sourceKind === 'codex-hook'
     || (String(toolName || '') === 'UserPrompt' && runtime.startsWith('codex'));
+}
+
+function isPromptHookPrecisionGate(toolName, sourceMeta) {
+  return String(toolName || '') === 'UserPrompt' && sourceMeta?.sourceKind === 'codex-hook';
+}
+
+function promptHookScoreThreshold() {
+  const configured = Number(getPromptHookMinScore());
+  const fallback = Number(getHighConfidence()) || 0.60;
+  return Number.isFinite(configured) && configured > 0 ? Math.max(configured, Number(getMinConfidence()) || 0) : fallback;
+}
+
+function filterPromptHookPoints(points, toolName, sourceMeta) {
+  if (!isPromptHookPrecisionGate(toolName, sourceMeta)) return { kept: points || [], removed: [] };
+  const threshold = promptHookScoreThreshold();
+  const kept = [];
+  const removed = [];
+  for (const point of points || []) {
+    const score = Number(point?._effectiveScore ?? point?.score ?? 0);
+    if (Number.isFinite(score) && score >= threshold) kept.push(point);
+    else removed.push(point);
+  }
+  return { kept, removed };
 }
 
 function extractProjectPath(toolInput) {
@@ -984,11 +1078,22 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
   }
 
   // Rerank by quality score before formatting (Phase 103, 104)
-  const r0 = dedupePointsBySource(rerankByQuality(applyScopeFilter(t0), queryDomain, queryProjectSlug, query), COLLECTIONS[0].name);
-  const r1 = dedupePointsBySource(rerankByQuality(applyScopeFilter(t1), queryDomain, queryProjectSlug, query), COLLECTIONS[1].name);
-  const r2 = selectProbationaryT2Points(
+  let r0 = dedupePointsBySource(rerankByQuality(applyScopeFilter(t0), queryDomain, queryProjectSlug, query), COLLECTIONS[0].name);
+  let r1 = dedupePointsBySource(rerankByQuality(applyScopeFilter(t1), queryDomain, queryProjectSlug, query), COLLECTIONS[1].name);
+  let r2 = selectProbationaryT2Points(
     dedupePointsBySource(rerankByQuality(applyScopeFilter(t2), queryDomain, queryProjectSlug, query), COLLECTIONS[2].name)
   );
+
+  let promptPrecisionRemoved = 0;
+  if (isPromptHookPrecisionGate(toolName, sourceMeta)) {
+    const g0 = filterPromptHookPoints(r0, toolName, sourceMeta);
+    const g1 = filterPromptHookPoints(r1, toolName, sourceMeta);
+    const g2 = filterPromptHookPoints(r2, toolName, sourceMeta);
+    r0 = g0.kept;
+    r1 = g1.kept;
+    r2 = g2.kept;
+    promptPrecisionRemoved = g0.removed.length + g1.removed.length + g2.removed.length;
+  }
 
   const lines = [
     ...applyBudget(formatPoints(r0), COLLECTIONS[0].budgetChars),
@@ -1010,7 +1115,9 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
           const found = await fetchPointById(coll.name, targetId);
           if (found) {
             const graphPoint = { ...found, score: (found.score || 0.5) * edge.weight * 0.8, _collection: coll.name, _graphEdge: edge.type };
-            const graphFormatted = formatPoints([graphPoint]);
+            const graphGate = filterPromptHookPoints([graphPoint], toolName, sourceMeta);
+            promptPrecisionRemoved += graphGate.removed.length;
+            const graphFormatted = formatPoints(graphGate.kept);
             const graphBudgeted = applyBudget(graphFormatted, 600);
             lines.push(...graphBudgeted);
             break;
@@ -1123,6 +1230,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
     hasResult: lines.length > 0,
     surfacedCount: shownSurfacedMeta.length,
     surfaced: shownSurfacedMeta.slice(0, 8).map(s => ({ collection: s.collection, pointId: String(s.id || '').slice(0, 8) })),
+    ...(promptPrecisionRemoved > 0 ? { promptPrecisionRemoved, promptMinScore: promptHookScoreThreshold() } : {}),
     project: extractProjectPath(toolInput),
     ...(routeResult ? { route: routeResult.tier, routeModel: routeResult.model, routeSource: routeResult.source } : {}),
     ...sourceMeta
@@ -3709,4 +3817,4 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
 
 // --- Exports ---
 
-module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, recordSurface, recordHoldoutOutcome, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeTask, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _applySurfaceUpdate: applySurfaceUpdate, _applyHoldoutOutcome: recordHoldoutOutcomeOnData, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _isProbationaryT2Candidate: isProbationaryT2Candidate, _selectProbationaryT2Points: selectProbationaryT2Points, _isHookRealtimeFastPath: isHookRealtimeFastPath, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _recordSurfaceUpdatesFields: applySurfaceUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _reconcilePendingHints: reconcilePendingHints, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _resolveRuntimeFromSourceMeta: resolveRuntimeFromSourceMeta, _isRouterEnabled: isRouterEnabled, _assessExtractedQaQuality: assessExtractedQaQuality, _normalizeExtractText: normalizeExtractText, _detectMistakes: detectMistakes, _shouldPromoteBehavioralToPrinciple: shouldPromoteBehavioralToPrinciple, _buildPrincipleText: buildPrincipleText, _getValidatedHitCount: getValidatedHitCount };
+module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, recordSurface, recordHoldoutOutcome, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeTask, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _applySurfaceUpdate: applySurfaceUpdate, _applyHoldoutOutcome: recordHoldoutOutcomeOnData, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _isProbationaryT2Candidate: isProbationaryT2Candidate, _selectProbationaryT2Points: selectProbationaryT2Points, _isHookRealtimeFastPath: isHookRealtimeFastPath, _isPromptHookPrecisionGate: isPromptHookPrecisionGate, _filterPromptHookPoints: filterPromptHookPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _recordSurfaceUpdatesFields: applySurfaceUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _reconcilePendingHints: reconcilePendingHints, _reconcileStalePromptSuggestions: reconcileStalePromptSuggestions, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _resolveRuntimeFromSourceMeta: resolveRuntimeFromSourceMeta, _isRouterEnabled: isRouterEnabled, _assessExtractedQaQuality: assessExtractedQaQuality, _normalizeExtractText: normalizeExtractText, _detectMistakes: detectMistakes, _shouldPromoteBehavioralToPrinciple: shouldPromoteBehavioralToPrinciple, _buildPrincipleText: buildPrincipleText, _getValidatedHitCount: getValidatedHitCount };

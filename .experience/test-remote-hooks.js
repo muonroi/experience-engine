@@ -213,7 +213,124 @@ test('remote prompt hook proxies prompt search to VPS', { skip: REMOTE_POSITIVE_
     assert.equal(fs.existsSync(statePath), true);
     const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
     assert.equal(state.tool, 'UserPrompt');
+    assert.equal(state.sourceHook, 'UserPromptSubmit');
+    assert.equal(state.prompt, 'please fix the failing tests in storyflow');
+    assert.equal(state.cwd, '/repo/storyflow');
+    assert.equal(state.sourceSession, 'sess-2');
     assert.equal(state.surfacedIds[0].id, 'prompt-remote-1');
+  } finally {
+    server.close();
+  }
+});
+
+test('remote prompt hook posts stale prompt-only reconcile before next intercept', { skip: REMOTE_POSITIVE_SKIP }, async () => {
+  const homeDir = makeTempHome();
+  copyRuntime(homeDir, ['interceptor-prompt.js', 'remote-client.js']);
+  const statePath = path.join(homeDir, '.experience', 'tmp', 'last-suggestions.json');
+  fs.writeFileSync(statePath, JSON.stringify({
+    ts: new Date(Date.now() - 11_000).toISOString(),
+    tool: 'UserPrompt',
+    sourceHook: 'UserPromptSubmit',
+    surfacedIds: [{ collection: 'experience-selfqa', id: 'prompt-stale-1' }],
+    prompt: 'previous remote prompt',
+    cwd: '/repo/storyflow',
+    sourceSession: 'sess-remote-stale-old',
+  }, null, 2));
+
+  const received = [];
+  const { server, port } = await startServer((req, res) => {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      received.push({ url: req.url, body: JSON.parse(body || '{}') });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      if (req.url === '/api/prompt-stale') {
+        res.end(JSON.stringify({ ok: true, unused: [{ collection: 'experience-selfqa', id: 'prompt-stale-1' }], irrelevant: [], expired: [] }));
+        return;
+      }
+      res.end(JSON.stringify({ suggestions: null, hasSuggestions: false, surfacedIds: [], route: null }));
+    });
+  });
+  writeConfig(homeDir, {
+    serverBaseUrl: `http://127.0.0.1:${port}`,
+    serverHookTimeoutMs: 3000,
+  });
+
+  try {
+    const result = await runHook(homeDir, 'interceptor-prompt.js', {
+      hook_event_name: 'UserPromptSubmit',
+      session_id: 'sess-remote-stale-next',
+      user_prompt: 'continue by editing the test target',
+      cwd: '/repo/storyflow',
+    }, {
+      EXPERIENCE_HOOK_INTERCEPT_TIMEOUT_MS: '5000',
+      EXPERIENCE_HOOK_HARD_EXIT_TIMEOUT_MS: '7000',
+    });
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout, '');
+    assert.equal(received[0].url, '/api/prompt-stale');
+    assert.equal(received[0].body.state.prompt, 'previous remote prompt');
+    assert.equal(received[0].body.nextPromptMeta.prompt, 'continue by editing the test target');
+    assert.equal(received[1].url, '/api/intercept');
+    assert.equal(fs.existsSync(statePath), false);
+  } finally {
+    server.close();
+  }
+});
+
+test('remote prompt stale reconcile failure does not block prompt output', { skip: SERVER_BLOCKED ? 'sandbox blocks local test server or child node processes' : false }, async () => {
+  const homeDir = makeTempHome();
+  copyRuntime(homeDir, ['interceptor-prompt.js', 'remote-client.js']);
+  const statePath = path.join(homeDir, '.experience', 'tmp', 'last-suggestions.json');
+  fs.writeFileSync(statePath, JSON.stringify({
+    ts: new Date(Date.now() - 11_000).toISOString(),
+    tool: 'UserPrompt',
+    sourceHook: 'UserPromptSubmit',
+    surfacedIds: [{ collection: 'experience-selfqa', id: 'prompt-stale-slow' }],
+    prompt: 'previous remote prompt',
+    cwd: '/repo/storyflow',
+  }, null, 2));
+
+  const { server, port } = await startServer((req, res) => {
+    if (req.url === '/api/prompt-stale') {
+      req.resume();
+      setTimeout(() => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      }, 200);
+      return;
+    }
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        suggestions: '⚠️ [Experience - High Confidence (0.75)]: Remote prompt hint survives stale failure\n   [id:survives col:experience-selfqa]',
+        hasSuggestions: true,
+        surfacedIds: [{ collection: 'experience-selfqa', id: 'survives' }],
+        route: null,
+      }));
+    });
+  });
+  writeConfig(homeDir, {
+    serverBaseUrl: `http://127.0.0.1:${port}`,
+    serverHookTimeoutMs: 3000,
+  });
+
+  try {
+    const result = await runHook(homeDir, 'interceptor-prompt.js', {
+      hook_event_name: 'UserPromptSubmit',
+      session_id: 'sess-remote-stale-slow',
+      user_prompt: 'continue despite stale reconcile timeout',
+      cwd: '/repo/storyflow',
+    }, {
+      EXPERIENCE_PROMPT_STALE_RECONCILE_TIMEOUT_MS: '50',
+      EXPERIENCE_HOOK_INTERCEPT_TIMEOUT_MS: '5000',
+      EXPERIENCE_HOOK_HARD_EXIT_TIMEOUT_MS: '7000',
+    });
+    assert.equal(result.status, 0);
+    assert.match(extractHookText(parseHookJson(result)), /Remote prompt hint survives stale failure/);
+    assert.ok(result.durationMs < 3500, `expected prompt hook to stay fast, got ${result.durationMs}ms`);
   } finally {
     server.close();
   }
