@@ -99,7 +99,7 @@ test('local PreToolUse emits valid JSON payload and suppresses stray stdout', { 
   assert.equal(result.stderr, '');
   const payload = JSON.parse(result.stdout || '{}');
   assert.match(payload.systemMessage || '', /Stub warning for Bash/);
-  assert.match(payload.systemMessage || '', /\[Model Route\] tier=balanced/);
+  assert.doesNotMatch(payload.systemMessage || '', /\[Model Route\] tier=balanced/);
   assert.doesNotMatch(result.stdout, /\[Model Router\] ->/);
   assert.doesNotMatch(result.stdout, /noisy console log/);
 });
@@ -144,9 +144,16 @@ test('local UserPromptSubmit emits valid JSON payload and suppresses stray stdou
   const payload = JSON.parse(result.stdout || '{}');
   assert.equal(payload.hookSpecificOutput?.hookEventName, 'UserPromptSubmit');
   assert.match(payload.hookSpecificOutput?.additionalContext || '', /Stub warning for UserPrompt/);
-  assert.match(payload.hookSpecificOutput?.additionalContext || '', /\[Model Route\] tier=balanced/);
+  assert.doesNotMatch(payload.hookSpecificOutput?.additionalContext || '', /\[Model Route\] tier=balanced/);
   assert.doesNotMatch(result.stdout, /\[Model Router\] ->/);
   assert.doesNotMatch(result.stdout, /noisy console log/);
+
+  const statePath = path.join(homeDir, '.experience', 'tmp', 'last-suggestions.json');
+  assert.equal(fs.existsSync(statePath), true);
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  assert.equal(state.tool, 'UserPrompt');
+  assert.equal(state.surfacedIds.length, 1);
+  assert.equal(state.surfacedIds[0].id, 'stub-1');
 });
 
 test('local hooks exit cleanly on timeout without emitting partial payload', { skip: CHILD_BLOCKED ? 'sandbox blocks child node processes' : false }, () => {

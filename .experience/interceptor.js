@@ -312,7 +312,7 @@ process.stdin.on('end', async () => {
     }
 
     let outputText = result || '';
-    if (routeInfo && routeInfo.tier) {
+    if (sourceMeta.sourceKind !== 'codex-hook' && routeInfo && routeInfo.tier) {
       const routeLine = `\n[Model Route] tier=${routeInfo.tier} model=${routeInfo.model || '?'} confidence=${(routeInfo.confidence || 0).toFixed(2)} source=${routeInfo.source || 'default'}`;
       outputText = outputText ? outputText + '\n---\n' + routeLine : routeLine;
     }

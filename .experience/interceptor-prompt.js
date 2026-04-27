@@ -44,6 +44,24 @@ function activityLog(event) {
   } catch {}
 }
 
+function writeLastSuggestionsState(tool, surfacedIds, sourceMeta) {
+  if (!Array.isArray(surfacedIds) || surfacedIds.length === 0) return;
+  try {
+    const tmpDir = path.join(EXP_DIR, 'tmp');
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const state = { ts: new Date().toISOString(), tool, surfacedIds };
+    fs.writeFileSync(path.join(tmpDir, 'last-suggestions.json'), JSON.stringify(state, null, 2), 'utf8');
+    activityLog({
+      stage: 'state_written',
+      tool,
+      stateFile: 'last-suggestions.json',
+      surfacedCount: surfacedIds.length,
+      surfaced: surfacedIds.slice(0, 8).map(s => ({ collection: s.collection, pointId: String(s.id || '').slice(0, 8) })),
+      ...sourceMeta
+    });
+  } catch {}
+}
+
 function getRemoteClient() {
   try {
     return require(path.join(EXP_DIR, 'remote-client.js'));
@@ -238,6 +256,7 @@ process.stdin.on('end', async () => {
     if (timedOut || !resultMeta) process.exit(0);
 
     const suggestions = resultMeta?.suggestions || null;
+    const surfacedIds = resultMeta?.surfacedIds || [];
     const routeInfo = resultMeta?.route || null;
     try {
       const remote = getRemoteClient();
@@ -257,12 +276,16 @@ process.stdin.on('end', async () => {
       ...sourceMeta
     });
 
+    if (suggestions) {
+      writeLastSuggestionsState('UserPrompt', surfacedIds, sourceMeta);
+    }
+
     // Build output
     let outputText = '';
     if (suggestions) {
       outputText = suggestions;
     }
-    if (routeInfo && routeInfo.tier) {
+    if (sourceMeta.sourceKind !== 'codex-hook' && routeInfo && routeInfo.tier) {
       const routeLine = `[Model Route] tier=${routeInfo.tier} model=${routeInfo.model || '?'} confidence=${(routeInfo.confidence || 0).toFixed(2)} source=${routeInfo.source || 'default'}`;
       outputText = outputText ? outputText + '\n---\n' + routeLine : routeLine;
     }
