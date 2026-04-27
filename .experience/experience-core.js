@@ -160,6 +160,8 @@ const RELATES_TO_THRESHOLD = 0.70;
 const QUERY_MAX_CHARS = 500;
 const VALID_FEEDBACK_VERDICTS = new Set(['FOLLOWED', 'IGNORED', 'IRRELEVANT']);
 const VALID_NOISE_REASONS = new Set(['wrong_repo', 'wrong_language', 'wrong_task', 'stale_rule']);
+const VALID_NOISE_DISPOSITIONS = new Set(['unused', 'irrelevant', 'ignored', 'followed']);
+const VALID_NOISE_SOURCES = new Set(['manual', 'judge', 'implicit-posttool', 'prompt-stale']);
 const UNUSED_NO_TOUCH_THRESHOLD = 3;
 const PENDING_HINT_TTL_MS = 20 * 60 * 1000;
 const PROMPT_STALE_RECONCILE_MS = 10 * 1000;
@@ -168,6 +170,8 @@ const PROBATIONARY_T2_SURFACE_LIMIT = 2;
 const ORGANIC_SUPPORT_SEMANTIC_THRESHOLD = 0.58;
 const ORGANIC_SUPPORT_TOKEN_OVERLAP_THRESHOLD = 0.34;
 const ORGANIC_SUPPORT_MAX_CANDIDATES = 8;
+const NOISE_SUPPRESSION_THRESHOLD = 2;
+const RECENT_VALIDATION_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 
 // --- Session-persistent tracking (file-based, survives process restarts) ---
 // Each hook invocation is a NEW process, so in-memory arrays are useless.
@@ -277,6 +281,16 @@ function incrementUnusedData(data) {
   return data;
 }
 
+function normalizeNoiseDisposition(disposition) {
+  const normalized = String(disposition || '').trim().toLowerCase();
+  return VALID_NOISE_DISPOSITIONS.has(normalized) ? normalized : null;
+}
+
+function normalizeNoiseSource(source) {
+  const normalized = String(source || '').trim().toLowerCase();
+  return VALID_NOISE_SOURCES.has(normalized) ? normalized : null;
+}
+
 function normalizeFeedbackVerdict(verdictOrFollowed) {
   if (typeof verdictOrFollowed === 'boolean') {
     return verdictOrFollowed ? 'FOLLOWED' : 'IGNORED';
@@ -376,6 +390,67 @@ function classifyActionKind(toolName, toolInput, actionPath) {
   }
   if (detectContext(actionPath || '')) return 'code';
   return 'unknown';
+}
+
+function hasRecentValidatedConfirmation(data, nowMs = Date.now()) {
+  const candidates = [];
+  if (data?.lastHitAt) candidates.push(data.lastHitAt);
+  if (Array.isArray(data?.confirmedAt)) candidates.push(...data.confirmedAt);
+  for (const candidate of candidates) {
+    const ts = new Date(candidate).getTime();
+    if (Number.isFinite(ts) && nowMs - ts <= RECENT_VALIDATION_WINDOW_MS) return true;
+  }
+  return false;
+}
+
+function isCodeSpecificHint(data) {
+  const scopeLang = normalizeTechLabel(data?.scope?.lang);
+  if (scopeLang && scopeLang !== 'all') return true;
+  const domain = normalizeTechLabel(data?.domain);
+  return !!domain && domain !== 'all' && domain !== 'markdown' && domain !== 'json' && domain !== 'yaml';
+}
+
+function shouldSuppressForNoise(data, context = {}) {
+  if (!data || typeof data !== 'object') return { suppress: false };
+  if (hasRecentValidatedConfirmation(data)) return { suppress: false, reason: 'recent_validation' };
+  const counts = data.noiseReasonCounts || {};
+  const queryProjectSlug = context.queryProjectSlug || null;
+  const queryDomain = context.queryDomain || null;
+  const actionKind = context.actionKind || 'unknown';
+
+  if ((counts.wrong_repo || 0) >= NOISE_SUPPRESSION_THRESHOLD
+      && data._projectSlug && queryProjectSlug && data._projectSlug !== queryProjectSlug) {
+    return { suppress: true, reason: 'wrong_repo' };
+  }
+  if ((counts.wrong_language || 0) >= NOISE_SUPPRESSION_THRESHOLD
+      && inferLanguageMismatch({ scope: data.scope, domain: data.domain }, queryDomain)) {
+    return { suppress: true, reason: 'wrong_language' };
+  }
+  if ((counts.wrong_task || 0) >= NOISE_SUPPRESSION_THRESHOLD
+      && (actionKind === 'docs' || actionKind === 'config' || actionKind === 'ops')
+      && isCodeSpecificHint(data)) {
+    return { suppress: true, reason: 'wrong_task' };
+  }
+  if ((counts.stale_rule || 0) >= NOISE_SUPPRESSION_THRESHOLD) {
+    return { suppress: true, reason: 'stale_rule' };
+  }
+  return { suppress: false };
+}
+
+function filterNoiseSuppressedPoints(points, context = {}) {
+  const kept = [];
+  const suppressed = [];
+  for (const point of points || []) {
+    let data = {};
+    try { data = JSON.parse(point.payload?.json || '{}'); } catch { /* keep malformed */ }
+    const decision = shouldSuppressForNoise(data, context);
+    if (decision.suppress) {
+      suppressed.push({ point, reason: decision.reason });
+    } else {
+      kept.push(point);
+    }
+  }
+  return { kept, suppressed };
 }
 
 function inferLanguageMismatch(surface, actionDomain) {
@@ -492,7 +567,27 @@ async function reconcilePendingHints(surfacedPoints, toolName, toolInput, meta =
     track.pending[key] = pending;
 
     if (pending.noTouchCount >= UNUSED_NO_TOUCH_THRESHOLD) {
-      await updatePointPayload(pending.collection, pending.id, incrementUnusedData);
+      const deterministicNoise = assessment.reason === 'wrong_repo'
+        || assessment.reason === 'wrong_language'
+        || assessment.reason === 'wrong_task';
+      await updatePointPayload(
+        pending.collection,
+        pending.id,
+        applyNoiseDispositionData('unused', 'implicit-posttool', assessment.reason, {
+          countIrrelevant: deterministicNoise,
+        })
+      );
+      activityLog({
+        op: 'noise-disposition',
+        collection: pending.collection,
+        pointId: shortPointId(pending.id),
+        disposition: 'unused',
+        source: 'implicit-posttool',
+        noTouchCount: pending.noTouchCount,
+        reason: assessment.reason,
+        tool: toolName,
+        ...normalizeSourceMeta(meta),
+      });
       activityLog({
         op: 'implicit-unused',
         collection: pending.collection,
@@ -566,18 +661,28 @@ async function reconcileStalePromptSuggestions(state, nextPromptMeta = {}) {
     try {
       assessment = assessHintUsage(surface, 'UserPrompt', toolInput, meta);
     } catch {}
-    const wrongTask = assessment?.reason === 'wrong_task';
+    const normalizedReason = normalizeNoiseReason(assessment?.reason);
     await updatePointPayload(surface.collection, surface.id, (data) => {
-      incrementUnusedData(data);
-      if (wrongTask) incrementIrrelevantWithReasonData('wrong_task')(data);
+      applyNoiseDispositionData('unused', 'prompt-stale', normalizedReason, {
+        countIrrelevant: !!normalizedReason,
+      })(data);
       return data;
     });
     result.unused.push({ collection: surface.collection, id: surface.id, reason: assessment?.reason || 'unused' });
-    if (wrongTask) {
-      result.irrelevant.push({ collection: surface.collection, id: surface.id, reason: 'wrong_task' });
+    if (normalizedReason) {
+      result.irrelevant.push({ collection: surface.collection, id: surface.id, reason: normalizedReason });
     }
   }
 
+  activityLog({
+    op: 'noise-disposition',
+    disposition: 'unused',
+    source: 'prompt-stale',
+    unused: result.unused.length,
+    irrelevant: result.irrelevant.length,
+    expired: result.expired.length,
+    ...meta,
+  });
   activityLog({
     op: 'prompt-stale-reconcile',
     unused: result.unused.length,
@@ -595,16 +700,55 @@ function ensureNoiseReasonCounts(data) {
   return data.noiseReasonCounts;
 }
 
-function incrementIrrelevantWithReasonData(reason) {
-  return function applyIrrelevantWithReason(data) {
-    incrementIrrelevantData(data);
+function ensureNoiseSourceCounts(data) {
+  if (!data.noiseSourceCounts || typeof data.noiseSourceCounts !== 'object' || Array.isArray(data.noiseSourceCounts)) {
+    data.noiseSourceCounts = {};
+  }
+  return data.noiseSourceCounts;
+}
+
+function recordNoiseMetadataData(data, source, reason) {
+  const normalizedSource = normalizeNoiseSource(source);
+  const normalizedReason = normalizeNoiseReason(reason);
+  const nowIso = new Date().toISOString();
+  if (normalizedSource) {
+    const sourceCounts = ensureNoiseSourceCounts(data);
+    sourceCounts[normalizedSource] = (sourceCounts[normalizedSource] || 0) + 1;
+    data.lastNoiseSource = normalizedSource;
+  }
+  if (normalizedReason) {
     const normalized = normalizeNoiseReason(reason);
-    if (!normalized) return data;
     const counts = ensureNoiseReasonCounts(data);
     counts[normalized] = (counts[normalized] || 0) + 1;
     data.lastNoiseReason = normalized;
+  }
+  if (normalizedSource || normalizedReason) {
+    data.lastNoiseAt = nowIso;
+  }
+  return data;
+}
+
+function applyNoiseDispositionData(disposition, source = 'manual', reason = null, options = {}) {
+  return function applyNoiseDisposition(data) {
+    const normalizedDisposition = normalizeNoiseDisposition(disposition);
+    if (!normalizedDisposition) return data;
+    if (normalizedDisposition === 'followed') {
+      applyHitUpdate(data);
+      return data;
+    }
+    if (normalizedDisposition === 'ignored') incrementIgnoreCountData(data);
+    if (normalizedDisposition === 'irrelevant') incrementIrrelevantData(data);
+    if (normalizedDisposition === 'unused') {
+      incrementUnusedData(data);
+      if (options.countIrrelevant) incrementIrrelevantData(data);
+    }
+    recordNoiseMetadataData(data, source, reason);
     return data;
   };
+}
+
+function incrementIrrelevantWithReasonData(reason) {
+  return applyNoiseDispositionData('irrelevant', 'manual', reason);
 }
 
 /**
@@ -1034,6 +1178,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
   const queryDomain = detectContext(filePath);
   // P0: Extract project slug for cross-project penalty
   const queryProjectSlug = extractProjectSlug(filePath);
+  const actionKind = classifyActionKind(toolName, toolInput || {}, filePath);
   const vector = await getEmbedding(query, signal);
   if (!vector) return null;
 
@@ -1096,6 +1241,31 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
     r1 = g1.kept;
     r2 = g2.kept;
     promptPrecisionRemoved = g0.removed.length + g1.removed.length + g2.removed.length;
+  }
+
+  const suppressionContext = { queryProjectSlug, queryDomain, actionKind };
+  const s0 = filterNoiseSuppressedPoints(r0, suppressionContext);
+  const s1 = filterNoiseSuppressedPoints(r1, suppressionContext);
+  const s2 = filterNoiseSuppressedPoints(r2, suppressionContext);
+  r0 = s0.kept;
+  r1 = s1.kept;
+  r2 = s2.kept;
+  const noiseSuppressed = [...s0.suppressed, ...s1.suppressed, ...s2.suppressed];
+  if (noiseSuppressed.length > 0) {
+    for (const [reason, count] of Object.entries(noiseSuppressed.reduce((acc, item) => {
+      acc[item.reason] = (acc[item.reason] || 0) + 1;
+      return acc;
+    }, {}))) {
+      activityLog({
+        op: 'noise-suppressed',
+        reason,
+        count,
+        actionKind,
+        tool: toolName,
+        project: filePath || null,
+        ...sourceMeta,
+      });
+    }
   }
 
   const lines = [
@@ -2540,13 +2710,22 @@ async function recordFeedback(collection, pointId, verdictOrFollowed, reason = n
   if (!verdict) return false;
 
   const normalizedReason = verdict === 'IRRELEVANT' ? normalizeNoiseReason(reason) : null;
+  const source = options.source === 'judge' ? 'judge' : 'manual';
   const updateFn = verdict === 'FOLLOWED'
-    ? applyHitUpdate
+    ? applyNoiseDispositionData('followed', source, null)
     : verdict === 'IGNORED'
-      ? incrementIgnoreCountData
-      : incrementIrrelevantWithReasonData(normalizedReason);
+      ? applyNoiseDispositionData('ignored', source, null)
+      : applyNoiseDispositionData('irrelevant', source, normalizedReason);
 
   await updatePointPayload(collection, pointId, updateFn);
+  activityLog({
+    op: 'noise-disposition',
+    collection,
+    pointId: pointId.slice(0, 8),
+    disposition: verdict.toLowerCase(),
+    source,
+    ...(normalizedReason ? { reason: normalizedReason } : {}),
+  });
   activityLog({
     op: options.source === 'judge' ? 'judge-feedback' : 'feedback',
     collection,
@@ -3924,4 +4103,4 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
 
 // --- Exports ---
 
-module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, recordSurface, recordHoldoutOutcome, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeTask, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _applySurfaceUpdate: applySurfaceUpdate, _applyHoldoutOutcome: recordHoldoutOutcomeOnData, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _isProbationaryT2Candidate: isProbationaryT2Candidate, _selectProbationaryT2Points: selectProbationaryT2Points, _isHookRealtimeFastPath: isHookRealtimeFastPath, _isPromptHookPrecisionGate: isPromptHookPrecisionGate, _filterPromptHookPoints: filterPromptHookPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _recordSurfaceUpdatesFields: applySurfaceUpdate, _applyOrganicSupportUpdate: applyOrganicSupportUpdate, _isOrganicSupportCandidate: isOrganicSupportCandidate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _reconcilePendingHints: reconcilePendingHints, _reconcileStalePromptSuggestions: reconcileStalePromptSuggestions, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _resolveRuntimeFromSourceMeta: resolveRuntimeFromSourceMeta, _isRouterEnabled: isRouterEnabled, _assessExtractedQaQuality: assessExtractedQaQuality, _normalizeExtractText: normalizeExtractText, _detectMistakes: detectMistakes, _shouldPromoteBehavioralToPrinciple: shouldPromoteBehavioralToPrinciple, _buildPrincipleText: buildPrincipleText, _getValidatedHitCount: getValidatedHitCount };
+module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, recordSurface, recordHoldoutOutcome, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeTask, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _applySurfaceUpdate: applySurfaceUpdate, _applyHoldoutOutcome: recordHoldoutOutcomeOnData, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _isProbationaryT2Candidate: isProbationaryT2Candidate, _selectProbationaryT2Points: selectProbationaryT2Points, _isHookRealtimeFastPath: isHookRealtimeFastPath, _isPromptHookPrecisionGate: isPromptHookPrecisionGate, _filterPromptHookPoints: filterPromptHookPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _recordSurfaceUpdatesFields: applySurfaceUpdate, _applyOrganicSupportUpdate: applyOrganicSupportUpdate, _isOrganicSupportCandidate: isOrganicSupportCandidate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _applyNoiseDispositionData: applyNoiseDispositionData, _shouldSuppressForNoise: shouldSuppressForNoise, _filterNoiseSuppressedPoints: filterNoiseSuppressedPoints, _reconcilePendingHints: reconcilePendingHints, _reconcileStalePromptSuggestions: reconcileStalePromptSuggestions, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _resolveRuntimeFromSourceMeta: resolveRuntimeFromSourceMeta, _isRouterEnabled: isRouterEnabled, _assessExtractedQaQuality: assessExtractedQaQuality, _normalizeExtractText: normalizeExtractText, _detectMistakes: detectMistakes, _shouldPromoteBehavioralToPrinciple: shouldPromoteBehavioralToPrinciple, _buildPrincipleText: buildPrincipleText, _getValidatedHitCount: getValidatedHitCount };

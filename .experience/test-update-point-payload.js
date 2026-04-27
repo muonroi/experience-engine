@@ -23,6 +23,9 @@ const {
   _applyHitUpdate: applyHitUpdate,
   _applySurfaceUpdate: applySurfaceUpdate,
   _incrementIgnoreCountData: incrementIgnoreCountData,
+  _applyNoiseDispositionData: applyNoiseDispositionData,
+  _reconcilePendingHints: reconcilePendingHints,
+  _reconcileStalePromptSuggestions: reconcileStalePromptSuggestions,
 } = require('./experience-core.js');
 
 function makeTestEntry(id, data) {
@@ -181,5 +184,81 @@ describe('recordFeedback delegates to updatePointPayload', () => {
     assert.strictEqual(dataA.irrelevantCount, 1, 'irrelevantCount should increment');
     assert.strictEqual(dataA.lastNoiseReason, 'wrong_repo', 'lastNoiseReason should be stored');
     assert.strictEqual(dataA.noiseReasonCounts.wrong_repo, 1, 'noise reason count should increment');
+    assert.strictEqual(dataA.lastNoiseSource, 'manual', 'manual source should be stored');
+    assert.strictEqual(dataA.noiseSourceCounts.manual, 1, 'manual source count should increment');
+    assert.ok(dataA.lastNoiseAt, 'lastNoiseAt should be stored');
+  });
+
+  it('shared noise disposition can record implicit unused plus irrelevant reason metadata', () => {
+    const data = { unusedCount: 0, irrelevantCount: 0 };
+    applyNoiseDispositionData('unused', 'implicit-posttool', 'wrong_language', { countIrrelevant: true })(data);
+
+    assert.strictEqual(data.unusedCount, 1, 'unusedCount should increment');
+    assert.strictEqual(data.irrelevantCount, 1, 'irrelevantCount should increment for deterministic noise');
+    assert.strictEqual(data.lastNoiseReason, 'wrong_language', 'reason should be stored');
+    assert.strictEqual(data.noiseReasonCounts.wrong_language, 1, 'reason count should increment');
+    assert.strictEqual(data.lastNoiseSource, 'implicit-posttool', 'source should be stored');
+    assert.strictEqual(data.noiseSourceCounts['implicit-posttool'], 1, 'source count should increment');
+  });
+
+  it('pending no-touch wrong_language increments unused and irrelevant counters', async () => {
+    const coll = `${TEST_COLL_PREFIX}-pending-wrong-language`;
+    const id = 'pending-wrong-language-001';
+    writeTestStore(coll, [makeTestEntry(id, { unusedCount: 0, irrelevantCount: 0 })]);
+    const surface = {
+      collection: coll,
+      id,
+      solution: 'Use the C# logging abstraction.',
+      scope: { lang: 'C#' },
+    };
+    const meta = { sourceKind: 'codex-hook', sourceRuntime: 'codex', sourceSession: `pending-${Date.now()}` };
+    const toolInput = { file_path: '/mnt/d/Personal/Core/experience-engine/src/file.ts' };
+
+    await reconcilePendingHints([surface], 'Edit', toolInput, meta);
+    await reconcilePendingHints([], 'Edit', toolInput, meta);
+    const result = await reconcilePendingHints([], 'Edit', toolInput, meta);
+
+    assert.strictEqual(result.implicitUnused.length, 1, 'third no-touch should record implicit unused');
+    assert.strictEqual(result.implicitUnused[0].reason, 'wrong_language');
+    const data = JSON.parse(readTestStore(coll).find(e => e.id === id).payload.json);
+    assert.strictEqual(data.unusedCount, 1, 'unusedCount should increment');
+    assert.strictEqual(data.irrelevantCount, 1, 'irrelevantCount should increment');
+    assert.strictEqual(data.noiseReasonCounts.wrong_language, 1, 'wrong_language count should increment');
+    assert.strictEqual(data.noiseSourceCounts['implicit-posttool'], 1, 'implicit-posttool source count should increment');
+  });
+
+  it('prompt stale records deterministic wrong_repo and wrong_task reasons', async () => {
+    const coll = `${TEST_COLL_PREFIX}-prompt-stale`;
+    const wrongRepoId = 'prompt-stale-wrong-repo';
+    const wrongTaskId = 'prompt-stale-wrong-task';
+    writeTestStore(coll, [
+      makeTestEntry(wrongRepoId, { unusedCount: 0, irrelevantCount: 0 }),
+      makeTestEntry(wrongTaskId, { unusedCount: 0, irrelevantCount: 0 }),
+    ]);
+    const oldTs = new Date(Date.now() - 20000).toISOString();
+    const result = await reconcileStalePromptSuggestions({
+      sourceHook: 'UserPromptSubmit',
+      ts: oldTs,
+      cwd: '/mnt/d/Personal/Core/experience-engine',
+      surfacedIds: [
+        { collection: coll, id: wrongRepoId, projectSlug: 'other-repo', solution: 'Use the other repo pattern.' },
+        { collection: coll, id: wrongTaskId, scope: { lang: 'C#' }, solution: 'Use the C# logging pattern.' },
+      ],
+    }, {
+      sourceKind: 'codex-hook',
+      sourceRuntime: 'codex',
+      sourceSession: `prompt-stale-${Date.now()}`,
+      cwd: '/mnt/d/Personal/Core/experience-engine',
+      prompt: 'Update the planning notes',
+    });
+
+    assert.deepStrictEqual(result.irrelevant.map(item => item.reason).sort(), ['wrong_repo', 'wrong_task']);
+    const entries = readTestStore(coll);
+    const wrongRepoData = JSON.parse(entries.find(e => e.id === wrongRepoId).payload.json);
+    const wrongTaskData = JSON.parse(entries.find(e => e.id === wrongTaskId).payload.json);
+    assert.strictEqual(wrongRepoData.noiseReasonCounts.wrong_repo, 1, 'wrong_repo count should increment');
+    assert.strictEqual(wrongTaskData.noiseReasonCounts.wrong_task, 1, 'wrong_task count should increment');
+    assert.strictEqual(wrongRepoData.noiseSourceCounts['prompt-stale'], 1, 'prompt-stale source should increment');
+    assert.strictEqual(wrongTaskData.noiseSourceCounts['prompt-stale'], 1, 'prompt-stale source should increment');
   });
 });

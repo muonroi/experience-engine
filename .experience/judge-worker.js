@@ -67,20 +67,47 @@ function inferNoiseReason(surface, toolInputObj, helperFns) {
   return 'wrong_task';
 }
 
+function isDeterministicNoiseReason(reason) {
+  return reason === 'wrong_repo' || reason === 'wrong_language' || reason === 'wrong_task' || reason === 'stale_rule';
+}
+
+function applyDeterministicAssessment(verdict, toolOutcome, assessment) {
+  if (verdict !== 'UNCLEAR') return verdict;
+  if (assessment?.touched) {
+    return toolOutcome === 'error' ? 'IGNORED' : 'FOLLOWED';
+  }
+  if (isDeterministicNoiseReason(assessment?.reason)) {
+    return 'IRRELEVANT';
+  }
+  return 'UNCLEAR';
+}
+
+function resolveUnclearFallback(verdict, toolOutcome, assessment) {
+  const assessed = applyDeterministicAssessment(verdict, toolOutcome, assessment);
+  if (assessed !== 'UNCLEAR') return assessed;
+  return 'UNCLEAR';
+}
+
 // Validate path to prevent path traversal (T-b3s-01)
 // Must reside inside ~/.experience/tmp/ and match judge-*.json pattern
-if (!queueFile) process.exit(0);
 const tmpDir     = path.join(EXP_DIR, 'tmp');
-const normalised = path.resolve(queueFile);
-if (!normalised.startsWith(path.resolve(tmpDir) + path.sep) &&
-    normalised !== path.resolve(tmpDir)) {
-  process.exit(0);
+function resolveQueueFilePath(candidate) {
+  if (!candidate) return null;
+  const normalised = path.resolve(candidate);
+  if (!normalised.startsWith(path.resolve(tmpDir) + path.sep) &&
+      normalised !== path.resolve(tmpDir)) {
+    return null;
+  }
+  const basename = path.basename(normalised);
+  if (!/^judge-\d+\.json$/.test(basename)) return null;
+  if (!fs.existsSync(normalised)) return null;
+  return normalised;
 }
-const basename = path.basename(normalised);
-if (!/^judge-\d+\.json$/.test(basename)) process.exit(0);
-if (!fs.existsSync(normalised)) process.exit(0);
 
-(async () => {
+async function main() {
+  const normalised = resolveQueueFilePath(queueFile);
+  if (!normalised) process.exit(0);
+
   let data;
   try {
     data = JSON.parse(fs.readFileSync(normalised, 'utf8'));
@@ -179,16 +206,17 @@ if (!fs.existsSync(normalised)) process.exit(0);
       }
     }
 
-    // Hybrid signal: error outcome + UNCLEAR → IGNORED
-    if (verdict === 'UNCLEAR' && toolOutcome === 'error') verdict = 'IGNORED';
-    if (verdict === 'UNCLEAR' && toolOutcome === 'success' && typeof assessHintUsage === 'function') {
+    let deterministicAssessment = null;
+    if (verdict === 'UNCLEAR' && typeof assessHintUsage === 'function') {
       try {
-        const assessment = assessHintUsage(surface, toolName, parsedToolInput, {});
-        if (assessment?.touched) verdict = 'FOLLOWED';
+        deterministicAssessment = assessHintUsage(surface, toolName, parsedToolInput, {});
       } catch { /* stay UNCLEAR */ }
     }
+    verdict = resolveUnclearFallback(verdict, toolOutcome, deterministicAssessment);
     const noiseReason = verdict === 'IRRELEVANT'
-      ? inferNoiseReason(surface, parsedToolInput, { extractProjectPath, extractProjectSlug, detectContext })
+      ? (isDeterministicNoiseReason(deterministicAssessment?.reason)
+          ? deterministicAssessment.reason
+          : inferNoiseReason(surface, parsedToolInput, { extractProjectPath, extractProjectSlug, detectContext }))
       : null;
 
     // UNCLEAR → no feedback (neutral), but log for diagnostics
@@ -228,4 +256,17 @@ if (!fs.existsSync(normalised)) process.exit(0);
 
   try { fs.unlinkSync(normalised); } catch {}
   process.exit(0);
-})();
+}
+
+if (require.main === module) {
+  main().catch(() => process.exit(0));
+} else {
+  module.exports = {
+    inferLanguageMismatch,
+    inferNoiseReason,
+    isDeterministicNoiseReason,
+    applyDeterministicAssessment,
+    resolveUnclearFallback,
+    resolveQueueFilePath,
+  };
+}
