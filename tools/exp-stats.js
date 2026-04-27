@@ -114,8 +114,13 @@ function computeStats(events) {
     judgeFeedbackCount: 0,
     feedbackByVerdict: { FOLLOWED: 0, IGNORED: 0, IRRELEVANT: 0 },
     noiseByReason: { wrong_repo: 0, wrong_language: 0, wrong_task: 0, stale_rule: 0 },
+    noiseDispositionCount: 0,
+    noiseDispositionBySource: { manual: 0, judge: 0, 'implicit-posttool': 0, 'prompt-stale': 0 },
+    noiseDispositionByReason: { wrong_repo: 0, wrong_language: 0, wrong_task: 0, stale_rule: 0 },
     implicitUnusedCount: 0,
     implicitUnusedByReason: { wrong_repo: 0, wrong_language: 0, wrong_task: 0, stale_rule: 0 },
+    noiseSuppressionCount: 0,
+    noiseSuppressionByReason: { wrong_repo: 0, wrong_language: 0, wrong_task: 0, stale_rule: 0 },
 
     // OBS-04c: Recurrence telemetry
     mistakeSeenCount: 0,
@@ -189,6 +194,19 @@ function computeStats(events) {
       stats.implicitUnusedCount++;
       if (e.reason && stats.implicitUnusedByReason[e.reason] !== undefined) {
         stats.implicitUnusedByReason[e.reason]++;
+      }
+    } else if (e.op === 'noise-disposition') {
+      const count = Math.max(1, Number(e.unused || e.count || 1) || 1);
+      stats.noiseDispositionCount += count;
+      const source = String(e.source || 'manual');
+      if (stats.noiseDispositionBySource[source] !== undefined) stats.noiseDispositionBySource[source] += count;
+      const reason = String(e.reason || '');
+      if (stats.noiseDispositionByReason[reason] !== undefined) stats.noiseDispositionByReason[reason] += count;
+    } else if (e.op === 'noise-suppressed') {
+      const count = Math.max(1, Number(e.count || 1) || 1);
+      stats.noiseSuppressionCount += count;
+      if (e.reason && stats.noiseSuppressionByReason[e.reason] !== undefined) {
+        stats.noiseSuppressionByReason[e.reason] += count;
       }
     } else if (e.op === 'mistake-seen') {
       const count = Math.max(0, Number(e.count) || 0);
@@ -336,7 +354,7 @@ if (require.main === module) {
   const stats = computeStats(events);
 
   // Check for empty
-  if (stats.totalIntercepts + stats.extractSessions + stats.evolveCount + stats.routeCount + stats.mistakeSeenCount + stats.costCallCount === 0) {
+  if (stats.totalIntercepts + stats.extractSessions + stats.evolveCount + stats.routeCount + stats.mistakeSeenCount + stats.costCallCount + stats.noiseDispositionCount + stats.noiseSuppressionCount === 0) {
     console.log(`Experience Engine Stats (${rangeLabel})`);
     console.log('======================================');
     console.log('');
@@ -382,6 +400,28 @@ if (require.main === module) {
     printStat('Implicit unused:', String(stats.implicitUnusedCount));
     if (implicitParts.length > 0) {
       printStat('Unused reasons:', implicitParts.join(' '));
+    }
+  }
+  if (stats.noiseDispositionCount > 0 || stats.noiseSuppressionCount > 0) {
+    console.log('');
+    console.log('Noise Learning');
+    if (stats.noiseDispositionCount > 0) {
+      const sourceParts = Object.entries(stats.noiseDispositionBySource)
+        .filter(([, count]) => count > 0)
+        .map(([source, count]) => `${source}=${count}`);
+      const reasonParts = Object.entries(stats.noiseDispositionByReason)
+        .filter(([, count]) => count > 0)
+        .map(([reason, count]) => `${reason}=${count}`);
+      printStat('Dispositions:', String(stats.noiseDispositionCount));
+      if (sourceParts.length > 0) printStat('By source:', sourceParts.join(' '));
+      if (reasonParts.length > 0) printStat('By reason:', reasonParts.join(' '));
+    }
+    if (stats.noiseSuppressionCount > 0) {
+      const suppressedParts = Object.entries(stats.noiseSuppressionByReason)
+        .filter(([, count]) => count > 0)
+        .map(([reason, count]) => `${reason}=${count}`);
+      printStat('Suppressed:', String(stats.noiseSuppressionCount));
+      if (suppressedParts.length > 0) printStat('Suppressed reasons:', suppressedParts.join(' '));
     }
   }
 

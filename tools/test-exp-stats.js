@@ -122,6 +122,10 @@ describe('computeStats', () => {
       { ts: '2026-04-09T00:02:30Z', op: 'feedback', verdict: 'FOLLOWED' },
       { ts: '2026-04-09T00:02:40Z', op: 'judge-feedback', verdict: 'IRRELEVANT', reason: 'wrong_task' },
       { ts: '2026-04-09T00:02:50Z', op: 'implicit-unused', reason: 'wrong_task' },
+      { ts: '2026-04-09T00:02:51Z', op: 'noise-disposition', disposition: 'unused', source: 'implicit-posttool', reason: 'wrong_language' },
+      { ts: '2026-04-09T00:02:52Z', op: 'noise-disposition', disposition: 'irrelevant', source: 'manual', reason: 'wrong_repo' },
+      { ts: '2026-04-09T00:02:53Z', op: 'noise-disposition', disposition: 'unused', source: 'prompt-stale', unused: 2 },
+      { ts: '2026-04-09T00:02:54Z', op: 'noise-suppressed', reason: 'wrong_task', count: 2 },
       { ts: '2026-04-09T00:02:55Z', op: 'mistake-seen', type: 'test_fail_fix', count: 2, project: 'D:/proj/c.ts' },
       { ts: '2026-04-09T00:02:56Z', op: 'mistake-seen', type: 'user_correction', count: 1, project: 'D:/proj/c.ts' },
       { ts: '2026-04-09T00:03:00Z', op: 'extract', mistakes: 3, stored: 2, project: 'D:/proj/c.ts' },
@@ -159,6 +163,14 @@ describe('computeStats', () => {
     assert.strictEqual(s.noiseByReason.wrong_task, 1);
     assert.strictEqual(s.implicitUnusedCount, 1);
     assert.strictEqual(s.implicitUnusedByReason.wrong_task, 1);
+    assert.strictEqual(s.noiseDispositionCount, 4);
+    assert.strictEqual(s.noiseDispositionBySource['implicit-posttool'], 1);
+    assert.strictEqual(s.noiseDispositionBySource.manual, 1);
+    assert.strictEqual(s.noiseDispositionBySource['prompt-stale'], 2);
+    assert.strictEqual(s.noiseDispositionByReason.wrong_language, 1);
+    assert.strictEqual(s.noiseDispositionByReason.wrong_repo, 1);
+    assert.strictEqual(s.noiseSuppressionCount, 2);
+    assert.strictEqual(s.noiseSuppressionByReason.wrong_task, 2);
     assert.strictEqual(s.mistakeSeenCount, 3);
     assert.strictEqual(s.mistakeByType.test_fail_fix, 2);
     assert.strictEqual(s.mistakeByProjectType['D:/proj :: test_fail_fix'], 2);
@@ -185,6 +197,8 @@ describe('computeStats', () => {
     assert.strictEqual(s.feedbackCount, 0);
     assert.strictEqual(s.feedbackByVerdict.FOLLOWED, 0);
     assert.strictEqual(s.noiseByReason.wrong_repo, 0);
+    assert.strictEqual(s.noiseDispositionCount, 0);
+    assert.strictEqual(s.noiseSuppressionCount, 0);
     assert.strictEqual(s.implicitUnusedCount, 0);
     assert.strictEqual(s.mistakeSeenCount, 0);
     assert.strictEqual(s.costCallCount, 0);
