@@ -165,6 +165,9 @@ const PENDING_HINT_TTL_MS = 20 * 60 * 1000;
 const PROMPT_STALE_RECONCILE_MS = 10 * 1000;
 const PROBATIONARY_T2_RAW_SCORE_THRESHOLD = 0.78;
 const PROBATIONARY_T2_SURFACE_LIMIT = 2;
+const ORGANIC_SUPPORT_SEMANTIC_THRESHOLD = 0.58;
+const ORGANIC_SUPPORT_TOKEN_OVERLAP_THRESHOLD = 0.34;
+const ORGANIC_SUPPORT_MAX_CANDIDATES = 8;
 
 // --- Session-persistent tracking (file-based, survives process restarts) ---
 // Each hook invocation is a NEW process, so in-memory arrays are useless.
@@ -1334,7 +1337,7 @@ function assessExtractedQaQuality(qa) {
   return { ok: true, reason: null };
 }
 
-async function extractFromSession(transcript, projectPath) {
+async function extractFromSession(transcript, projectPath, meta = {}) {
   if (!transcript || transcript.length < 100) return 0;
 
   const domain = detectTranscriptDomain(transcript);
@@ -1363,18 +1366,15 @@ async function extractFromSession(transcript, projectPath) {
         activityLog({ op: 'extract-skip', reason: qa.reason || 'brain_skip', type: mistake.type, project: projectPath || null });
         continue;
       }
+      if (meta?.sourceSession && !qa.sourceSession) qa.sourceSession = meta.sourceSession;
       const quality = assessExtractedQaQuality(qa);
       if (!quality.ok) {
         activityLog({ op: 'extract-skip', reason: quality.reason, type: mistake.type, project: projectPath || null });
         continue;
       }
-      if (await isDuplicate(qa)) {
-        activityLog({ op: 'extract-skip', reason: 'duplicate', type: mistake.type, project: projectPath || null });
-        continue;
-      }
       const projectSlug = extractProjectSlug(projectPath);
-      await storeExperience(qa, domain, projectSlug);
-      stored++;
+      const result = await storeExperience(qa, domain, projectSlug);
+      if (result?.stored || result?.merged) stored++;
     } catch { /* skip */ }
   }
   activityLog({ op: 'extract', mistakes: mistakes.length, stored, project: projectPath || null });
@@ -1802,40 +1802,131 @@ async function brainDeepSeek(prompt, opts = {}) {
   } catch { return null; }
 }
 
-// --- Dedup ---
+// --- Organic support consolidation ---
 
-async function isDuplicate(qa) {
-  const vector = await getEmbedding(`${qa.trigger} ${qa.question}`);
-  if (!vector) return false;
-  const exactKey = `${normalizeExtractText(qa.trigger)}||${normalizeExtractText(qa.solution)}`;
+const ORGANIC_SUPPORT_STOPWORDS = new Set([
+  'the', 'and', 'for', 'with', 'that', 'this', 'from', 'into', 'when', 'then',
+  'before', 'after', 'ensure', 'always', 'should', 'must', 'have', 'has', 'are',
+  'was', 'were', 'will', 'using', 'used', 'file', 'files', 'command',
+]);
 
-  if (!(await checkQdrant())) {
-    const results = fileStoreSearch(SELFQA_COLLECTION, vector, 5);
-    for (const entry of results) {
-      const data = parsePayload(entry);
-      const entryKey = `${normalizeExtractText(data?.trigger)}||${normalizeExtractText(data?.solution)}`;
-      if (entryKey === exactKey) return true;
-    }
-    return (results[0]?.score ?? 0) > DEDUP_THRESHOLD;
+function tokenizeOrganicSupportText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_/-]+/g, ' ')
+    .split(/\s+/)
+    .map(token => token.trim())
+    .filter(token => token.length >= 3 && !ORGANIC_SUPPORT_STOPWORDS.has(token));
+}
+
+function organicSupportText(input = {}) {
+  return [
+    input.failureMode,
+    input.judgment,
+    input.trigger,
+    input.question,
+    input.solution,
+    ...(Array.isArray(input.conditions) ? input.conditions : []),
+  ].filter(Boolean).join(' ');
+}
+
+function tokenOverlapRatio(a, b) {
+  const aTokens = new Set(tokenizeOrganicSupportText(a));
+  const bTokens = new Set(tokenizeOrganicSupportText(b));
+  if (aTokens.size === 0 || bTokens.size === 0) return 0;
+  let overlap = 0;
+  for (const token of aTokens) {
+    if (bTokens.has(token)) overlap++;
+  }
+  return overlap / Math.min(aTokens.size, bTokens.size);
+}
+
+function conditionOverlapCount(a, b) {
+  const aConditions = new Set((Array.isArray(a?.conditions) ? a.conditions : [])
+    .map(value => String(value || '').trim().toLowerCase())
+    .filter(Boolean));
+  const bConditions = new Set((Array.isArray(b?.conditions) ? b.conditions : [])
+    .map(value => String(value || '').trim().toLowerCase())
+    .filter(Boolean));
+  let count = 0;
+  for (const condition of aConditions) {
+    if (bConditions.has(condition)) count++;
+  }
+  return count;
+}
+
+function buildOrganicSupportKey(data) {
+  return `${normalizeExtractText(data?.trigger)}||${normalizeExtractText(data?.solution)}`;
+}
+
+function isOrganicSupportCandidate(qa, existing, semanticScore = 0) {
+  if (!qa || !existing) return false;
+  if (existing.createdFrom && existing.createdFrom !== 'session-extractor') return false;
+  if ((existing.ignoreCount || 0) > 0 || (existing.irrelevantCount || 0) > 0) return false;
+  const incomingKey = buildOrganicSupportKey(qa);
+  const existingKey = buildOrganicSupportKey(existing);
+  if (incomingKey && incomingKey === existingKey) return true;
+  if (semanticScore < ORGANIC_SUPPORT_SEMANTIC_THRESHOLD) return false;
+  const overlap = tokenOverlapRatio(organicSupportText(qa), organicSupportText(existing));
+  if (overlap >= ORGANIC_SUPPORT_TOKEN_OVERLAP_THRESHOLD) return true;
+  return conditionOverlapCount(qa, existing) >= 2 && overlap >= 0.20;
+}
+
+async function findOrganicSupportCandidate(qa, vector) {
+  const points = await searchCollection(SELFQA_COLLECTION, vector, ORGANIC_SUPPORT_MAX_CANDIDATES);
+  let best = null;
+  for (const point of points) {
+    const data = parsePayload(point);
+    if (!isOrganicSupportCandidate(qa, data, point.score || 0)) continue;
+    if (!best || (point.score || 0) > (best.score || 0)) best = { point, data, score: point.score || 0 };
+  }
+  return best;
+}
+
+function applyOrganicSupportUpdate(data, qa, supportId, context = {}) {
+  ensureSignalMetrics(data);
+  ensureNovelCaseEvidence(data);
+  const now = new Date().toISOString();
+  const sourceSession = String(qa?.sourceSession || context.sourceSession || '').trim();
+  if (!Array.isArray(data.organicSupportSessions)) data.organicSupportSessions = [];
+  if (!Array.isArray(data.organicSupportIds)) data.organicSupportIds = [];
+
+  const alreadyConfirmedSession = sourceSession && data.organicSupportSessions.includes(sourceSession);
+  if (!alreadyConfirmedSession) {
+    data.organicSupportCount = (data.organicSupportCount || 0) + 1;
+    data.validatedCount = Math.max(data.validatedCount || 0, data.organicSupportCount || 0);
+    data.hitCount = getValidatedHitCount(data);
+    data.lastHitAt = now;
+    data.lastOrganicSupportAt = now;
+    data.confirmedAt.push(now);
+    if (data.confirmedAt.length > 50) data.confirmedAt = data.confirmedAt.slice(-50);
   }
 
-  try {
-    const res = await fetch(`${getQdrantBase()}/collections/${SELFQA_COLLECTION}/points/query`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
-      body: JSON.stringify({ query: vector, limit: 5, with_payload: true, filter: { must: [buildQdrantUserFilter()] } }),
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return false;
-    const body = await res.json();
-    const points = body.result?.points || [];
-    for (const entry of points) {
-      const data = parsePayload(entry);
-      const entryKey = `${normalizeExtractText(data?.trigger)}||${normalizeExtractText(data?.solution)}`;
-      if (entryKey === exactKey) return true;
+  if (sourceSession && !data.organicSupportSessions.includes(sourceSession)) {
+    data.organicSupportSessions.push(sourceSession);
+    if (data.organicSupportSessions.length > 50) data.organicSupportSessions = data.organicSupportSessions.slice(-50);
+    if (!Array.isArray(data.confirmedSessions)) data.confirmedSessions = [];
+    if (!data.confirmedSessions.includes(sourceSession)) data.confirmedSessions.push(sourceSession);
+    if (data.confirmedSessions.length > 20) data.confirmedSessions = data.confirmedSessions.slice(-20);
+    data.lastConfirmedSession = sourceSession;
+  }
+  if (supportId && !data.organicSupportIds.includes(supportId)) {
+    data.organicSupportIds.push(supportId);
+    if (data.organicSupportIds.length > 100) data.organicSupportIds = data.organicSupportIds.slice(-100);
+  }
+  if (supportId && !data.novelCaseEvidence.seedEntryIds.includes(supportId)) {
+    data.novelCaseEvidence.seedEntryIds.push(supportId);
+    if (data.novelCaseEvidence.seedEntryIds.length > 100) {
+      data.novelCaseEvidence.seedEntryIds = data.novelCaseEvidence.seedEntryIds.slice(-100);
     }
-    return (points[0]?.score ?? 0) > DEDUP_THRESHOLD;
-  } catch { return false; }
+  }
+  data.novelCaseEvidence.seedSupportCount = Math.max(
+    data.novelCaseEvidence.seedSupportCount || 1,
+    1 + (data.organicSupportCount || 0)
+  );
+  const confidenceFloor = 0.50 + Math.min(0.18, (data.organicSupportCount || 0) * 0.04);
+  data.confidence = Math.max(Number(data.confidence || 0), confidenceFloor);
+  return data;
 }
 
 // --- Store ---
@@ -1883,9 +1974,24 @@ function buildStorePayload(id, qa, domain, projectSlug) {
 async function storeExperience(qa, domain, projectSlug) {
   const text = `${qa.trigger} ${qa.question} ${qa.solution}`;
   const vector = await getEmbedding(text);
-  if (!vector) return;
+  if (!vector) return { stored: false, merged: false };
 
   const id = crypto.randomUUID();
+  const supportCandidate = await findOrganicSupportCandidate(qa, vector);
+  if (supportCandidate?.point?.id && supportCandidate.data) {
+    applyOrganicSupportUpdate(supportCandidate.data, qa, id);
+    await upsertEntry(SELFQA_COLLECTION, supportCandidate.point.id, supportCandidate.point.vector || vector, supportCandidate.data);
+    activityLog({
+      op: 'extract-merge',
+      id: String(supportCandidate.point.id).slice(0, 8),
+      supportId: id.slice(0, 8),
+      score: Number((supportCandidate.score || 0).toFixed(3)),
+      organicSupportCount: supportCandidate.data.organicSupportCount || 0,
+      sourceSession: qa.sourceSession || null,
+    });
+    return { stored: false, merged: true, id: supportCandidate.point.id };
+  }
+
   const payload = {
     json: JSON.stringify(buildStorePayload(id, qa, domain, projectSlug)),
     user: getExpUser(),
@@ -1922,6 +2028,7 @@ async function storeExperience(qa, domain, projectSlug) {
       }
     } catch { /* never block store on edge creation */ }
   }
+  return { stored: true, merged: false, id };
 }
 
 // --- Provider abstraction (D-08, D-09, D-10) ---
@@ -3817,4 +3924,4 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
 
 // --- Exports ---
 
-module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, recordSurface, recordHoldoutOutcome, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeTask, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _applySurfaceUpdate: applySurfaceUpdate, _applyHoldoutOutcome: recordHoldoutOutcomeOnData, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _isProbationaryT2Candidate: isProbationaryT2Candidate, _selectProbationaryT2Points: selectProbationaryT2Points, _isHookRealtimeFastPath: isHookRealtimeFastPath, _isPromptHookPrecisionGate: isPromptHookPrecisionGate, _filterPromptHookPoints: filterPromptHookPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _recordSurfaceUpdatesFields: applySurfaceUpdate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _reconcilePendingHints: reconcilePendingHints, _reconcileStalePromptSuggestions: reconcileStalePromptSuggestions, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _resolveRuntimeFromSourceMeta: resolveRuntimeFromSourceMeta, _isRouterEnabled: isRouterEnabled, _assessExtractedQaQuality: assessExtractedQaQuality, _normalizeExtractText: normalizeExtractText, _detectMistakes: detectMistakes, _shouldPromoteBehavioralToPrinciple: shouldPromoteBehavioralToPrinciple, _buildPrincipleText: buildPrincipleText, _getValidatedHitCount: getValidatedHitCount };
+module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, recordSurface, recordHoldoutOutcome, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeTask, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _applySurfaceUpdate: applySurfaceUpdate, _applyHoldoutOutcome: recordHoldoutOutcomeOnData, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _isProbationaryT2Candidate: isProbationaryT2Candidate, _selectProbationaryT2Points: selectProbationaryT2Points, _isHookRealtimeFastPath: isHookRealtimeFastPath, _isPromptHookPrecisionGate: isPromptHookPrecisionGate, _filterPromptHookPoints: filterPromptHookPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _recordSurfaceUpdatesFields: applySurfaceUpdate, _applyOrganicSupportUpdate: applyOrganicSupportUpdate, _isOrganicSupportCandidate: isOrganicSupportCandidate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _reconcilePendingHints: reconcilePendingHints, _reconcileStalePromptSuggestions: reconcileStalePromptSuggestions, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _resolveRuntimeFromSourceMeta: resolveRuntimeFromSourceMeta, _isRouterEnabled: isRouterEnabled, _assessExtractedQaQuality: assessExtractedQaQuality, _normalizeExtractText: normalizeExtractText, _detectMistakes: detectMistakes, _shouldPromoteBehavioralToPrinciple: shouldPromoteBehavioralToPrinciple, _buildPrincipleText: buildPrincipleText, _getValidatedHitCount: getValidatedHitCount };
