@@ -3,15 +3,17 @@ set -euo pipefail
 
 REPO_DIR="$HOME/experience-engine"
 LOG_DIR="$HOME/.experience/logs"
+DEPLOY_BRANCH="${DEPLOY_BRANCH:-develop}"
 mkdir -p "$LOG_DIR"
 
 cd "$REPO_DIR"
 echo "[deploy] repo=$REPO_DIR"
-echo "[deploy] branch=$(git branch --show-current)"
+echo "[deploy] current_branch=$(git branch --show-current)"
+echo "[deploy] target_branch=$DEPLOY_BRANCH"
 
-git fetch origin develop
-git checkout develop
-git pull --ff-only origin develop
+git fetch origin "$DEPLOY_BRANCH"
+git checkout "$DEPLOY_BRANCH"
+git pull --ff-only origin "$DEPLOY_BRANCH"
 
 echo "[deploy] ensuring qdrant container"
 docker compose up -d qdrant
