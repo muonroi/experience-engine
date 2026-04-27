@@ -23,6 +23,8 @@ const {
   _selectProbationaryT2Points: selectProbationaryT2Points,
   _isProbationaryT2Candidate: isProbationaryT2Candidate,
   _reconcileStalePromptSuggestions: reconcileStalePromptSuggestions,
+  _applyOrganicSupportUpdate: applyOrganicSupportUpdate,
+  _isOrganicSupportCandidate: isOrganicSupportCandidate,
 } = require(CORE_PATH);
 
 const STORE_DIR = path.join(TEST_HOME, '.experience', 'store', process.env.EXP_USER || 'default');
@@ -126,6 +128,72 @@ test('probationary T2 does not surface after surface limit, debt, or low raw sco
     assert.equal(isProbationaryT2Candidate(point), false, `${point.id} should not be probationary`);
   }
   assert.equal(formatPoints(selectProbationaryT2Points([overLimit, ignored, irrelevant, lowScore])).length, 0);
+});
+
+test('repeated organic extraction strengthens one matching T2 without manual seeding', async () => {
+  const existing = {
+    trigger: 'ssh connection attempt with overly permissive permissions',
+    question: 'Unprotected private key file',
+    solution: 'Set the correct permissions on the private key file before using it with SSH.',
+    why: 'OpenSSH refuses private keys that are readable by other users.',
+    failureMode: 'ssh private key permission failure',
+    judgment: 'Use strict private key permissions before invoking SSH.',
+    conditions: ['ssh', 'private_key', 'permissions', '0777'],
+    evidenceClass: 'log',
+    provenance: { kind: 'seed', source: 'session-extractor' },
+    novelCaseEvidence: { seedSupportCount: 1, seedEntryIds: ['ssh-key-permission'] },
+    confidence: 0.5,
+    hitCount: 0,
+    validatedCount: 0,
+    surfaceCount: 0,
+    signalVersion: 2,
+    tier: 2,
+    confirmedAt: [],
+    createdAt: new Date().toISOString(),
+    createdFrom: 'session-extractor',
+  };
+  const incoming = {
+    trigger: "Permissions 0777 for '/mnt/c/Users/me/.ssh/server_rsa' are too open",
+    question: 'SSH private key rejected',
+    solution: 'Copy the key to a local temp path, chmod 600 it, then run SSH with that copy.',
+    why: 'Mounted Windows keys can appear too permissive to OpenSSH inside WSL.',
+    failureMode: 'ssh private key permission failure',
+    judgment: 'Use strict private key permissions before invoking SSH.',
+    conditions: ['ssh', 'private_key', 'permissions', 'wsl'],
+    evidenceClass: 'log',
+    sourceSession: 'session-a',
+  };
+  const unrelated = {
+    trigger: 'test assertion failed after retry',
+    question: 'Retry test failed',
+    solution: 'Reset mock state before the second request.',
+    failureMode: 'stale mock state',
+    judgment: 'Reset mutable test state before retry assertions.',
+    conditions: ['test', 'mock', 'retry'],
+  };
+
+  assert.equal(isOrganicSupportCandidate(incoming, existing, 0.61), true);
+  assert.equal(isOrganicSupportCandidate(unrelated, existing, 0.90), false);
+
+  applyOrganicSupportUpdate(existing, incoming, 'support-a');
+  applyOrganicSupportUpdate(existing, { ...incoming, sourceSession: 'session-b' }, 'support-b');
+
+  assert.equal(existing.organicSupportCount, 2);
+  assert.equal(existing.validatedCount, 2);
+  assert.equal(existing.hitCount, 2);
+  assert.deepEqual(existing.confirmedSessions, ['session-a', 'session-b']);
+  assert.equal(existing.novelCaseEvidence.seedSupportCount, 3);
+  assert(existing.confidence >= 0.58);
+
+  resetStore([makeEntry('ssh-key-permission', existing)]);
+  const results = await evolve('organic-support-test');
+  assert.equal(results.promoted, 1);
+  assert.equal(readCollection('experience-selfqa').length, 0);
+  const behavioral = readCollection('experience-behavioral');
+  assert.equal(behavioral.length, 1);
+  const promoted = JSON.parse(behavioral[0].payload.json);
+  assert.equal(promoted.tier, 1);
+  assert.equal(promoted.promotedVia, 'dogfood-confirmation');
 });
 
 test('T1 and T0 keep normal confidence filtering and high-confidence formatting', () => {

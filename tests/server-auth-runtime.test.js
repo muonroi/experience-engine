@@ -246,6 +246,43 @@ test('POST /api/prompt-stale calls loaded core helper and returns bounded result
   }
 });
 
+test('POST /api/extract forwards source metadata to core extraction', async () => {
+  const serverModule = require(path.join(REPO_ROOT, 'server.js'));
+  const core = serverModule.loadExperienceCore();
+  const originalExtract = core.extractFromSession;
+  let called = 0;
+  core.extractFromSession = async (transcript, projectPath, meta) => {
+    called += 1;
+    assert.equal(transcript, 'ToolOutput: permission denied\nToolCall Bash: chmod 600 /tmp/key');
+    assert.equal(projectPath, '/repo/experience-engine');
+    assert.deepEqual(meta, {
+      sourceKind: 'stop-hook',
+      sourceRuntime: 'codex-wsl',
+      sourceSession: 'session-extract-1',
+    });
+    return 1;
+  };
+
+  try {
+    const req = makeJsonRequest({
+      transcript: 'ToolOutput: permission denied\nToolCall Bash: chmod 600 /tmp/key',
+      projectPath: '/repo/experience-engine',
+      sourceKind: 'stop-hook',
+      sourceRuntime: 'codex-wsl',
+      sourceSession: 'session-extract-1',
+    });
+    const res = makeJsonResponse();
+    await serverModule.handleExtract(req, res);
+    const body = res.json();
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(called, 1);
+    assert.deepEqual(body, { stored: 1, success: true });
+  } finally {
+    core.extractFromSession = originalExtract;
+  }
+});
+
 test('read auth token only unlocks observability endpoints', async () => {
   const token = 'test-server-token';
   const readToken = 'test-read-token';

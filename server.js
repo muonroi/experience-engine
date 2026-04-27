@@ -309,7 +309,11 @@ async function handleExtract(req, res) {
   const body = await readBody(req);
   if (!body.transcript) return error(res, 'transcript is required');
   const { extractFromSession } = loadExperienceCore();
-  const stored = await extractFromSession(body.transcript, body.projectPath || null);
+  const stored = await extractFromSession(body.transcript, body.projectPath || null, {
+    sourceKind: body.sourceKind || 'manual-api',
+    sourceRuntime: body.sourceRuntime || 'api',
+    sourceSession: body.sourceSession || null,
+  });
   json(res, { stored, success: true });
 }
 
