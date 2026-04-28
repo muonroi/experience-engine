@@ -80,6 +80,7 @@
 | `sdk/python/test_client.py` | Python SDK test |
 | `tests/npm-cli.test.js` | npm CLI coverage |
 | `.experience/test-*.js` | Hook/runtime test coverage under the internal engine surface |
+| `.experience/test-setup.js` | Setup wizard coverage, including thin-client health behavior |
 
 ---
 
