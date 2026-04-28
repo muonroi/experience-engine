@@ -1207,42 +1207,51 @@ if [ -z "$QDRANT_URL" ]; then
   QDRANT_URL="$_NR_OUT"
 fi
 
-for COLL in experience-principles experience-behavioral experience-selfqa experience-routes; do
-  COLL_INFO=$(eval "curl -s -m 5 $QDRANT_AUTH_HEADER '$QDRANT_URL/collections/$COLL'" 2>/dev/null)
-  _npi="/tmp/_npipe_$$.out"
-  echo "$COLL_INFO" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(d);require('fs').writeFileSync('$_npi',j.result?.status||'')}catch{require('fs').writeFileSync('$_npi','')}})" 2>/dev/null
-  STATUS=""; [ -f "$_npi" ] && STATUS=$(cat "$_npi")
-  echo "$COLL_INFO" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(d);require('fs').writeFileSync('$_npi',String(j.result?.config?.params?.vectors?.size||0))}catch{require('fs').writeFileSync('$_npi','0')}})" 2>/dev/null
-  CURRENT_DIM="0"; [ -f "$_npi" ] && CURRENT_DIM=$(cat "$_npi")
-  rm -f "$_npi"
+_node_run -e "try{const c=JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.experience/config.json','utf8'));process.stdout.write(c.serverBaseUrl||'')}catch{}"
+SERVER_BASE_URL="$_NR_OUT"
 
-  if [ "$STATUS" = "green" ] || [ "$STATUS" = "yellow" ]; then
-    if [ -n "$CURRENT_DIM" ] && [ "$CURRENT_DIM" != "0" ] && [ "$CURRENT_DIM" != "$EMBED_DIM" ]; then
-      echo "  Warning: $COLL dimension mismatch: have ${CURRENT_DIM}, need ${EMBED_DIM} — recreating..."
-      if ! eval "curl -s -m 10 -X DELETE $QDRANT_AUTH_HEADER '$QDRANT_URL/collections/$COLL'" >/dev/null 2>&1; then
-        echo "  [FAIL] Could not delete $COLL for recreation"
-        echo "  Fix:   Check Qdrant is accessible at $QDRANT_URL"
-        exit 1
+if [ -n "$SERVER_BASE_URL" ]; then
+  echo "  Thin-client mode detected ($SERVER_BASE_URL) — collections are managed by the server"
+else
+  for COLL in experience-principles experience-behavioral experience-selfqa experience-routes; do
+    COLL_INFO=$(eval "curl -s -m 5 $QDRANT_AUTH_HEADER '$QDRANT_URL/collections/$COLL'" 2>/dev/null)
+    _npi="/tmp/_npipe_$$.out"
+    echo "$COLL_INFO" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(d);require('fs').writeFileSync('$_npi',j.result?.status||'')}catch{require('fs').writeFileSync('$_npi','')}})" 2>/dev/null
+    STATUS=""; [ -f "$_npi" ] && STATUS=$(cat "$_npi")
+    echo "$COLL_INFO" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(d);require('fs').writeFileSync('$_npi',String(j.result?.config?.params?.vectors?.size||0))}catch{require('fs').writeFileSync('$_npi','0')}})" 2>/dev/null
+    CURRENT_DIM="0"; [ -f "$_npi" ] && CURRENT_DIM=$(cat "$_npi")
+    rm -f "$_npi"
+
+    if [ "$STATUS" = "green" ] || [ "$STATUS" = "yellow" ]; then
+      if [ -n "$CURRENT_DIM" ] && [ "$CURRENT_DIM" != "0" ] && [ "$CURRENT_DIM" != "$EMBED_DIM" ]; then
+        echo "  Warning: $COLL dimension mismatch: have ${CURRENT_DIM}, need ${EMBED_DIM} — recreating..."
+        if ! eval "curl -s -m 10 -X DELETE $QDRANT_AUTH_HEADER '$QDRANT_URL/collections/$COLL'" >/dev/null 2>&1; then
+          echo "  [FAIL] Could not delete $COLL for recreation"
+          echo "  Fix:   Check Qdrant is accessible at $QDRANT_URL"
+          exit 1
+        fi
+        if eval "curl -s -m 10 -X PUT $QDRANT_AUTH_HEADER '$QDRANT_URL/collections/$COLL' \
+          -H 'Content-Type: application/json' \
+          -d '{\"vectors\":{\"size\":${EMBED_DIM},\"distance\":\"Cosine\"}}'" >/dev/null 2>&1; then
+          echo "  $COLL recreated (dim=$EMBED_DIM)"
+        else
+          echo "  [WARN] Could not recreate $COLL (dim=$EMBED_DIM) — FileStore fallback will be used"
+        fi
+      else
+        echo "  $COLL exists (dim=$CURRENT_DIM)"
       fi
-      if ! eval "curl -s -m 10 -X PUT $QDRANT_AUTH_HEADER '$QDRANT_URL/collections/$COLL' \
+    else
+      if eval "curl -s -m 10 -X PUT $QDRANT_AUTH_HEADER '$QDRANT_URL/collections/$COLL' \
         -H 'Content-Type: application/json' \
         -d '{\"vectors\":{\"size\":${EMBED_DIM},\"distance\":\"Cosine\"}}'" >/dev/null 2>&1; then
-        echo "  [WARN] Could not recreate $COLL (dim=$EMBED_DIM) — FileStore fallback will be used"
+        echo "  $COLL created (dim=$EMBED_DIM)"
+      else
+        echo "  [WARN] Could not create collection $COLL — FileStore fallback will be used"
+        echo "  Fix:   Start Qdrant at $QDRANT_URL, then re-run setup.sh"
       fi
-      echo "  $COLL recreated (dim=$EMBED_DIM)"
-    else
-      echo "  $COLL exists (dim=$CURRENT_DIM)"
     fi
-  else
-    if ! eval "curl -s -m 10 -X PUT $QDRANT_AUTH_HEADER '$QDRANT_URL/collections/$COLL' \
-      -H 'Content-Type: application/json' \
-      -d '{\"vectors\":{\"size\":${EMBED_DIM},\"distance\":\"Cosine\"}}'" >/dev/null 2>&1; then
-      echo "  [WARN] Could not create collection $COLL — FileStore fallback will be used"
-      echo "  Fix:   Start Qdrant at $QDRANT_URL, then re-run setup.sh"
-    fi
-    echo "  $COLL created (dim=$EMBED_DIM)"
-  fi
-done
+  done
+fi
 
 # ── Step 5: Agent selection + Patch global agent settings ─────────────────
 echo ""
@@ -1901,6 +1910,9 @@ try {
     'HC_brainProvider='+(c.brainProvider||''),
     'HC_embedDim='+     (inferEmbedDim(c) || 768),
     'HC_tunnelSsh='+    (c.tunnelSsh||''),
+    'HC_serverBaseUrl='+(c.serverBaseUrl||''),
+    'HC_serverAuthToken='+(c.serverAuthToken||''),
+    'HC_serverReadAuthToken='+(c.serverReadAuthToken||''),
   ];
   process.stdout.write(fields.join('\n')+'\n');
 } catch(e) {
@@ -1914,6 +1926,10 @@ done <<< "$_HC_RAW"
 
 # 1. Embed API probe
 printf "  Embed API (%s)... " "$HC_embedProvider"
+if [ -n "$HC_serverBaseUrl" ]; then
+  HEALTH_PASS=$((HEALTH_PASS+1))
+  echo "OK (thin-client: server handles embeddings)"
+else
 _NR_ERR=/dev/stdout _node_run -e "
 (async () => {
   try {
@@ -1933,40 +1949,73 @@ else
   echo "$EMBED_RESULT"
   echo "    Fix: Check embed provider config and API key, then re-run setup.sh"
 fi
+fi
 
 # 2. Qdrant connectivity probe
 printf "  Qdrant... "
 _QU="${HC_qdrantUrl:-http://localhost:6333}"
 _QK="${HC_qdrantKey:-}"
-if [ -n "$_QK" ]; then
-  QDRANT_CHECK=$(curl -s -o /dev/null -w "%{http_code}" "${_QU}/collections" \
-    -H "api-key: $_QK" --connect-timeout 5 2>/dev/null)
-else
-  QDRANT_CHECK=$(curl -s -o /dev/null -w "%{http_code}" "${_QU}/collections" \
+if [ -n "$HC_serverBaseUrl" ]; then
+  SERVER_HEALTH_CHECK=$(curl -s -o /dev/null -w "%{http_code}" "${HC_serverBaseUrl%/}/health" \
     --connect-timeout 5 2>/dev/null)
-fi
-if [ "$QDRANT_CHECK" = "200" ]; then
-  echo "OK"
-  HEALTH_PASS=$((HEALTH_PASS+1))
-else
-  echo "FAIL (HTTP $QDRANT_CHECK)"
-  if [ -n "$HC_tunnelSsh" ]; then
-    echo "    Tunnel configured: $HC_tunnelSsh"
-    echo "    Fix: Start the SSH tunnel first, then re-run setup.sh"
-    echo "         $HC_tunnelSsh"
-  elif [[ "$_QU" == *localhost* ]] || [[ "$_QU" == *127.0.0.1* ]]; then
-    echo "    Fix: Qdrant not reachable at ${_QU}"
-    echo "         If Qdrant is on a remote VPS, you may need an SSH tunnel:"
-    echo "         ssh -i ~/.ssh/KEY -f -N -L 6333:localhost:6333 user@vps-host"
-    echo "         Or re-run setup.sh and choose option [3] VPS via SSH"
+  if [ "$SERVER_HEALTH_CHECK" = "200" ]; then
+    echo "OK (thin-client server reachable)"
+    HEALTH_PASS=$((HEALTH_PASS+1))
   else
-    echo "    Fix: Check Qdrant is running at ${_QU}"
+    echo "FAIL (server HTTP $SERVER_HEALTH_CHECK)"
+    echo "    Fix: Check serverBaseUrl or bring up the Experience Engine server at ${HC_serverBaseUrl%/}"
+    HEALTH_FAIL=$((HEALTH_FAIL+1))
   fi
-  HEALTH_FAIL=$((HEALTH_FAIL+1))
+else
+  if [ -n "$_QK" ]; then
+    QDRANT_CHECK=$(curl -s -o /dev/null -w "%{http_code}" "${_QU}/collections" \
+      -H "api-key: $_QK" --connect-timeout 5 2>/dev/null)
+  else
+    QDRANT_CHECK=$(curl -s -o /dev/null -w "%{http_code}" "${_QU}/collections" \
+      --connect-timeout 5 2>/dev/null)
+  fi
+  if [ "$QDRANT_CHECK" = "200" ]; then
+    echo "OK"
+    HEALTH_PASS=$((HEALTH_PASS+1))
+  else
+    echo "FAIL (HTTP $QDRANT_CHECK)"
+    if [ -n "$HC_tunnelSsh" ]; then
+      echo "    Tunnel configured: $HC_tunnelSsh"
+      echo "    Fix: Start the SSH tunnel first, then re-run setup.sh"
+      echo "         $HC_tunnelSsh"
+    elif [[ "$_QU" == *localhost* ]] || [[ "$_QU" == *127.0.0.1* ]]; then
+      echo "    Fix: Qdrant not reachable at ${_QU}"
+      echo "         If Qdrant is on a remote VPS, you may need an SSH tunnel:"
+      echo "         ssh -i ~/.ssh/KEY -f -N -L 6333:localhost:6333 user@vps-host"
+      echo "         Or re-run setup.sh and choose option [3] VPS via SSH"
+    else
+      echo "    Fix: Check Qdrant is running at ${_QU}"
+    fi
+    HEALTH_FAIL=$((HEALTH_FAIL+1))
+  fi
 fi
 
 # 3. Qdrant collections dimension check
 printf "  Collections... "
+if [ -n "$HC_serverBaseUrl" ]; then
+  GATES_TOKEN="$HC_serverReadAuthToken"
+  [ -z "$GATES_TOKEN" ] && GATES_TOKEN="$HC_serverAuthToken"
+  if [ -n "$GATES_TOKEN" ]; then
+    GATES_CHECK=$(curl -s -o /dev/null -w "%{http_code}" "${HC_serverBaseUrl%/}/api/gates" \
+      -H "Authorization: Bearer $GATES_TOKEN" --connect-timeout 5 2>/dev/null)
+    if [ "$GATES_CHECK" = "200" ]; then
+      echo "OK (thin-client: server gates reachable)"
+      HEALTH_PASS=$((HEALTH_PASS+1))
+    else
+      echo "FAIL (server gates HTTP $GATES_CHECK)"
+      echo "    Fix: Check serverReadAuthToken/serverAuthToken or verify ${HC_serverBaseUrl%/}/api/gates"
+      HEALTH_FAIL=$((HEALTH_FAIL+1))
+    fi
+  else
+    echo "OK (thin-client: managed by server; gates auth token not configured)"
+    HEALTH_PASS=$((HEALTH_PASS+1))
+  fi
+else
 _COLL_PROBE=$(mktemp /tmp/exp-coll-probe.XXXXXX.js)
 cat > "$_COLL_PROBE" <<'JSEOF'
 (async () => {
@@ -1998,6 +2047,7 @@ else
   HEALTH_FAIL=$((HEALTH_FAIL+1))
   echo "$COLL_RESULT"
   echo "    Fix: Re-run setup.sh to recreate collections with correct dimensions"
+fi
 fi
 
 echo ""

@@ -63,7 +63,7 @@
   "scripts": {
     "test": "node --test --test-concurrency=1 tests/*.test.js",
     "test:holdout": "node --test tools/test-exp-holdout-harness.js tools/test-exp-holdout-fixtures.js",
-    "test:health": "node --test .experience/test-health-check.js",
+    "test:health": "node --test .experience/test-health-check.js .experience/test-setup.js",
     "test:server": "node tools/test-server.js",
     "test:ci": "npm test && npm run test:holdout && npm run test:health && npm run test:server",
     "replay:holdout": "node tools/exp-holdout-harness.js --fixture fixtures/holdout --json",
