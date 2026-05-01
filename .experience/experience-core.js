@@ -2971,11 +2971,11 @@ async function evolve(trigger) {
   }
 
   // Step 2: Abstract T2 clusters -> T0 (per D-05)
-  // Cluster T2 by cosine > 0.80, groups of 3+ -> brain abstract -> T0 principle
+  // Cluster T2 by cosine > 0.70, groups of 2+ -> brain abstract -> T0 principle
   const remainingT2 = await getAllEntries('experience-selfqa');
-  const clustered = clusterByCosine(remainingT2, 0.80);
+  const clustered = clusterByCosine(remainingT2, 0.70);
   for (const cluster of clustered) {
-    if (cluster.length < 3) continue;
+    if (cluster.length < 2) continue;
     const summaries = cluster.map(e => {
       const d = parsePayload(e);
       return d ? `${d.trigger}: ${d.solution}` : '';
