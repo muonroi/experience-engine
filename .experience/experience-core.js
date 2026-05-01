@@ -1700,15 +1700,30 @@ function detectMistakes(transcript) {
     }
   }
 
-  // Error → fix patterns
+  // Error → fix patterns (v2: require 2+ consecutive errors OR user correction nearby)
   for (let i = 0; i < lines.length; i++) {
     if (!isTranscriptErrorSignal(lines[i])) continue;
-    for (let j = i + 1; j <= Math.min(i + 6, lines.length - 1); j++) {
+    // Count consecutive error signals starting at i
+    let errorCount = 1;
+    let errorEnd = i;
+    for (let k = i + 1; k <= Math.min(i + 6, lines.length - 1); k++) {
+      if (isTranscriptErrorSignal(lines[k])) { errorCount++; errorEnd = k; }
+      else if (isMutatingTranscriptToolCall(lines[k])) break;
+    }
+    // Check for user correction between error and fix
+    let hasUserCorrection = false;
+    for (let k = i + 1; k <= Math.min(errorEnd + 6, lines.length - 1); k++) {
+      if (/^User:/i.test(lines[k])) { hasUserCorrection = true; break; }
+    }
+    // Only count as mistake if repeated errors or user had to intervene
+    if (errorCount < 2 && !hasUserCorrection) continue;
+    for (let j = errorEnd + 1; j <= Math.min(errorEnd + 6, lines.length - 1); j++) {
       if (!isMutatingTranscriptToolCall(lines[j])) continue;
       mistakes.push({
         type: 'error_fix',
-        context: 'Error followed by correction',
-        excerpt: lines.slice(Math.max(0, i - 2), j + 3).join('\n')
+        context: `${errorCount} error(s) followed by correction${hasUserCorrection ? ' (user intervened)' : ''}`,
+        excerpt: lines.slice(Math.max(0, i - 2), j + 3).join('
+')
       });
       break;
     }
@@ -2363,10 +2378,16 @@ function computeEffectiveScore(point, data, queryDomain, queryProjectSlug, query
   // P0: Project-aware penalty — cross-project suggestions heavily penalized
   // v2: bypass penalty when scope.lang='all' (universal behavioral rules should surface everywhere)
   let projectPenalty = 0;
-  if (queryProjectSlug && data._projectSlug) {
+  if (queryProjectSlug) {
     const scopeLang = data.scope?.lang;
     const principleLike = !!data.principle || data.createdFrom === 'evolution-abstraction' || getValidatedHitCount(data) >= SEEDED_BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD;
-    if (queryProjectSlug !== data._projectSlug && scopeLang !== 'all') {
+    if (scopeLang === 'all') {
+      projectPenalty = 0; // Universal rules surface everywhere
+    } else if (!data._projectSlug) {
+      // No project slug on entry — apply moderate penalty (unknown origin)
+      projectPenalty = principleLike ? 0.05 : 0.25;
+    } else if (queryProjectSlug !== data._projectSlug) {
+      // Cross-project — heavy penalty
       projectPenalty = principleLike ? 0.18 : 0.70;
     }
   }
