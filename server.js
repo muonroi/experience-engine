@@ -475,6 +475,28 @@ async function handleTimeline(req, res, url) {
   json(res, { topic, timeline, count: timeline.length });
 }
 
+async function handleSearch(req, res) {
+  if (!requireAuth(req, res)) return;
+  const body = await readBody(req);
+  if (!body.query || typeof body.query !== 'string') return error(res, 'query is required');
+  const limit = Math.min(body.limit || 5, 20);
+
+  const { getEmbeddingRaw, searchCollection } = loadExperienceCore();
+  const vector = await getEmbeddingRaw(body.query, AbortSignal.timeout(2000));
+  if (!vector) return error(res, 'Embedding unavailable', 503);
+
+  const collection = 'experience-behavioral'; // Phase 6: always behavioral
+  const points = await searchCollection(collection, vector, limit);
+
+  const mapped = points.map(p => {
+    const payload = p.payload || {};
+    const json = (() => { try { return JSON.parse(payload.json || '{}'); } catch { return {}; } })();
+    return { id: p.id, score: p.score, text: payload.text || json.solution || '', collection };
+  });
+
+  json(res, { points: mapped });
+}
+
 const VALID_OUTCOMES = new Set(['success', 'fail', 'retry', 'cancelled']);
 const KNOWN_RUNTIMES = new Set(['claude', 'gemini', 'codex', 'opencode']);
 
@@ -574,6 +596,7 @@ const server = http.createServer(async (req, res) => {
       if (p === '/api/route-model') return await handleRouteModel(req, res);
       if (p === '/api/route-feedback') return await handleRouteFeedback(req, res);
       if (p === '/api/brain') return await handleBrainProxy(req, res);
+      if (p === '/api/search') return await handleSearch(req, res);
     }
 
     error(res, 'Not found', 404);
@@ -609,6 +632,7 @@ module.exports = {
   handleGates,
   handleGraph,
   handleTimeline,
+  handleSearch,
   handleShare,
   handleImport,
   handleFeedback,
