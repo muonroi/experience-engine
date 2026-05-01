@@ -1722,8 +1722,7 @@ function detectMistakes(transcript) {
       mistakes.push({
         type: 'error_fix',
         context: `${errorCount} error(s) followed by correction${hasUserCorrection ? ' (user intervened)' : ''}`,
-        excerpt: lines.slice(Math.max(0, i - 2), j + 3).join('
-')
+        excerpt: lines.slice(Math.max(0, i - 2), j + 3).join('\n')
       });
       break;
     }
