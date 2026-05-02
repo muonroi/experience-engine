@@ -3366,39 +3366,20 @@ Rules:
 Task: {TASK}
 Complexity:`;
 
-const TASK_ROUTE_PROMPT = `You are routing a coding task for a thin wrapper in front of Codex CLI.
+const TASK_ROUTE_PROMPT = `Route this coding task. Return ONLY valid JSON, no markdown.
 
-Choose the safest workflow route:
-- qc-flow = broad, ambiguous, multi-step, needs clarify/research/planning first
-- qc-lock = narrow, execution-focused, scope is already tight enough to lock
-- direct = read-only explanation or lightweight analysis; no workflow state needed yet
+Routes: qc-flow (broad/ambiguous, needs planning), qc-lock (narrow, ready to execute), direct (read-only explanation).
+If ambiguous, set needs_disambiguation=true with route=null.
 
-If the user's intent is still ambiguous, do NOT guess. Instead set needs_disambiguation=true, route=null, and return 3-4 concrete options plus one free-text option.
-
-Return STRICT JSON only:
-{
-  "route": "qc-flow" | "qc-lock" | "direct" | null,
-  "confidence": 0.0,
-  "needs_disambiguation": false,
-  "reason": "short rationale",
-  "options": [
-    { "id": "plan-research", "label": "Plan and research first", "route": "qc-flow", "description": "..." },
-    { "id": "implement-now", "label": "Implement a narrow change", "route": "qc-lock", "description": "..." },
-    { "id": "explain-only", "label": "Explain or analyze", "route": "direct", "description": "..." },
-    { "id": "free-text", "label": "Enter a different task", "route": "free-text", "description": "..." }
-  ]
-}
-
-Rules:
-- prefer qc-flow when repo facts, boundaries, verification, or planning are still unclear
-- prefer qc-lock only when the request is already narrow enough for strict execution
-- prefer direct only for explanation/analysis requests
-- if an active run probably matches, you may include an option with route "continue-active-run"
-- confidence should be between 0 and 1
-- no markdown, no prose outside the JSON
+Examples:
+- "explain how auth works" -> {"route":"direct","confidence":0.9,"needs_disambiguation":false,"reason":"explanation request"}
+- "fix the login bug" -> {"route":"qc-lock","confidence":0.8,"needs_disambiguation":false,"reason":"narrow fix"}
+- "improve the API performance" -> {"route":"qc-flow","confidence":0.7,"needs_disambiguation":false,"reason":"broad scope needs planning"}
+- "do something with auth" -> {"route":null,"confidence":0.3,"needs_disambiguation":true,"reason":"ambiguous intent"}
 
 Task: "{TASK}"
-Context: {CONTEXT_JSON}`;
+Context: {CONTEXT_JSON}
+JSON:`;
 
 /**
  * Context-based pre-filter — uses structural signals only (file count, file types).
@@ -3414,6 +3395,9 @@ function preFilterComplexity(taskText, context) {
     /service|middleware|gateway|migration|schema|interface/.test(f)
   );
   if (architectureFiles.length >= 2) return 'premium';
+
+  const lower = taskText.toLowerCase();
+  if (/security audit|breaking migration|multi.file.*architect|architect.*multi.file/.test(lower)) return 'premium';
 
   return null;
 }

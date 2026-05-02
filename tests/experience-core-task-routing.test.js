@@ -107,25 +107,27 @@ test('routeTask returns normalized brain verdict with disambiguation options', a
   assert.equal(result.options[1].route, 'qc-lock');
 });
 
-test('routeTask prefilters Vietnamese narrow execution requests to qc-lock without waiting for brain classification', async () => {
+test('routeTask classifies Vietnamese narrow execution requests via brain', async () => {
   const CORE_PATH = path.join(__dirname, '..', '.experience', 'experience-core.js');
   delete require.cache[require.resolve(CORE_PATH)];
   const { routeTask } = require(CORE_PATH);
 
+  brainResponses.push({ route: 'qc-lock', confidence: 0.8, needs_disambiguation: false, reason: 'narrow fix', options: [] });
   const result = await routeTask('sửa lỗi chính tả trong README.md', null, 'codex');
   assert.equal(result.route, 'qc-lock');
-  assert.equal(result.source, 'keyword');
+  assert.equal(result.source, 'brain');
   assert.equal(result.needs_disambiguation, false);
 });
 
-test('routeTask prefilters Vietnamese read-only questions to direct', async () => {
+test('routeTask classifies Vietnamese read-only questions via brain', async () => {
   const CORE_PATH = path.join(__dirname, '..', '.experience', 'experience-core.js');
   delete require.cache[require.resolve(CORE_PATH)];
   const { routeTask } = require(CORE_PATH);
 
+  brainResponses.push({ route: 'direct', confidence: 0.9, needs_disambiguation: false, reason: 'explanation request', options: [] });
   const result = await routeTask('giải thích kiến trúc hiện tại của wrapper', null, 'codex');
   assert.equal(result.route, 'direct');
-  assert.equal(result.source, 'keyword');
+  assert.equal(result.source, 'brain');
   assert.equal(result.needs_disambiguation, false);
 });
 
