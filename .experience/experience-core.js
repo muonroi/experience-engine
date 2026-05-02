@@ -3345,20 +3345,26 @@ migrateQdrantUserTags().catch(() => {});
 
 // --- Model Router (route-model spec) ---
 
-const CLASSIFY_PROMPT = `You are a cost-aware model router. Reply ONLY one word: fast, balanced, or premium.
+const CLASSIFY_PROMPT_TEMPLATE = `Classify the complexity of this coding task as fast, balanced, or premium. Reply with ONLY the label.
 
-IMPORTANT: Default to fast. Only upgrade when clearly necessary.
+Examples:
+- "hi" -> fast
+- "fix button color" -> fast
+- "add logout button" -> fast
+- "explain this function" -> fast
+- "thêm nút logout vào trang settings" -> fast
+- "sửa lỗi UI khi đọc chapter" -> fast
+- "refactor auth module and update all callers across 5 files" -> balanced
+- "redesign entire auth system with OAuth2 and SSO" -> premium
 
-fast — single-scope tasks: fix a bug, edit a file, add a feature to one component, explain code, run commands, search, read, refactor one function, UI tweaks, API calls, CRUD, translations, simple questions. MOST coding tasks are fast.
-balanced — cross-file changes requiring understanding of how 2-3 modules interact, moderate refactors touching shared interfaces, debugging subtle race conditions.
-premium — system-wide architecture redesign, security audits, multi-service migration, performance optimization requiring deep profiling analysis.
+Rules:
+- If the task mentions ONE file, ONE component, or ONE feature: fast
+- If the task is a greeting, question, or explanation: fast
+- Only use balanced when task explicitly involves MULTIPLE modules interacting
+- Only use premium for full system redesign or security audit
 
-Rule: if the task targets a single file or component, it is fast — even if the description is long or in a foreign language. Length ≠ complexity.
-When in doubt, pick fast.
-The message may be in any language. Judge by intent and complexity, not by language.
-
-Message: "{TASK}"
-Context: {CONTEXT_JSON}`;
+Task: {TASK}
+Complexity:`;
 
 const TASK_ROUTE_PROMPT = `You are routing a coding task for a thin wrapper in front of Codex CLI.
 
@@ -3493,8 +3499,8 @@ async function classifyViaBrain(prompt, timeoutMs = 10000) {
         body: JSON.stringify({
           model: brainModel || 'Qwen/Qwen2.5-7B-Instruct',
           messages: [{ role: 'user', content: prompt }],
-          max_tokens: 10,
-          temperature: 0.1,
+          max_tokens: 5,
+          temperature: 0.0,
         }),
         signal: AbortSignal.timeout(timeoutMs),
       });
@@ -3521,7 +3527,7 @@ async function classifyViaBrain(prompt, timeoutMs = 10000) {
           model: brainModel || 'qwen2.5:3b',
           prompt,
           stream: false,
-          options: { temperature: 0.1, num_predict: 10 },
+          options: { temperature: 0.0, num_predict: 5 },
         }),
         signal: AbortSignal.timeout(timeoutMs),
       });
@@ -3699,16 +3705,7 @@ function resolveTierReasoningEffort(tier, runtime) {
 }
 
 function buildModelRoutePrompt(taskText, context) {
-  const contextJson = JSON.stringify({
-    projectSlug: context?.projectSlug || null,
-    phase: context?.phase || null,
-    gate: context?.gate || null,
-    domain: context?.domain || null,
-    run: context?.run || null
-  });
-  return CLASSIFY_PROMPT
-    .replace('{TASK}', taskText.slice(0, 300))
-    .replace('{CONTEXT_JSON}', contextJson.slice(0, 800));
+  return CLASSIFY_PROMPT_TEMPLATE.replace('{TASK}', taskText.slice(0, 300));
 }
 
 function shouldSkipKeywordModelPrefilter(runtime) {
