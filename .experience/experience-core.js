@@ -3345,15 +3345,16 @@ migrateQdrantUserTags().catch(() => {});
 
 // --- Model Router (route-model spec) ---
 
-const CLASSIFY_PROMPT = `You are a cost-aware model router. Classify the user's message into one of three tiers. Reply ONLY one word: fast, balanced, or premium.
+const CLASSIFY_PROMPT = `You are a cost-aware model router. Reply ONLY one word: fast, balanced, or premium.
 
-Your goal: always pick the CHEAPEST tier that can handle the task safely.
+IMPORTANT: Default to fast. Only upgrade when clearly necessary.
 
-fast — the task requires no deep reasoning. A small, fast model can handle it.
-balanced — the task requires moderate understanding of code, logic, or context.
-premium — the task requires deep multi-step reasoning, architectural analysis, or security-sensitive judgment.
+fast — single-scope tasks: fix a bug, edit a file, add a feature to one component, explain code, run commands, search, read, refactor one function, UI tweaks, API calls, CRUD, translations, simple questions. MOST coding tasks are fast.
+balanced — cross-file changes requiring understanding of how 2-3 modules interact, moderate refactors touching shared interfaces, debugging subtle race conditions.
+premium — system-wide architecture redesign, security audits, multi-service migration, performance optimization requiring deep profiling analysis.
 
-When in doubt between two tiers, pick the cheaper one.
+Rule: if the task targets a single file or component, it is fast — even if the description is long or in a foreign language. Length ≠ complexity.
+When in doubt, pick fast.
 The message may be in any language. Judge by intent and complexity, not by language.
 
 Message: "{TASK}"
