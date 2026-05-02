@@ -3393,54 +3393,22 @@ Rules:
 Task: "{TASK}"
 Context: {CONTEXT_JSON}`;
 
-// Keywords that hint at complexity level — used as a cheap pre-filter before brain call.
-// If files context contains these extensions/patterns, we can short-circuit.
-const COMPLEXITY_KEYWORDS = {
-  premium: [
-    'race condition', 'deadlock', 'concurrency', 'distributed', 'security audit',
-    'breaking change', 'multi-file', 'multi-service', 'architecture',
-    'performance regression', 'memory leak', 'heap', 'profil', 'benchmark',
-  ],
-  fast: [
-    // Greetings / trivial pings should never consume balanced+ tiers.
-    'hello', 'hi', 'hey', 'ping', 'test',
-    'rename ', 'fix typo', 'typo in ', 'delete unused', 'update import',
-    'simple config', 'add comment', 'update version', 'format code',
-  ],
-};
-
 /**
- * Cheap keyword pre-filter — returns tier hint without any API call.
- * Checks task text + context.files extensions for complexity signals.
- * Returns 'fast' | 'balanced' | 'premium' | null (null = inconclusive, call brain).
+ * Context-based pre-filter — uses structural signals only (file count, file types).
+ * Text classification is delegated to brain for language-agnostic detection.
+ * Returns 'premium' | null (null = let brain decide).
  */
 function preFilterComplexity(taskText, context) {
-  const lower = taskText.toLowerCase();
   const files = (context?.files || []).map(f => String(f).toLowerCase());
 
-  // Premium signals in task text
-  for (const kw of COMPLEXITY_KEYWORDS.premium) {
-    if (lower.includes(kw)) return 'premium';
-  }
-
-  // Fast signals — only for short descriptions (long tasks are never trivial)
-  if (lower.length < 80) {
-    for (const kw of COMPLEXITY_KEYWORDS.fast) {
-      if (lower.includes(kw)) return 'fast';
-    }
-  }
-
-  // Context files: many files → complexity signal
   if (files.length >= 5) return 'premium';
 
-  // Context files: TypeScript/Go/Rust architecture files hint at complexity
   const architectureFiles = files.filter(f =>
-    f.includes('service') || f.includes('middleware') || f.includes('gateway') ||
-    f.includes('migration') || f.includes('schema') || f.includes('interface')
+    /service|middleware|gateway|migration|schema|interface/.test(f)
   );
   if (architectureFiles.length >= 2) return 'premium';
 
-  return null; // inconclusive — let brain decide
+  return null;
 }
 
 function isQcFlowFrontHalfContext(context, runtime) {
@@ -3602,69 +3570,9 @@ function foldClassifierText(value) {
     .toLowerCase();
 }
 
-const TASK_ROUTE_READ_ONLY_PATTERNS = [
-  /^(what|why|how|explain|summarize|compare|review|describe)\b/i,
-  /\b(question|explanation|summary|overview|walk through)\b/i,
-  /\b(giai thich|tom tat|so sanh|mo ta|phan tich|tong quan|huong dan)\b/i,
-  /\b(la gi|tai sao|nhu the nao)\b/i,
-];
-
-const TASK_ROUTE_IMPLEMENTATION_PATTERNS = [
-  /\b(fix|debug|refactor|rename|update|add|remove|implement|wire|create|extend|replace)\b/i,
-  /\b(test|failing|error|bug|regression)\b/i,
-  /\b(sua|go loi|doi ten|cap nhat|them|xoa|trien khai|noi day|mo rong|thay the)\b/i,
-  /\b(loi|bug|kiem thu|viet test)\b/i,
-];
-
-const TASK_ROUTE_NARROW_SCOPE_PATTERNS = [
-  /\b(single|one|small|narrow|tight|focused)\b/i,
-  /\b(file|module|command|test|function|readme)\b/i,
-  /\b(tep|tep tin|tap tin|lenh|ham|tai lieu)\b/i,
-  /`[^`]+\.[a-z0-9]+`/i,
-  /\b[a-z0-9/_-]+\.(js|ts|md|json|yaml|yml)\b/i,
-];
-
-const TASK_ROUTE_BROAD_SCOPE_PATTERNS = [
-  /\b(multi-step|multi file|multi-file|across files|architecture|system design)\b/i,
-  /\b(nhieu buoc|nhieu file|qua nhieu file|kien truc|thiet ke he thong)\b/i,
-];
-
-function preFilterTaskRoute(taskText) {
-  const normalized = foldClassifierText(taskText);
-  if (!normalized) return null;
-
-  const looksReadOnly = TASK_ROUTE_READ_ONLY_PATTERNS.some(pattern => pattern.test(normalized))
-    && !TASK_ROUTE_IMPLEMENTATION_PATTERNS.some(pattern => pattern.test(normalized));
-  if (looksReadOnly) {
-    return {
-      route: 'direct',
-      confidence: 0.78,
-      source: 'keyword',
-      reason: 'The task reads like a read-only explanation or analysis request.'
-    };
-  }
-
-  const looksNarrowExecution = TASK_ROUTE_IMPLEMENTATION_PATTERNS.some(pattern => pattern.test(normalized))
-    && TASK_ROUTE_NARROW_SCOPE_PATTERNS.some(pattern => pattern.test(normalized))
-    && !TASK_ROUTE_BROAD_SCOPE_PATTERNS.some(pattern => pattern.test(normalized));
-  if (looksNarrowExecution) {
-    return {
-      route: 'qc-lock',
-      confidence: 0.82,
-      source: 'keyword',
-      reason: 'The task is a narrow execution change with concrete implementation cues.'
-    };
-  }
-
-  if (TASK_ROUTE_BROAD_SCOPE_PATTERNS.some(pattern => pattern.test(normalized))) {
-    return {
-      route: 'qc-flow',
-      confidence: 0.8,
-      source: 'keyword',
-      reason: 'The task spans broad planning or multi-file implementation scope.'
-    };
-  }
-
+// Task route pre-filter removed — brain handles all text classification.
+// preFilterTaskRoute always returns null so brain is always consulted.
+function preFilterTaskRoute(_taskText) {
   return null;
 }
 
