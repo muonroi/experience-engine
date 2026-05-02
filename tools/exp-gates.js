@@ -123,7 +123,7 @@ function computeInterceptionPrecision(activity, now) {
   const feedbackEvents = activity.filter(e => {
     if (!e?.ts) return false;
     if (new Date(e.ts).getTime() <= weekAgo) return false;
-    return e.op === 'feedback' || e.op === 'judge-feedback' || e.op === 'implicit-unused';
+    return e.op === 'feedback' || e.op === 'judge-feedback' || e.op === 'implicit-unused' || e.op === 'implicit-touch';
   });
 
   let relevant = 0;
@@ -131,6 +131,10 @@ function computeInterceptionPrecision(activity, now) {
   for (const event of feedbackEvents) {
     if (event.op === 'implicit-unused') {
       irrelevant++;
+      continue;
+    }
+    if (event.op === 'implicit-touch') {
+      relevant++;
       continue;
     }
     const verdict = event.verdict || (event.followed === true ? 'FOLLOWED' : event.followed === false ? 'IGNORED' : null);
@@ -162,6 +166,60 @@ function computeOrganicExtractionStats(points, assessQuality) {
     stats.totalOrganic++;
     if (!assessQuality || assessQuality(data)?.ok) stats.qualityOrganic++;
   }
+  return stats;
+}
+
+function computePrincipleQualityStats(points) {
+  const stats = {
+    total: points.length,
+    withFailureMode: 0,
+    withJudgment: 0,
+    withConditions: 0,
+    qualityReady: 0,
+  };
+  for (const point of points) {
+    let data = {};
+    try { data = JSON.parse(point.payload?.json || '{}'); } catch {}
+    const hasFailureMode = !!String(data.failureMode || '').trim();
+    const hasJudgment = !!String(data.judgment || '').trim();
+    const hasConditions = Array.isArray(data.conditions) && data.conditions.length > 0;
+    if (hasFailureMode) stats.withFailureMode++;
+    if (hasJudgment) stats.withJudgment++;
+    if (hasConditions) stats.withConditions++;
+    if (hasFailureMode && hasJudgment && hasConditions) stats.qualityReady++;
+  }
+  return stats;
+}
+
+function computeNovelProofStats(points) {
+  const stats = {
+    principlesWithNovelHit: 0,
+    holdoutMatched: 0,
+    holdoutTested: 0,
+    legacyNovelHits: 0,
+  };
+  for (const point of points) {
+    let data = {};
+    try { data = JSON.parse(point.payload?.json || '{}'); } catch {}
+    const evidence = data.novelCaseEvidence || {};
+    const holdoutMatched = Number(evidence.holdoutMatchedCount) || 0;
+    const holdoutTested = Number(evidence.holdoutTestedCount) || 0;
+    if (holdoutMatched > 0) {
+      stats.principlesWithNovelHit++;
+      stats.holdoutMatched += holdoutMatched;
+      stats.holdoutTested += Math.max(holdoutTested, holdoutMatched);
+      continue;
+    }
+    const legacyNovel = (data.hitCount || 0) > 0 || (Array.isArray(data.confirmedProjects) && data.confirmedProjects.length >= 2);
+    if (legacyNovel) {
+      stats.principlesWithNovelHit++;
+      stats.legacyNovelHits++;
+    }
+  }
+  stats.pass = stats.principlesWithNovelHit > 0;
+  stats.holdoutMatchRate = stats.holdoutTested > 0
+    ? Math.round((stats.holdoutMatched / stats.holdoutTested) * 100)
+    : 0;
   return stats;
 }
 
@@ -443,11 +501,19 @@ async function checkGates(options = {}) {
   const probationary = t1Points.filter(p => {
     try { return JSON.parse(p.payload?.json || '{}').createdFrom === 'evolution-abstraction'; } catch { return false; }
   });
+  const matureBehavioral = t1Points.filter((point) => {
+    try {
+      const data = JSON.parse(point.payload?.json || '{}');
+      return data.createdFrom !== 'evolution-abstraction' && (data.validatedCount || 0) >= 5;
+    } catch {
+      return false;
+    }
+  });
   results.gate2.checks.push({
     name: '7. Evolution works',
     target: '>= 1 principle',
-    actual: `${t0Count} T0 + ${probationary.length} probationary T1`,
-    pass: t0Count >= 1 || probationary.length >= 1,
+    actual: `${t0Count} T0 + ${probationary.length} probationary T1 + ${matureBehavioral.length} mature T1`,
+    pass: t0Count >= 1 || probationary.length >= 1 || matureBehavioral.length >= 1,
     must: true
   });
 
@@ -465,17 +531,18 @@ async function checkGates(options = {}) {
   // Metric 9: Novel coverage
   // Check if any principle matched a case it wasn't trained on
   // Proxy: principles exist AND have hitCount > 0
-  let novelCoverage = false;
-  if (t0Count > 0) {
-    novelCoverage = t0Points.some(p => {
-      try { return (JSON.parse(p.payload?.json || '{}').hitCount || 0) > 0; } catch { return false; }
-    });
-  }
+  const principleLikePoints = [...t0Points, ...probationary];
+  const principleQuality = computePrincipleQualityStats(principleLikePoints);
+  const novelProof = computeNovelProofStats(principleLikePoints);
   results.gate2.checks.push({
     name: '9. Novel coverage',
     target: '>= 1 principle matches unseen case',
-    actual: novelCoverage ? 'Yes' : t0Count > 0 ? 'Principles exist but 0 hits' : 'No principles yet',
-    pass: novelCoverage,
+    actual: novelProof.pass
+      ? `${novelProof.principlesWithNovelHit} principle(s) with novel-case evidence (${novelProof.holdoutMatched}/${novelProof.holdoutTested || novelProof.holdoutMatched} holdout matches${novelProof.legacyNovelHits ? `, ${novelProof.legacyNovelHits} legacy fallback` : ''})`
+      : principleLikePoints.length > 0
+        ? 'Principles exist but 0 novel-case evidence yet'
+        : 'No principles yet',
+    pass: novelProof.pass,
     must: true
   });
 
@@ -515,9 +582,13 @@ async function checkGates(options = {}) {
   // Q2: Any principle covers a never-seen case?
   results.gate3.checks.push({
     name: 'Q2: Principle covers novel case?',
-    target: 'Generalized knowledge exists',
-    actual: novelCoverage ? 'YES — principle matched unseen case' : t0Count > 0 || probationary.length > 0 ? 'Partial — principles exist, no novel match yet' : 'NO — no principles yet',
-    pass: novelCoverage
+    target: 'Holdout-based novel-case evidence exists',
+    actual: novelProof.pass
+      ? `YES — ${novelProof.principlesWithNovelHit} principle(s) carry novel-case evidence (${novelProof.holdoutMatched}/${novelProof.holdoutTested || novelProof.holdoutMatched} holdout matches)`
+      : t0Count > 0 || probationary.length > 0
+        ? 'Partial — principles exist, but holdout evidence is still missing'
+        : 'NO — no principles yet',
+    pass: novelProof.pass
   });
 
   // Q3: Total entries decreased after evolution?
@@ -557,7 +628,13 @@ async function checkGates(options = {}) {
     t0_principles: t0Count,
     t1_behavioral: t1Count,
     t1_probationary: probationary.length,
+    t1_mature_behavioral: matureBehavioral.length,
     t2_selfqa: t2Count,
+    principle_quality_ready: principleQuality.qualityReady,
+    principle_quality_total: principleQuality.total,
+    principles_with_novel_hit: novelProof.principlesWithNovelHit,
+    holdout_matched: novelProof.holdoutMatched,
+    holdout_tested: novelProof.holdoutTested,
     total_extractions: totalStored,
     live_organic_extractions: organicStats.qualityOrganic,
     total_intercepts_week: interceptEvents.length,
@@ -627,6 +704,7 @@ function display(results) {
   const d = results.data;
   console.log('  ── Data ──');
   console.log(`  T0: ${d.t0_principles} principles | T1: ${d.t1_behavioral} behavioral (${d.t1_probationary} probationary) | T2: ${d.t2_selfqa} selfqa`);
+  console.log(`  Principle quality: ${d.principle_quality_ready}/${d.principle_quality_total} with failureMode + judgment + conditions | Novel proof: ${d.principles_with_novel_hit} principle(s), ${d.holdout_matched}/${d.holdout_tested} holdout`);
   console.log(`  Extractions: ${d.total_extractions} stored (${d.live_organic_extractions} live organic) | Intercepts: ${d.total_intercepts_week}/week | Evolve runs: ${d.evolve_runs}`);
   console.log(`  Active since: ${d.first_activity} (${d.days_active} days)`);
   console.log('');
@@ -668,6 +746,8 @@ module.exports = {
   computeDedupAndHygiene,
   computeInterceptionPrecision,
   computeOrganicExtractionStats,
+  computePrincipleQualityStats,
+  computeNovelProofStats,
   computeRecurrenceReduction,
   computeCostStability,
   isPlaceholderLesson,

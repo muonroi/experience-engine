@@ -100,6 +100,7 @@ run_checks() {
   # 2b. Mode detection
   local server_base; server_base=$(read_cfg serverBaseUrl)
   local server_auth; server_auth=$(read_cfg serverAuthToken)
+  local server_read_auth; server_read_auth=$(read_cfg serverReadAuthToken)
   local server_port
   server_port=$(node -e "try{const c=JSON.parse(require('fs').readFileSync('$CONFIG_NODE','utf8'));process.stdout.write(String(c.server?.port||''))}catch{}" 2>/dev/null)
   server_port="${server_port:-8082}"
@@ -236,23 +237,29 @@ run_checks() {
     rm -f "/tmp/exp-health-$$.json"
 
     local gates_http
-    local server_auth_hdr=""
-    [ -n "$server_auth" ] && server_auth_hdr="Authorization: Bearer $server_auth"
-    gates_http=$(curl -s -m 15 -o /dev/null -w "%{http_code}" ${server_auth_hdr:+-H "$server_auth_hdr"} "${server_base}/api/gates" 2>/dev/null)
+    local gates_token="$server_read_auth"
+    [ -z "$gates_token" ] && gates_token="$server_auth"
+    local -a server_auth_args=()
+    [ -n "$gates_token" ] && server_auth_args=(-H "Authorization: Bearer $gates_token")
+    gates_http=$(curl -s -m 15 -o /dev/null -w "%{http_code}" "${server_auth_args[@]}" "${server_base}/api/gates" 2>/dev/null)
     if [ "$gates_http" = "000" ]; then
       sleep 1
-      gates_http=$(curl -s -m 15 -o /dev/null -w "%{http_code}" ${server_auth_hdr:+-H "$server_auth_hdr"} "${server_base}/api/gates" 2>/dev/null)
+      gates_http=$(curl -s -m 15 -o /dev/null -w "%{http_code}" "${server_auth_args[@]}" "${server_base}/api/gates" 2>/dev/null)
     fi
     if [ "$gates_http" = "200" ]; then
       check "Remote Gates" "ok" "$server_base/api/gates"
+    elif [ "$gates_http" = "401" ]; then
+      check "Remote Gates" "warn" "$server_base/api/gates — HTTP 401" "Set serverReadAuthToken (preferred) or serverAuthToken in ~/.experience/config.json"
     else
-      check "Remote Gates" "warn" "$server_base/api/gates — HTTP $gates_http" "Upgrade the VPS runtime to a build that exposes /api/gates"
+      check "Remote Gates" "warn" "$server_base/api/gates — HTTP $gates_http" "Upgrade the VPS runtime or verify serverBaseUrl/token configuration"
     fi
 
-    if [ -n "$server_auth" ]; then
-      check "Server Auth" "ok" "Bearer token configured"
+    if [ -n "$server_read_auth" ]; then
+      check "Server Auth" "ok" "Read token configured for observability; full token optional for writes"
+    elif [ -n "$server_auth" ]; then
+      check "Server Auth" "ok" "Full bearer token configured"
     else
-      check "Server Auth" "warn" "No serverAuthToken configured" "Set serverAuthToken if your VPS protects POST endpoints"
+      check "Server Auth" "warn" "No serverAuthToken/serverReadAuthToken configured" "Set serverReadAuthToken for /api/stats and /api/gates, or serverAuthToken for full access"
     fi
   else
     check "Remote Server" "ok" "Not configured (local/hybrid mode)"

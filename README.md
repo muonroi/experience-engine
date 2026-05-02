@@ -15,8 +15,8 @@
     <img alt="Works Offline" src="https://img.shields.io/badge/works-offline-blue">
     <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-yellow">
     <img alt="Node.js 20+" src="https://img.shields.io/badge/node-20%2B-green">
-    <img alt="Tests" src="https://img.shields.io/badge/tests-187%20passing-brightgreen">
-    <img alt="E2E" src="https://img.shields.io/badge/E2E-44%20tests-brightgreen">
+    <img alt="Tests" src="https://img.shields.io/badge/tests-node%3Atest%20suite-brightgreen">
+    <img alt="Runtime" src="https://img.shields.io/badge/remote%20hooks%20%26%20server-verified-brightgreen">
   </p>
 </p>
 
@@ -132,6 +132,7 @@ Useful commands:
 ```bash
 experience-engine setup
 experience-engine setup-thin-client --server http://your-vps:8082 --token YOUR_TOKEN --clean
+experience-engine sync-install
 experience-engine server
 experience-engine health
 ```
@@ -163,10 +164,10 @@ Maintainer release flow:
 
 ```bash
 # bump package.json version
-git commit -am "Release npm package v0.1.0"
+git commit -am "Release npm package v0.1.1"
 git push origin develop
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 Pushing a `v*` tag triggers the bundled GitHub Actions workflow, which runs `npm test`,
@@ -194,6 +195,7 @@ canonical brain.
 {
   "serverBaseUrl": "http://your-vps:8082",
   "serverAuthToken": "optional-bearer-token",
+  "serverReadAuthToken": "optional-read-only-token-for-stats-and-gates",
   "serverTimeoutMs": 5000
 }
 ```
@@ -240,6 +242,7 @@ EXP_BRAIN_ENDPOINT="https://api.siliconflow.com/v1/chat/completions" \
 EXP_BRAIN_KEY="YOUR_BRAIN_KEY" \
 EXP_SERVER_PORT="8082" \
 EXP_SERVER_AUTH_TOKEN="YOUR_SERVER_AUTH_TOKEN" \
+EXP_SERVER_READ_AUTH_TOKEN="YOUR_OPTIONAL_READ_TOKEN" \
 EXP_AGENTS="codex" \
 bash .experience/setup.sh
 ```
@@ -265,6 +268,7 @@ EXP_BRAIN_ENDPOINT="https://api.siliconflow.com/v1/chat/completions" \
 EXP_BRAIN_KEY="YOUR_BRAIN_KEY" \
 EXP_SERVER_PORT="8082" \
 EXP_SERVER_AUTH_TOKEN="YOUR_SERVER_AUTH_TOKEN" \
+EXP_SERVER_READ_AUTH_TOKEN="YOUR_OPTIONAL_READ_TOKEN" \
 EXP_AGENTS="codex" \
 experience-engine setup
 ```
@@ -287,6 +291,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=%h/experience-engine
+ExecStartPre=/bin/bash %h/experience-engine/.experience/sync-install.sh --quiet
 ExecStart=%h/.nvm/versions/node/v22.22.2/bin/node server.js
 Restart=always
 RestartSec=5
@@ -314,6 +319,7 @@ Then use that path in the service file, for example:
 ```ini
 [Service]
 Type=simple
+ExecStartPre=/usr/local/bin/experience-engine sync-install --quiet
 ExecStart=/usr/local/bin/experience-engine server
 Restart=always
 RestartSec=5
@@ -328,7 +334,7 @@ otherwise the service can flap with `EADDRINUSE` on port `8082`.
 ```bash
 systemctl --user status experience-engine.service --no-pager
 curl http://127.0.0.1:8082/health
-curl http://127.0.0.1:8082/api/gates
+curl -H "Authorization: Bearer ${EXP_SERVER_READ_AUTH_TOKEN:-$EXP_SERVER_AUTH_TOKEN}" http://127.0.0.1:8082/api/gates
 bash ~/.experience/health-check.sh --json
 ```
 
@@ -382,11 +388,11 @@ Repo clone flow:
 
 ```bash
 git pull
-bash .experience/setup-thin-client.sh \
-  --server http://your-vps:8082 \
-  --token YOUR_SERVER_AUTH_TOKEN \
-  --clean
+bash .experience/setup-thin-client.sh --clean
 ```
+
+If `~/.experience/config.json` does not exist yet, pass `--server` and tokens explicitly on the
+first run.
 
 npm package flow:
 
@@ -394,6 +400,7 @@ npm package flow:
 npx @muonroi/experience-engine setup-thin-client \
   --server http://your-vps:8082 \
   --token YOUR_SERVER_AUTH_TOKEN \
+  --read-token YOUR_OPTIONAL_READ_TOKEN \
   --clean
 ```
 
@@ -412,7 +419,8 @@ git clone https://github.com/muonroi/experience-engine.git
 cd experience-engine
 bash .experience/setup-thin-client.sh \
   --server http://your-vps:8082 \
-  --token YOUR_SERVER_AUTH_TOKEN
+  --token YOUR_SERVER_AUTH_TOKEN \
+  --read-token YOUR_OPTIONAL_READ_TOKEN
 ```
 
 npm package flow:
@@ -439,7 +447,7 @@ VPS brain checks:
 
 ```bash
 curl http://localhost:8082/health
-curl http://localhost:8082/api/gates
+curl -H "Authorization: Bearer ${EXP_SERVER_READ_AUTH_TOKEN:-$EXP_SERVER_AUTH_TOKEN}" http://localhost:8082/api/gates
 bash ~/.experience/health-check.sh --json
 ```
 
@@ -498,7 +506,7 @@ bash .experience/setup-thin-client.sh \
 2. Either clone the repo on the VPS or install `@muonroi/experience-engine` globally.
 3. Run `setup.sh` or `experience-engine setup` with provider keys, Qdrant URL, and `EXP_SERVER_AUTH_TOKEN`.
 4. Install and enable `experience-engine.service`.
-5. Verify `/health`, `/api/gates`, and `bash ~/.experience/health-check.sh --json`.
+5. Verify `/health`, authenticated `/api/gates`, and `bash ~/.experience/health-check.sh --json`.
 6. On every workstation, run `setup-thin-client.sh --server ... --token ...` or `experience-engine setup-thin-client --server ... --token ...`.
 
 This gives you one canonical brain on the VPS and any number of thin clients on laptops, desktops,
@@ -568,10 +576,11 @@ subgraph SERVER["VPS Brain Server"]
     subgraph API["server.js / API Layer"]
         I1["POST /api/intercept"]
         I2["POST /api/posttool"]
-        I3["POST /api/extract"]
-        I4["POST /api/feedback"]
-        I5["GET /api/gates"]
-        I6["POST /api/brain"]
+        I3["POST /api/prompt-stale"]
+        I4["POST /api/extract"]
+        I5["POST /api/feedback"]
+        I6["GET /api/gates"]
+        I7["POST /api/brain"]
     end
 
     subgraph CORE_LAYER["Processing"]
@@ -720,11 +729,18 @@ node server.js
 
 **Endpoints:**
 
+When `server.authToken` (or `serverAuthToken`) is configured, every `POST` endpoint and every
+`GET /api/*` endpoint requires `Authorization: Bearer <token>`. If `server.readAuthToken`
+(or `serverReadAuthToken`) is configured, read-only observability endpoints (`/api/stats`,
+`/api/gates`) also accept that token. `/health` remains public for liveness checks and local
+service supervision.
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Qdrant + FileStore status |
 | `POST` | `/api/intercept` | Query experience before tool call |
 | `POST` | `/api/posttool` | Canonical post-tool reconciliation + judge enqueue |
+| `POST` | `/api/prompt-stale` | Reconcile stale prompt-only suggestions from thin clients |
 | `POST` | `/api/extract` | Extract lessons from session transcript |
 | `POST` | `/api/evolve` | Trigger evolution cycle |
 | `GET` | `/api/stats` | Observability data (`?since=7d`, `?all=true`) |
@@ -735,6 +751,7 @@ node server.js
 | `POST` | `/api/principles/share` | Export principle as portable JSON |
 | `POST` | `/api/principles/import` | Import shared principle |
 | `POST` | `/api/feedback` | Report suggestion verdict (`FOLLOWED`, `IGNORED`, `IRRELEVANT`) |
+| `POST` | `/api/route-task` | Intelligent wrapper task routing (`qc-flow`, `qc-lock`, `direct`, or disambiguation) |
 | `POST` | `/api/route-model` | Intelligent model tier routing |
 | `POST` | `/api/route-feedback` | Record agent outcome for routing learning |
 | `POST` | `/api/brain` | Proxy LLM brain call through server — enables local agents on firewalled machines to reach brain API | `{ prompt, timeoutMs? }` |
@@ -769,7 +786,8 @@ curl -X POST http://localhost:8082/api/route-model \
 ```json
 {
   "tier": "premium",
-  "model": "opus",
+  "model": "gpt-5.4",
+  "reasoningEffort": "high",
   "confidence": 0.85,
   "source": "brain",
   "reason": "premium complexity task"
@@ -781,11 +799,52 @@ Three layers, fastest first:
 - **Layer 1 — History** (~50ms): Semantic search of past routing decisions. Reuses successful routes, upgrades failed ones
 - **Layer 2 — Brain** (~200ms): LLM classification via SiliconFlow Qwen2.5-7B. Only called when Layer 0+1 miss
 
-Supports: `claude` (haiku/sonnet/opus), `gemini` (flash/pro), `codex` (mini/o3), `opencode`. Returns tier only when `runtime` is null.
+For `runtime="codex"`, model selection intentionally skips the keyword pre-filter and relies on `history -> brain -> default`, because Codex model switching should follow stronger task understanding than simple token matches.
+
+Supports: `claude` (haiku/sonnet/opus), `gemini` (flash/pro), `codex`, `opencode`. The default Codex tier mapping is now:
+- `fast` -> `gpt-5.4-mini` + `medium`
+- `balanced` -> `gpt-5.3-codex` + `medium`
+- `premium` -> `gpt-5.4` + `high`
+
+Codex model responses are validated against the supported CLI allowlist:
+- `gpt-5.4`
+- `gpt-5.4-mini`
+- `gpt-5.3-codex`
+- `gpt-5.3-codex-spark`
+
+Reasoning-effort validation for Codex:
+- `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.3-codex`, `gpt-5.3-codex-spark` -> `low | medium | high | extra_high`
+
+Returns tier only when `runtime` is null.
+
+### Example: Task Router
+
+Classify wrapper workflow route before execution. The server may return a direct route verdict or ask the client to disambiguate with concrete choices.
+
+```bash
+curl -X POST http://localhost:8082/api/route-task \
+  -H "Content-Type: application/json" \
+  -d '{"task": "fix a typo in README.md", "runtime": "codex", "context": {"localRoute": "qc-lock"}}'
+```
+
+```json
+{
+  "route": "qc-lock",
+  "confidence": 0.88,
+  "source": "brain",
+  "reason": "The task is already narrow and executable.",
+  "needs_disambiguation": false,
+  "options": [],
+  "taskHash": "d0dc22f18787a180"
+}
+```
 
 ### Example: Feedback
 
 Report the verdict for a surfaced hint. Supports short ID prefix (8 chars).
+Agents should use this when the outcome is clear. The engine can also learn noise automatically
+from PostToolUse reconciliation, prompt-stale reconciliation, and the async judge, but explicit
+feedback shortens the learning loop for all agents sharing the brain.
 
 Helper command:
 
@@ -810,6 +869,12 @@ Valid verdicts:
 
 Legacy compatibility:
 - older clients may still send `followed: true|false`, which maps to `FOLLOWED` / `IGNORED`
+
+Automatic noise learning:
+- repeated post-tool no-touch can record `unused` and, when deterministic, `irrelevant`
+- stale prompt-only suggestions can record deterministic noise reasons
+- judge-worker can classify surfaced hints as followed, ignored, irrelevant, or unclear
+- repeated clear noise may suppress future surfacing only when the same mismatch still applies
 
 ## Python SDK
 
@@ -950,6 +1015,7 @@ Chained commands (`&&`, `||`, `;`) skip only if ALL parts are read-only.
 - **Project penalty** — cross-project suggestions penalized -0.30
 - **Session dedup** — same warning never shown twice per session
 - **Session budget** — max 8 unique warnings per session
+- **Noise suppression** — repeated clear `wrong_repo`, `wrong_language`, `wrong_task`, or `stale_rule` noise is suppressed conservatively, unless the hint was recently validated
 
 **Layer 3 — Brain relevance filter (LLM, ~1 token output, fail-open)**
 
@@ -973,6 +1039,10 @@ followed, ignored, or irrelevant. Irrelevant hints are tagged with a noise reaso
 (`wrong_repo`, `wrong_language`, `wrong_task`, or `stale_rule`) before being fed back into the
 experience engine, closing the loop without requiring any agent cooperation.
 
+Manual feedback still matters: when an agent knows the verdict, `exp-feedback followed`,
+`exp-feedback ignored`, or `exp-feedback noise` gives the engine a stronger signal than waiting for
+automatic reconciliation.
+
 ## Judge Worker — Auto-Feedback Loop
 
 The judge-worker runs as a detached background process after each tool call, evaluating whether
@@ -986,9 +1056,13 @@ no agent cooperation required.
 3. The judge assigns one of 4 verdicts:
    - `FOLLOWED` — agent used the hint correctly → positive feedback
    - `IGNORED` — agent had the hint and ignored it → negative feedback
-   - `IRRELEVANT` — hint was not applicable to this call → neutral (no feedback)
+   - `IRRELEVANT` — hint was not applicable to this call → neutral noise feedback with a reason
    - `UNCLEAR` — judge cannot determine → no feedback (abstain)
 4. Verdict is recorded through the same feedback handler used by `/api/feedback`
+
+The worker also runs deterministic relevance checks before applying fallback rules. For example,
+`UNCLEAR + tool error` is not treated as `IGNORED` when the hint is clearly irrelevant to the
+repo, language, task, or stale state.
 
 ### Brain proxy support
 
@@ -1064,6 +1138,7 @@ That keeps VPS migration operationally simple: move the canonical brain once, th
   stop-extractor.js     — session extraction + evolution trigger (Claude + Codex)
   setup.sh              — guided setup wizard
   setup-thin-client.sh  — thin-client installer for additional workstations
+  sync-install.sh       — repo/package runtime sync into ~/.experience
   interceptor.js        — PreToolUse hook — injects experience hints before agent calls
   interceptor-post.js   — PostToolUse hook — captures tool outcomes for extraction
   interceptor-prompt.js — UserPromptSubmit hook — injects prompt-time experience context
@@ -1088,15 +1163,25 @@ tools/
   exp-demote.js         — interactive demote/delete CLI
   exp-gates.js          — v3.0 gate status checker
   experience-bulk-seed.js — bootstrap from existing rules
-  test-server.js        — 49 API integration tests
-  test-activity-log.js  — activity logging tests
+  test-server.js        — standalone API integration smoke script
+  test-activity-log.js  — standalone activity logging smoke script
   test-scoring.js       — 41 anti-noise scoring tests
   test-context.js       — 29 context-aware query tests
   test-exp-stats.js     — observability CLI tests
   test-model-router.js  — 44 model router tests (9 suites)
 ```
 
-**E2E verified: 2026-04-11 — 44 model router tests pass (9 suites: keyword routing, history routing, brain routing, claude/gemini/codex/opencode runtimes, feedback learning, tier fallback)**
+Default automated verification runs through `npm test`, which executes the maintained `node:test`
+suite under `tests/`. CI should run the broader smoke path:
+
+```bash
+npm run test:ci
+```
+
+That keeps local iteration fast while still exercising:
+- `npm test`
+- `node --test .experience/test-health-check.js`
+- `node tools/test-server.js`
 
 ## Philosophy
 

@@ -25,7 +25,10 @@ function timeoutFromEnv(name, fallback) {
 
 const STDIN_TIMEOUT_MS = timeoutFromEnv('EXPERIENCE_HOOK_STDIN_TIMEOUT_MS', 3000);
 const INTERCEPT_TIMEOUT_MS = timeoutFromEnv('EXPERIENCE_HOOK_INTERCEPT_TIMEOUT_MS', 2500);
-const HARD_EXIT_TIMEOUT_MS = timeoutFromEnv('EXPERIENCE_HOOK_HARD_EXIT_TIMEOUT_MS', 4500);
+const HARD_EXIT_TIMEOUT_MS = timeoutFromEnv('EXPERIENCE_HOOK_HARD_EXIT_TIMEOUT_MS', 3000);
+const PROMPT_STALE_MS = timeoutFromEnv('EXPERIENCE_PROMPT_STALE_MS', 10_000);
+const PROMPT_STALE_RECONCILE_TIMEOUT_MS = timeoutFromEnv('EXPERIENCE_PROMPT_STALE_RECONCILE_TIMEOUT_MS', 450);
+const PROMPT_HOOK_MIN_SCORE = timeoutFromEnv('EXPERIENCE_PROMPT_HOOK_MIN_SCORE', 0.60);
 
 function debugLog(event) {
   try {
@@ -42,6 +45,159 @@ function activityLog(event) {
       core._activityLog({ op: 'hook', hook: 'interceptor-prompt', ...event });
     }
   } catch {}
+}
+
+function writeLastSuggestionsState(tool, surfacedIds, sourceMeta, promptMeta = {}) {
+  if (!Array.isArray(surfacedIds) || surfacedIds.length === 0) return;
+  try {
+    const tmpDir = path.join(EXP_DIR, 'tmp');
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const state = {
+      ts: new Date().toISOString(),
+      tool,
+      surfacedIds,
+      sourceHook: 'UserPromptSubmit',
+      prompt: promptMeta.prompt || null,
+      cwd: promptMeta.cwd || null,
+      sourceSession: sourceMeta?.sourceSession || null,
+      sourceKind: sourceMeta?.sourceKind || null,
+      sourceRuntime: sourceMeta?.sourceRuntime || null,
+    };
+    fs.writeFileSync(path.join(tmpDir, 'last-suggestions.json'), JSON.stringify(state, null, 2), 'utf8');
+    activityLog({
+      stage: 'state_written',
+      tool,
+      stateFile: 'last-suggestions.json',
+      surfacedCount: surfacedIds.length,
+      sourceHook: state.sourceHook,
+      surfaced: surfacedIds.slice(0, 8).map(s => ({ collection: s.collection, pointId: String(s.id || '').slice(0, 8) })),
+      ...sourceMeta
+    });
+  } catch {}
+}
+
+function statePath() {
+  return path.join(EXP_DIR, 'tmp', 'last-suggestions.json');
+}
+
+function readLastSuggestionsState() {
+  try {
+    return JSON.parse(fs.readFileSync(statePath(), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function deleteLastSuggestionsState() {
+  try { fs.unlinkSync(statePath()); } catch {}
+}
+
+function isPromptOnlyState(state) {
+  return state?.sourceHook === 'UserPromptSubmit' || state?.tool === 'UserPrompt';
+}
+
+function isStalePromptOnlyState(state) {
+  if (!isPromptOnlyState(state)) return false;
+  const ts = state?.ts ? new Date(state.ts).getTime() : 0;
+  return !ts || (Date.now() - ts) >= PROMPT_STALE_MS;
+}
+
+function splitSuggestionBlocks(suggestions) {
+  return String(suggestions || '')
+    .split(/\n---\n/g)
+    .map(block => block.trim())
+    .filter(Boolean);
+}
+
+function scoreForSuggestionBlock(block) {
+  const match = String(block || '').match(/\[(?:Experience - High Confidence|Suggestion|Probationary Suggestion) \(([-\d.]+)\)\]/);
+  if (!match) return null;
+  const score = Number(match[1]);
+  return Number.isFinite(score) ? score : null;
+}
+
+function idsForSuggestionBlock(block) {
+  return [...String(block || '').matchAll(/\[id:([^\s\]]+)\s+col:([^\]]+)\]/g)]
+    .map(match => ({ id: match[1], collection: match[2] }));
+}
+
+function filterPromptSuggestionsForPrecision(suggestions, surfacedIds) {
+  if (!suggestions) return { suggestions: null, surfacedIds: [] };
+  const blocks = splitSuggestionBlocks(suggestions);
+  if (blocks.length === 0) return { suggestions: null, surfacedIds: [] };
+  const kept = blocks.filter(block => {
+    const score = scoreForSuggestionBlock(block);
+    return score === null || score >= PROMPT_HOOK_MIN_SCORE;
+  });
+  if (kept.length === blocks.length) return { suggestions, surfacedIds };
+  const keptShortIds = new Set(kept.flatMap(block => idsForSuggestionBlock(block).map(item => item.id)));
+  return {
+    suggestions: kept.length > 0 ? kept.join('\n---\n') : null,
+    surfacedIds: keptShortIds.size > 0
+      ? (surfacedIds || []).filter(surface => keptShortIds.has(String(surface?.id || '').slice(0, 8)))
+      : (kept.length > 0 ? surfacedIds : []),
+  };
+}
+
+function withTimeout(promise, timeoutMs) {
+  let timer = null;
+  const timeout = new Promise(resolve => {
+    timer = setTimeout(() => resolve(null), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+async function reconcileStalePromptState(data, sourceMeta, prompt) {
+  const state = readLastSuggestionsState();
+  if (!isStalePromptOnlyState(state)) return;
+  const nextPromptMeta = {
+    prompt,
+    cwd: data.cwd || process.cwd(),
+    ...sourceMeta,
+  };
+  const body = { state, nextPromptMeta };
+
+  try {
+    const remote = getRemoteClient();
+    if (remote) {
+      const config = remote.loadConfig();
+      if (remote.isRemoteEnabled(config)) {
+        try {
+          await remote.postJsonForHook('/api/prompt-stale', body, { config, timeoutMs: PROMPT_STALE_RECONCILE_TIMEOUT_MS });
+          debugLog({ stage: 'prompt_stale_remote_sent', surfacedCount: state.surfacedIds?.length || 0 });
+        } catch (sendErr) {
+          debugLog({ stage: 'prompt_stale_remote_failed', message: sendErr?.message || String(sendErr) });
+        }
+        return;
+      }
+    }
+
+    const corePath = path.join(EXP_DIR, 'experience-core.js');
+    if (!fs.existsSync(corePath)) return;
+    const core = require(corePath);
+    if (typeof core._reconcileStalePromptSuggestions === 'function') {
+      const result = await withTimeout(
+        core._reconcileStalePromptSuggestions(state, nextPromptMeta),
+        PROMPT_STALE_RECONCILE_TIMEOUT_MS
+      );
+      if (!result) {
+        debugLog({ stage: 'prompt_stale_reconcile_timeout' });
+        return;
+      }
+      debugLog({
+        stage: 'prompt_stale_reconciled',
+        unused: result?.unused?.length || 0,
+        irrelevant: result?.irrelevant?.length || 0,
+        expired: result?.expired?.length || 0,
+      });
+    }
+  } catch (error) {
+    debugLog({ stage: 'prompt_stale_error', message: error?.message || String(error) });
+  } finally {
+    deleteLastSuggestionsState();
+  }
 }
 
 function getRemoteClient() {
@@ -158,6 +314,8 @@ process.stdin.on('end', async () => {
     debugLog({ stage: 'parsed', promptLen: prompt.length, preview: prompt.slice(0, 100) });
     activityLog({ stage: 'parsed', promptLen: prompt.length, preview: prompt.slice(0, 100), ...sourceMeta });
 
+    await reconcileStalePromptState(data, sourceMeta, prompt);
+
     // Skip trivial prompts
     if (!prompt || prompt.length < MIN_PROMPT_LENGTH || SKIP_PATTERNS.test(prompt.trim())) {
       debugLog({ stage: 'skip', reason: 'trivial prompt' });
@@ -237,7 +395,11 @@ process.stdin.on('end', async () => {
     }
     if (timedOut || !resultMeta) process.exit(0);
 
-    const suggestions = resultMeta?.suggestions || null;
+    let suggestions = resultMeta?.suggestions || null;
+    let surfacedIds = resultMeta?.surfacedIds || [];
+    const precisionResult = filterPromptSuggestionsForPrecision(suggestions, surfacedIds);
+    suggestions = precisionResult.suggestions;
+    surfacedIds = precisionResult.surfacedIds;
     const routeInfo = resultMeta?.route || null;
     try {
       const remote = getRemoteClient();
@@ -248,8 +410,9 @@ process.stdin.on('end', async () => {
       stage: 'done',
       hasSuggestions: !!suggestions,
       hasRoute: !!routeInfo,
-      surfacedCount: (resultMeta?.surfacedIds || []).length,
-      surfaced: (resultMeta?.surfacedIds || []).slice(0, 8).map(s => ({ collection: s.collection, pointId: String(s.id || '').slice(0, 8) })),
+      surfacedCount: surfacedIds.length,
+      surfaced: surfacedIds.slice(0, 8).map(s => ({ collection: s.collection, pointId: String(s.id || '').slice(0, 8) })),
+      promptPrecisionRemoved: Math.max(0, (resultMeta?.surfacedIds || []).length - surfacedIds.length),
       routeTier: routeInfo?.tier || null,
       routeModel: routeInfo?.model || null,
       routeSource: routeInfo?.source || null,
@@ -257,12 +420,19 @@ process.stdin.on('end', async () => {
       ...sourceMeta
     });
 
+    if (suggestions) {
+      writeLastSuggestionsState('UserPrompt', surfacedIds, sourceMeta, {
+        prompt,
+        cwd: data.cwd || process.cwd(),
+      });
+    }
+
     // Build output
     let outputText = '';
     if (suggestions) {
       outputText = suggestions;
     }
-    if (routeInfo && routeInfo.tier) {
+    if (sourceMeta.sourceKind !== 'codex-hook' && routeInfo && routeInfo.tier) {
       const routeLine = `[Model Route] tier=${routeInfo.tier} model=${routeInfo.model || '?'} confidence=${(routeInfo.confidence || 0).toFixed(2)} source=${routeInfo.source || 'default'}`;
       outputText = outputText ? outputText + '\n---\n' + routeLine : routeLine;
     }

@@ -1,5 +1,51 @@
 # Experience Engine — Tools
 
+## qdrant-find.js
+
+Inspect vector-memory collections with the same config and user namespace that
+Experience Engine already uses.
+
+### Usage
+
+```bash
+# Semantic query across default collections
+node tools/qdrant-find.js "experience formation"
+
+# Restrict to one collection and print JSON
+node tools/qdrant-find.js "novel case proof" --collection experience-principles --json
+
+# Text/scroll mode when you want raw payload substring matching
+node tools/qdrant-find.js "natural bootstrap" --mode scroll --collection experience-behavioral
+
+# Show visible collections
+node tools/qdrant-find.js --list-collections
+```
+
+Defaults:
+
+- reads `~/.experience/config.json`
+- uses the active `EXP_USER` namespace (or `default`)
+- searches `experience-principles`, `experience-behavioral`,
+  `experience-selfqa`, and `experience-routes`
+
+## exp-holdout-harness.js
+
+Run explicit seed-vs-holdout replay suites against principle candidates and
+optionally write real novel-case proof evidence back into `novelCaseEvidence`.
+
+### Usage
+
+```bash
+# Evaluate a fixture without mutating evidence
+node tools/exp-holdout-harness.js --fixture ./fixtures/holdout.json
+
+# Replay and write holdout tested/matched counts back to the target principle
+node tools/exp-holdout-harness.js --fixture ./fixtures/holdout.json --apply --json
+
+# Run every curated fixture suite in the repo
+node tools/exp-holdout-harness.js --fixture ./fixtures/holdout --json
+```
+
 ## experience-bulk-seed.js
 
 Bootstrap your experience brain from existing memory/feedback files.

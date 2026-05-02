@@ -11,6 +11,7 @@ const {
   _storeExperiencePayload: storeExperiencePayload,
   _extractProjectSlug: extractProjectSlug,
   _buildStorePayload: buildStorePayload,
+  _shouldSuppressForNoise: shouldSuppressForNoise,
 } = require('./experience-core.js');
 
 // Helper: create a Qdrant-shaped point
@@ -45,6 +46,16 @@ describe('extractProjectSlug', () => {
 
   it('returns lowercase slug', () => {
     assert.strictEqual(extractProjectSlug('D:\\sources\\Core\\Experience-Engine\\src\\file.js'), 'experience-engine');
+  });
+
+  it('extracts repo slug from Core workspace paths on Windows', () => {
+    assert.strictEqual(extractProjectSlug('D:/Personal/Core/experience-engine/server.js'), 'experience-engine');
+    assert.strictEqual(extractProjectSlug('D:/Personal/Core/muonroi-building-block/src/App.cs'), 'muonroi-building-block');
+  });
+
+  it('extracts repo slug from Core workspace paths on WSL mount paths', () => {
+    assert.strictEqual(extractProjectSlug('/mnt/d/Personal/Core/experience-engine/.experience/experience-core.js'), 'experience-engine');
+    assert.strictEqual(extractProjectSlug('/mnt/d/Personal/Core/storyflow_ui/src/App.tsx'), 'storyflow_ui');
   });
 
   it('returns null for null/undefined input', () => {
@@ -396,5 +407,54 @@ describe('NOISE-09: penalty edge cases', () => {
     const slugA = extractProjectSlug('/sources/Org/MyProject/file.cs');
     const slugB = extractProjectSlug('/sources/org/myproject/file.cs');
     assert.strictEqual(slugA, slugB, 'slugs should be case-insensitive');
+  });
+});
+
+describe('balanced noise suppression gate', () => {
+  it('suppresses repeated wrong_task docs/config noise for code-specific hints', () => {
+    const decision = shouldSuppressForNoise({
+      scope: { lang: 'TypeScript' },
+      noiseReasonCounts: { wrong_task: 2 },
+    }, {
+      actionKind: 'docs',
+      queryProjectSlug: 'experience-engine',
+      queryDomain: null,
+    });
+
+    assert.strictEqual(decision.suppress, true);
+    assert.strictEqual(decision.reason, 'wrong_task');
+  });
+
+  it('does not suppress a recently followed hint', () => {
+    const decision = shouldSuppressForNoise({
+      scope: { lang: 'TypeScript' },
+      noiseReasonCounts: { wrong_task: 5, wrong_language: 5 },
+      lastHitAt: new Date().toISOString(),
+    }, {
+      actionKind: 'docs',
+      queryDomain: 'Python',
+    });
+
+    assert.strictEqual(decision.suppress, false);
+  });
+
+  it('suppresses wrong_repo only when current project still mismatches', () => {
+    const data = {
+      _projectSlug: 'storyflow',
+      noiseReasonCounts: { wrong_repo: 2 },
+    };
+
+    assert.strictEqual(shouldSuppressForNoise(data, { queryProjectSlug: 'experience-engine' }).suppress, true);
+    assert.strictEqual(shouldSuppressForNoise(data, { queryProjectSlug: 'storyflow' }).suppress, false);
+  });
+
+  it('suppresses wrong_language only when current language still mismatches', () => {
+    const data = {
+      scope: { lang: 'C#' },
+      noiseReasonCounts: { wrong_language: 2 },
+    };
+
+    assert.strictEqual(shouldSuppressForNoise(data, { queryDomain: 'TypeScript' }).suppress, true);
+    assert.strictEqual(shouldSuppressForNoise(data, { queryDomain: 'C#' }).suppress, false);
   });
 });

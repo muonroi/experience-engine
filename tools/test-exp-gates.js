@@ -8,6 +8,8 @@ const {
   computeDedupAndHygiene,
   computeInterceptionPrecision,
   computeOrganicExtractionStats,
+  computePrincipleQualityStats,
+  computeNovelProofStats,
   computeRecurrenceReduction,
   computeCostStability,
 } = require('./exp-gates.js');
@@ -34,6 +36,7 @@ test('computeInterceptionPrecision measures surfaced-hint precision rather than 
     { ts: '2026-04-14T05:00:00Z', op: 'intercept', stage: 'budget_capped', result: null },
     { ts: '2026-04-14T05:01:00Z', op: 'intercept', stage: 'search_done', result: 'suggestion' },
     { ts: '2026-04-14T05:02:00Z', op: 'intercept', stage: 'search_done', result: 'suggestion' },
+    { ts: '2026-04-14T05:02:30Z', op: 'implicit-touch', reason: 'project_match' },
     { ts: '2026-04-14T05:03:00Z', op: 'judge-feedback', verdict: 'FOLLOWED' },
     { ts: '2026-04-14T05:04:00Z', op: 'judge-feedback', verdict: 'IRRELEVANT' },
     { ts: '2026-04-14T05:05:00Z', op: 'implicit-unused', reason: 'wrong_task' },
@@ -42,10 +45,10 @@ test('computeInterceptionPrecision measures surfaced-hint precision rather than 
   const stats = computeInterceptionPrecision(activity, now);
   assert.equal(stats.interceptEvents.length, 3);
   assert.equal(stats.surfacedSuggestions.length, 2);
-  assert.equal(stats.classified, 3);
-  assert.equal(stats.relevant, 1);
+  assert.equal(stats.classified, 4);
+  assert.equal(stats.relevant, 2);
   assert.equal(stats.irrelevant, 2);
-  assert.equal(stats.precision, 33);
+  assert.equal(stats.precision, 50);
 });
 
 test('computeOrganicExtractionStats counts only quality organic session-extractor entries', () => {
@@ -57,6 +60,39 @@ test('computeOrganicExtractionStats counts only quality organic session-extracto
 
   assert.equal(stats.totalOrganic, 2);
   assert.equal(stats.qualityOrganic, 1);
+});
+
+test('computePrincipleQualityStats counts abstraction-ready principle payloads', () => {
+  const stats = computePrincipleQualityStats([
+    pointFrom({ principle: 'When x do y because z', failureMode: 'rerun loop hides root cause', judgment: 'inspect and change state before rerunning', conditions: ['rerun', 'failure'] }),
+    pointFrom({ principle: 'Incomplete principle', failureMode: 'test fixture drift' }),
+  ]);
+
+  assert.equal(stats.total, 2);
+  assert.equal(stats.withFailureMode, 2);
+  assert.equal(stats.withJudgment, 1);
+  assert.equal(stats.withConditions, 1);
+  assert.equal(stats.qualityReady, 1);
+});
+
+test('computeNovelProofStats prefers holdout evidence and retains legacy fallback counts', () => {
+  const stats = computeNovelProofStats([
+    pointFrom({
+      principle: 'When failure wording changes, abstract by judgment',
+      novelCaseEvidence: { holdoutMatchedCount: 2, holdoutTestedCount: 3 },
+    }),
+    pointFrom({
+      principle: 'Legacy principle',
+      hitCount: 4,
+    }),
+  ]);
+
+  assert.equal(stats.principlesWithNovelHit, 2);
+  assert.equal(stats.holdoutMatched, 2);
+  assert.equal(stats.holdoutTested, 3);
+  assert.equal(stats.legacyNovelHits, 1);
+  assert.equal(stats.holdoutMatchRate, 67);
+  assert.equal(stats.pass, true);
 });
 
 test('computeRecurrenceReduction compares recent mistakes against the prior week by project and type', () => {

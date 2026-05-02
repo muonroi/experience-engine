@@ -1,0 +1,32 @@
+{
+  "suites": [
+    {
+      "name": "natural-bootstrap-surface",
+      "family": "natural-bootstrap-surface-gap",
+      "principleId": "family-natural-bootstrap",
+      "targetCollection": "experience-behavioral",
+      "seed": [
+        {
+          "id": "seed-candidate-did-not-surface",
+          "text": "A newly extracted lesson did not surface on the first natural retrieval pass, so the flow had to force the candidate id as a fallback."
+        },
+        {
+          "id": "seed-forced-target-needed",
+          "text": "The dogfood loop required forced targeting because the organic lesson could not surface through the normal retrieval path early enough."
+        }
+      ],
+      "holdout": [
+        {
+          "id": "holdout-natural-retrieval-miss",
+          "text": "A fresh organic rule stayed invisible in the default retrieval loop until an explicit fallback path injected the target manually.",
+          "projectSlug": "experience-engine"
+        },
+        {
+          "id": "holdout-early-surface-gap",
+          "text": "The standard bootstrap path failed to surface a new lesson in time, which pushed the run into a debug-only forced route.",
+          "projectSlug": "experience-engine"
+        }
+      ]
+    }
+  ]
+}

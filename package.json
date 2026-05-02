@@ -1,12 +1,13 @@
 {
   "name": "@muonroi/experience-engine",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CLI installer and server runtime for Experience Engine",
   "license": "MIT",
   "type": "commonjs",
   "bin": {
     "experience-engine": "bin/experience-engine.js",
-    "exp-engine": "bin/experience-engine.js"
+    "exp-engine": "bin/experience-engine.js",
+    "qdrant-find": "tools/qdrant-find.js"
   },
   "files": [
     "bin/",
@@ -34,14 +35,19 @@
     ".experience/setup.ps1",
     ".experience/setup.sh",
     ".experience/stop-extractor.js",
+    ".experience/sync-install.sh",
     "tools/exp-demote.js",
+    "tools/exp-dogfood-loop.js",
     "tools/exp-gates.js",
+    "tools/exp-holdout-harness.js",
     "tools/exp-portable-backup.js",
     "tools/exp-portable-restore.js",
     "tools/exp-replay-sessions.js",
     "tools/exp-server-maintain.js",
     "tools/exp-stats.js",
+    "tools/qdrant-find.js",
     "tools/experience-bulk-seed.js",
+    "fixtures/holdout/",
     "server.js",
     "README.md",
     "LICENSE",
@@ -55,7 +61,12 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test --test-concurrency=1 .experience/test-bootstrap.js .experience/test-hook-payloads.js .experience/test-remote-hooks.js tests/npm-cli.test.js",
+    "test": "node --test --test-concurrency=1 tests/*.test.js",
+    "test:holdout": "node --test tools/test-exp-holdout-harness.js tools/test-exp-holdout-fixtures.js",
+    "test:health": "node --test .experience/test-health-check.js .experience/test-setup.js",
+    "test:server": "node tools/test-server.js",
+    "test:ci": "npm test && npm run test:holdout && npm run test:health && npm run test:server",
+    "replay:holdout": "node tools/exp-holdout-harness.js --fixture fixtures/holdout --json",
     "pack:dry-run": "npm pack --dry-run"
   },
   "publishConfig": {

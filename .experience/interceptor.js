@@ -13,7 +13,7 @@ function timeoutFromEnv(name, fallback) {
 
 const STDIN_TIMEOUT_MS = timeoutFromEnv('EXPERIENCE_HOOK_STDIN_TIMEOUT_MS', 3000);
 const INTERCEPT_TIMEOUT_MS = timeoutFromEnv('EXPERIENCE_HOOK_INTERCEPT_TIMEOUT_MS', 2500);
-const HARD_EXIT_TIMEOUT_MS = timeoutFromEnv('EXPERIENCE_HOOK_HARD_EXIT_TIMEOUT_MS', 4500);
+const HARD_EXIT_TIMEOUT_MS = timeoutFromEnv('EXPERIENCE_HOOK_HARD_EXIT_TIMEOUT_MS', 3000);
 
 function debugLog(event) {
   try {
@@ -71,6 +71,45 @@ function isCodexHookInvocation(data, tool) {
     return true;
   }
   return false;
+}
+
+function emitPreToolUseGuidance(data, tool, additionalContext = '') {
+  const isGemini = !!(process.env.GEMINI_SESSION_ID || process.env.GEMINI_PROJECT_DIR)
+    || /^(run_shell_command|write_file|edit_file|replace_in_file)$/.test(tool || '');
+  const isCodex = !isGemini && isCodexHookInvocation(data, tool);
+  if (isGemini) {
+    if (additionalContext) process.stdout.write(additionalContext);
+    return;
+  }
+
+  if (isCodex) {
+    if (additionalContext) {
+      process.stdout.write(JSON.stringify({ systemMessage: additionalContext }));
+    }
+    return;
+  }
+
+  if (!additionalContext) return;
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'allow',
+      additionalContext,
+    }
+  }));
+}
+
+// Keep this read-only detector aligned with experience-core.js so thin-client
+// hooks can skip harmless commands before touching the remote server.
+const READ_ONLY_CMD = /^(ls|dir|cat|head|tail|wc|file|stat|find|tree|which|where|echo|printf|pwd|whoami|hostname|date|uptime|type|less|more|sort|uniq|tee|realpath|basename|dirname|env|printenv|id|groups|df|du|free|top|htop|lsof|ps|pgrep|mount|uname)\b|^git\s+(log|status|diff|show|branch|tag|remote|stash\s+list|describe|rev-parse|config\s+--get|shortlog|blame|reflog|ls-files|ls-tree|name-rev|cherry)\b|^(grep|rg|ag|ack)\b|^diff\b|^(npm|yarn|pnpm)\s+(list|ls|info|view|outdated|audit|why)\b|^(dotnet)\s+(--list-sdks|--list-runtimes|--info)\b|^(docker|podman)\s+(ps|images|inspect|logs|stats|top|port|volume\s+ls|network\s+ls)\b|^(get-content|select-string|measure-object|get-childitem|get-item|get-location|resolve-path|test-path|get-command)\b/i;
+
+function isReadOnlyCommand(tool, toolInput) {
+  const normalizedTool = String(tool || '').toLowerCase();
+  if (normalizedTool !== 'bash' && normalizedTool !== 'shell' && normalizedTool !== 'execute_command') return false;
+  const cmd = String(toolInput?.command || toolInput?.cmd || '').trim();
+  if (!cmd) return false;
+  const parts = cmd.split(/\s*(?:&&|\|\||;)\s*/);
+  return parts.every(part => READ_ONLY_CMD.test(part.trim()));
 }
 
 function suppressHookOutput() {
@@ -135,6 +174,7 @@ process.stdin.on('end', async () => {
   clearTimeout(t);
   debugLog({ stage: 'stdin_end', bytes: input.length });
   activityLog({ stage: 'stdin_end', bytes: input.length });
+  let mute = null;
   try {
     const data = JSON.parse(input || '{}');
     const tool = data.tool_name || data.toolName || '';
@@ -143,12 +183,19 @@ process.stdin.on('end', async () => {
     const matches = /Edit|Write|Bash|shell|replace|write_file|execute_command/i.test(tool);
     debugLog({ stage: 'parsed', tool, matches, keys: Object.keys(toolInput || {}).slice(0, 12), ...sourceMeta });
     activityLog({ stage: 'parsed', tool, matches, keys: Object.keys(toolInput || {}).slice(0, 12), query: toolInput?.command || toolInput?.cmd || null, ...sourceMeta });
-    if (!matches) process.exit(0);
+    if (!matches) {
+      emitPreToolUseGuidance(data, tool);
+      process.exit(0);
+    }
+    if (isReadOnlyCommand(tool, toolInput)) {
+      emitPreToolUseGuidance(data, tool);
+      process.exit(0);
+    }
 
     const ctrl = new AbortController();
     let timedOut = false;
     let timer = null;
-    const mute = suppressHookOutput();
+    mute = suppressHookOutput();
     const resultPromise = (async () => {
       const remote = getRemoteClient();
       if (remote) {
@@ -187,6 +234,7 @@ process.stdin.on('end', async () => {
     });
     const resultMeta = await Promise.race([resultPromise, timeoutPromise]);
     const mutedOutput = mute.restore();
+    mute = null;
     clearTimeout(timer);
     if (mutedOutput.length > 0) {
       debugLog({
@@ -203,7 +251,10 @@ process.stdin.on('end', async () => {
         ...sourceMeta,
       });
     }
-    if (timedOut || !resultMeta) process.exit(0);
+    if (timedOut || !resultMeta) {
+      emitPreToolUseGuidance(data, tool);
+      process.exit(0);
+    }
     const result = resultMeta?.suggestions ?? (typeof resultMeta === 'string' ? resultMeta : null);
     const surfacedIds = resultMeta?.surfacedIds || [];
     const routeInfo = resultMeta?.route || null;
@@ -260,38 +311,26 @@ process.stdin.on('end', async () => {
       } catch {}
     }
 
-    if (result || routeInfo) {
-      // Detect CLI from tool name pattern or env vars
-      const isGemini = !!(process.env.GEMINI_SESSION_ID || process.env.GEMINI_PROJECT_DIR)
-        || /^(run_shell_command|write_file|edit_file|replace_in_file)$/.test(tool);
-      const isCodex = !isGemini && isCodexHookInvocation(data, tool);
-
-      // Build output text: experience suggestions + optional route advisory
-      let outputText = result || '';
-      if (routeInfo && routeInfo.tier) {
-        const routeLine = `\n[Model Route] tier=${routeInfo.tier} model=${routeInfo.model || '?'} confidence=${(routeInfo.confidence || 0).toFixed(2)} source=${routeInfo.source || 'default'}`;
-        outputText = outputText ? outputText + '\n---\n' + routeLine : routeLine;
-      }
-
-      if (isGemini) {
-        // Gemini: plain text stdout → treated as systemMessage
-        process.stdout.write(outputText);
-      } else if (isCodex) {
-        // Codex PreToolUse ignores plain stdout and does not support
-        // additionalContext/updatedInput yet. systemMessage is the supported
-        // way to surface pre-tool guidance without blocking the tool.
-        // Ref: https://developers.openai.com/codex/hooks
-        process.stdout.write(JSON.stringify({ systemMessage: outputText }));
-      } else {
-        // Claude Code: structured JSON with additionalContext
-        process.stdout.write(JSON.stringify({
-          hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', additionalContext: outputText }
-        }));
-      }
+    let outputText = result || '';
+    if (sourceMeta.sourceKind !== 'codex-hook' && routeInfo && routeInfo.tier) {
+      const routeLine = `\n[Model Route] tier=${routeInfo.tier} model=${routeInfo.model || '?'} confidence=${(routeInfo.confidence || 0).toFixed(2)} source=${routeInfo.source || 'default'}`;
+      outputText = outputText ? outputText + '\n---\n' + routeLine : routeLine;
     }
+
+    emitPreToolUseGuidance(data, tool, outputText);
   } catch (error) {
+    try {
+      if (typeof mute?.restore === 'function') mute.restore();
+    } catch {}
     debugLog({ stage: 'error', message: error?.message || String(error), stack: error?.stack || null });
     activityLog({ stage: 'error', message: error?.message || String(error), stack: error?.stack || null });
+    try {
+      const data = JSON.parse(input || '{}');
+      const tool = data.tool_name || data.toolName || '';
+      if (isCodexHookInvocation(data, tool)) {
+        emitPreToolUseGuidance(data, tool);
+      }
+    } catch {}
   }
   clearTimeout(hardExit);
   process.exit(0);

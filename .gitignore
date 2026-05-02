@@ -10,6 +10,7 @@ config.json
 health-check.sh
 
 # Local-only agent/runtime state
+.backup-codex/
 .claude/settings.local.json
 .quick-codex-flow/
 .quick-codex-lock/

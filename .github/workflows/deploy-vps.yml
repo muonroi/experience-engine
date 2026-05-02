@@ -1,0 +1,133 @@
+name: Deploy VPS
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experience-engine-vps
+  cancel-in-progress: true
+
+env:
+  PROD_HOST: ${{ secrets.VPS_HOST }}
+  PROD_PORT: ${{ secrets.VPS_PORT }}
+  PROD_USER: ${{ secrets.VPS_USER }}
+  TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+  TS_TAGS: ${{ secrets.TS_TAGS }}
+  TS_RUNNER_HOSTNAME: github-runner-experience-engine
+  HAS_TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY != '' }}
+  HAS_TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET != '' }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: CI test suite
+        run: npm run test:ci
+
+      - name: Validate deployment secrets
+        env:
+          HAS_VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          missing=0
+          if [ -z "$PROD_HOST" ]; then
+            echo "::error::Missing required secret VPS_HOST"
+            missing=1
+          fi
+          if [ -z "$PROD_USER" ]; then
+            echo "::error::Missing required secret VPS_USER"
+            missing=1
+          fi
+          if [ "$HAS_VPS_SSH_PRIVATE_KEY" != "true" ]; then
+            echo "::error::Missing required secret VPS_SSH_PRIVATE_KEY"
+            missing=1
+          fi
+          if [ "$HAS_TAILSCALE_AUTHKEY" != "true" ] && { [ -z "$TS_OAUTH_CLIENT_ID" ] || [ "$HAS_TS_OAUTH_SECRET" != "true" ] || [ -z "$TS_TAGS" ]; }; then
+            echo "::error::Missing Tailscale credentials. Set TAILSCALE_AUTHKEY, or set TS_OAUTH_CLIENT_ID, TS_OAUTH_SECRET, and TS_TAGS."
+            missing=1
+          fi
+          exit "$missing"
+
+      - name: Connect to Tailscale with OAuth
+        if: ${{ env.TS_OAUTH_CLIENT_ID != '' && env.HAS_TS_OAUTH_SECRET == 'true' && env.TS_TAGS != '' }}
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: ${{ secrets.TS_TAGS }}
+          hostname: ${{ env.TS_RUNNER_HOSTNAME }}
+
+      - name: Connect to Tailscale with auth key
+        if: ${{ env.TS_OAUTH_CLIENT_ID == '' && env.HAS_TAILSCALE_AUTHKEY == 'true' }}
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          hostname: ${{ env.TS_RUNNER_HOSTNAME }}
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+
+      - name: Deploy to VPS
+        env:
+          DEPLOY_BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ssh -p "${PROD_PORT:-22}" -o StrictHostKeyChecking=no "${PROD_USER}@${PROD_HOST}" \
+            DEPLOY_BRANCH="$DEPLOY_BRANCH" \
+            'bash -se' <<'EOF'
+          set -euo pipefail
+          cd "$HOME/experience-engine"
+          bash scripts/deploy-vps.sh
+          EOF
+
+      - name: Disconnect Tailscale
+        if: always()
+        run: |
+          set +e
+          if command -v tailscale >/dev/null 2>&1; then
+            sudo tailscale logout || sudo tailscale down || true
+          fi
+
+      - name: Prune Tailscale runner machines
+        if: always()
+        env:
+          TS_API_TOKEN: ${{ secrets.TS_API_TOKEN }}
+        run: |
+          set +e
+          if [ -z "$TS_API_TOKEN" ]; then
+            echo "TS_API_TOKEN is not configured; relying on ephemeral node cleanup."
+            exit 0
+          fi
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "jq is not available; skipping Tailscale device prune."
+            exit 0
+          fi
+          devices_json="$(mktemp)"
+          if ! curl -fsS -u "$TS_API_TOKEN:" "https://api.tailscale.com/api/v2/tailnet/-/devices" > "$devices_json"; then
+            echo "Could not list Tailscale devices; skipping prune."
+            exit 0
+          fi
+          jq -r --arg prefix "$TS_RUNNER_HOSTNAME" '.devices[] | select((.hostname // "") | startswith($prefix)) | .id' "$devices_json" |
+            while IFS= read -r device_id; do
+              [ -n "$device_id" ] || continue
+              curl -fsS -u "$TS_API_TOKEN:" -X DELETE "https://api.tailscale.com/api/v2/device/$device_id" >/dev/null ||
+                echo "Could not delete Tailscale device $device_id"
+            done

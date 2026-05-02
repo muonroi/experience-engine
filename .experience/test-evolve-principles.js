@@ -14,6 +14,7 @@ test('promotes mature high-hit behavioral entries to principles', () => {
   const result = _shouldPromoteBehavioralToPrinciple({
     createdFrom: 'bulk-seed',
     hitCount: 27,
+    validatedCount: 27,
     confidence: 0.92,
     createdAt: '2026-04-09T03:50:28.668Z',
     trigger: 'Never use hardcoded px widths for table columns',
@@ -22,18 +23,44 @@ test('promotes mature high-hit behavioral entries to principles', () => {
   assert.equal(result, true);
 });
 
+test('promotes organically confirmed seeded memory earlier than fresh behavioral rules', () => {
+  const now = new Date('2026-04-14T07:00:00Z').getTime();
+  const result = _shouldPromoteBehavioralToPrinciple({
+    createdFrom: 'bulk-seed',
+    hitCount: 5,
+    validatedCount: 5,
+    confidence: 0.8,
+    createdAt: '2026-04-10T03:50:28.668Z',
+    trigger: 'Avoid singleton scoped state in service code',
+    solution: 'Keep stateful services scoped per request.',
+  }, now);
+  assert.equal(result, true);
+});
+
 test('does not promote immature or low-confidence behavioral entries', () => {
   const now = new Date('2026-04-14T07:00:00Z').getTime();
   assert.equal(_shouldPromoteBehavioralToPrinciple({
     createdFrom: 'bulk-seed',
-    hitCount: 5,
+    hitCount: 4,
+    validatedCount: 4,
     confidence: 0.92,
     createdAt: '2026-04-09T03:50:28.668Z',
   }, now), false);
   assert.equal(_shouldPromoteBehavioralToPrinciple({
     createdFrom: 'bulk-seed',
     hitCount: 27,
+    validatedCount: 27,
     confidence: 0.5,
+    createdAt: '2026-04-09T03:50:28.668Z',
+  }, now), false);
+});
+
+test('does not treat legacy surfaced hitCount as validated promotion signal', () => {
+  const now = new Date('2026-04-14T07:00:00Z').getTime();
+  assert.equal(_shouldPromoteBehavioralToPrinciple({
+    createdFrom: 'bulk-seed',
+    hitCount: 120,
+    confidence: 0.95,
     createdAt: '2026-04-09T03:50:28.668Z',
   }, now), false);
 });

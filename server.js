@@ -7,6 +7,7 @@
  *   GET  /health                    — Qdrant + FileStore status
  *   POST /api/intercept             — Query experience before tool call
  *   POST /api/posttool              — Canonical post-tool reconciliation + judge enqueue
+ *   POST /api/prompt-stale          — Reconcile stale prompt-only suggestions
  *   POST /api/extract               — Extract lessons from session transcript
  *   POST /api/evolve                — Trigger evolution cycle
  *   GET  /api/stats                 — Observability data (?since=7d, ?all=true)
@@ -17,11 +18,12 @@
  *   POST /api/principles/share      — Export a principle
  *   POST /api/principles/import     — Import a principle
  *   GET  /api/user                  — Current user identity
+ *   POST /api/route-task            — Intelligent wrapper task routing
  *   POST /api/route-model           — Intelligent model tier routing
  *   POST /api/route-feedback        — Record agent outcome for routing learning
  *   POST /api/brain                 — Proxy brain LLM calls (for clients behind firewall)
  *
- * Config: ~/.experience/config.json (server.port, server.authToken)
+ * Config: ~/.experience/config.json (server.port, server.authToken, server.readAuthToken)
  * Start: node server.js
  */
 
@@ -33,11 +35,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { intercept, extractFromSession, evolve, getEdgesForId, getEdgesOfType,
-        getEmbeddingRaw, searchCollection, sharePrinciple, importPrinciple,
-        EXP_USER, recordFeedback, routeModel, routeFeedback,
-        _reconcilePendingHints: reconcilePendingHints,
-        _activityLog: activityLog } = require('./.experience/experience-core');
 const { parseSince, loadEvents, filterEvents, computeStats, loadTop5 } = require('./tools/exp-stats');
 const { checkGates } = require('./tools/exp-gates');
 
@@ -54,9 +51,17 @@ const PORT = _cfg.server?.port || parseInt(process.env.EXP_SERVER_PORT, 10) || 8
 const QDRANT_BASE = _cfg.qdrantUrl || process.env.EXPERIENCE_QDRANT_URL || 'http://localhost:6333';
 const QDRANT_API_KEY = _cfg.qdrantKey || process.env.EXPERIENCE_QDRANT_KEY || '';
 const AUTH_TOKEN = _cfg.server?.authToken || _cfg.serverAuthToken || null;
+const READ_AUTH_TOKEN = _cfg.server?.readAuthToken || _cfg.serverReadAuthToken || process.env.EXPERIENCE_SERVER_READ_AUTH_TOKEN || null;
 const VALID_FEEDBACK_VERDICTS = new Set(['FOLLOWED', 'IGNORED', 'IRRELEVANT']);
 const VALID_NOISE_REASONS = new Set(['wrong_repo', 'wrong_language', 'wrong_task', 'stale_rule']);
 const TMP_DIR = path.join(os.homedir(), '.experience', 'tmp');
+const PACKAGED_RUNTIME_DIR = path.join(__dirname, '.experience');
+const HOME_RUNTIME_DIR = path.join(os.homedir(), '.experience');
+const RUNTIME_DIR = fs.existsSync(path.join(PACKAGED_RUNTIME_DIR, 'experience-core.js'))
+  ? PACKAGED_RUNTIME_DIR
+  : HOME_RUNTIME_DIR;
+const RUNTIME_CORE_PATH = path.join(RUNTIME_DIR, 'experience-core.js');
+const RUNTIME_JUDGE_WORKER_PATH = path.join(RUNTIME_DIR, 'judge-worker.js');
 
 // --- CORS headers ---
 const CORS = {
@@ -66,15 +71,63 @@ const CORS = {
 };
 
 // --- Auth middleware ---
-// When server.authToken is set in ~/.experience/config.json, all POST endpoints
-// require the matching Bearer token. GET endpoints remain open for observability tools.
-function requireAuth(req, res) {
-  if (!AUTH_TOKEN) return true; // no auth configured — allow all
+// When server.authToken is set, writes and sensitive reads require the full token.
+// Optionally, server.readAuthToken may authorize read-only observability endpoints.
+function requireAuth(req, res, options = {}) {
+  const allowReadToken = options.allowReadToken === true;
+  const acceptedTokens = [];
+  if (AUTH_TOKEN) acceptedTokens.push(AUTH_TOKEN);
+  if (allowReadToken && READ_AUTH_TOKEN) acceptedTokens.push(READ_AUTH_TOKEN);
+  if (acceptedTokens.length === 0) return true; // no auth configured — allow all
   const hdr = req.headers['authorization'] || '';
-  if (hdr === `Bearer ${AUTH_TOKEN}`) return true;
+  if (acceptedTokens.some(token => hdr === `Bearer ${token}`)) return true;
   res.writeHead(401, { 'Content-Type': 'application/json', ...CORS });
   res.end(JSON.stringify({ error: 'Unauthorized' }));
   return false;
+}
+
+function loadExperienceCore({ fresh = false } = {}) {
+  if (fresh) delete require.cache[require.resolve(RUNTIME_CORE_PATH)];
+  return require(RUNTIME_CORE_PATH);
+}
+
+function isProtectedGetPath(pathname) {
+  return pathname !== '/health';
+}
+
+function isReadOnlyApiPath(pathname) {
+  return pathname === '/api/stats' || pathname === '/api/gates';
+}
+
+async function resolvePointIdPrefix(collection, pointId) {
+  let offset = null;
+
+  for (;;) {
+    const body = { limit: 100, with_payload: false };
+    if (offset !== null) body.offset = offset;
+
+    const scrollRes = await fetch(`${QDRANT_BASE}/collections/${collection}/points/scroll`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {}),
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (!scrollRes.ok) return { ok: false, reason: 'unavailable' };
+
+    const result = (await scrollRes.json()).result || {};
+    const points = Array.isArray(result.points) ? result.points : [];
+    const match = points.find(point => String(point.id).startsWith(pointId));
+    if (match) return { ok: true, id: match.id };
+
+    if (!('next_page_offset' in result) || result.next_page_offset == null || points.length === 0) {
+      return { ok: true, id: null };
+    }
+    offset = result.next_page_offset;
+  }
 }
 
 // --- Response helpers ---
@@ -137,9 +190,7 @@ async function handleIntercept(req, res) {
     sourceSession: body.sourceSession || null,
     cwd: body.cwd || null,
   };
-  const corePath = path.join(os.homedir(), '.experience', 'experience-core.js');
-  delete require.cache[require.resolve(corePath)];
-  const { interceptWithMeta, intercept: interceptFresh } = require(corePath);
+  const { interceptWithMeta, intercept: interceptFresh } = loadExperienceCore();
   const resultMeta = typeof interceptWithMeta === 'function'
     ? await interceptWithMeta(body.toolName, body.toolInput || {}, undefined, meta)
     : {
@@ -173,6 +224,9 @@ function classifyPostToolOutcome(toolName, toolOutput) {
 
 async function handlePostTool(req, res) {
   const body = await readBody(req);
+  const core = loadExperienceCore();
+  const reconcilePendingHints = core._reconcilePendingHints;
+  const activityLog = core._activityLog;
   const toolName = body.toolName || '';
   const toolInput = body.toolInput || {};
   const toolOutput = body.toolOutput || body.output || body.result || {};
@@ -214,8 +268,7 @@ async function handlePostTool(req, res) {
         toolInput: JSON.stringify(toolInput || {}).slice(0, 300),
         toolOutcome,
       }));
-      const workerPath = path.join(os.homedir(), '.experience', 'judge-worker.js');
-      const worker = childProcess.spawn(process.execPath, [workerPath, queueFile], {
+      const worker = childProcess.spawn(process.execPath, [RUNTIME_JUDGE_WORKER_PATH, queueFile], {
         detached: true,
         stdio: 'ignore',
       });
@@ -235,15 +288,38 @@ async function handlePostTool(req, res) {
   json(res, { ok: true, reconcile, judgeQueued: surfacedIds.length > 0, toolOutcome });
 }
 
+async function handlePromptStale(req, res) {
+  const body = await readBody(req);
+  const core = loadExperienceCore();
+  const reconcileStalePromptSuggestions = core._reconcileStalePromptSuggestions;
+  const empty = { ok: true, unused: [], irrelevant: [], expired: [] };
+  if (typeof reconcileStalePromptSuggestions !== 'function') {
+    return json(res, empty);
+  }
+  const result = await reconcileStalePromptSuggestions(body.state || {}, body.nextPromptMeta || {});
+  json(res, {
+    ok: result?.ok !== false,
+    unused: result?.unused || [],
+    irrelevant: result?.irrelevant || [],
+    expired: result?.expired || [],
+  });
+}
+
 async function handleExtract(req, res) {
   const body = await readBody(req);
   if (!body.transcript) return error(res, 'transcript is required');
-  const stored = await extractFromSession(body.transcript, body.projectPath || null);
+  const { extractFromSession } = loadExperienceCore();
+  const stored = await extractFromSession(body.transcript, body.projectPath || null, {
+    sourceKind: body.sourceKind || 'manual-api',
+    sourceRuntime: body.sourceRuntime || 'api',
+    sourceSession: body.sourceSession || null,
+  });
   json(res, { stored, success: true });
 }
 
 async function handleEvolve(req, res) {
   const body = await readBody(req).catch(() => ({}));
+  const { evolve } = loadExperienceCore();
   const results = await evolve(body.trigger || 'api');
   json(res, { ...results, success: true });
 }
@@ -277,6 +353,7 @@ async function handleGraph(req, res, url) {
   const id = url.searchParams.get('id');
   if (!id) return error(res, 'id query parameter is required');
 
+  const { getEdgesForId } = loadExperienceCore();
   const edges = getEdgesForId(id);
   const enriched = edges.map(edge => {
     const targetId = edge.source === id ? edge.target : edge.source;
@@ -290,6 +367,7 @@ async function handleGraph(req, res, url) {
 async function handleShare(req, res) {
   const body = await readBody(req);
   if (!body.principleId) return error(res, 'principleId is required');
+  const { sharePrinciple } = loadExperienceCore();
   const shared = sharePrinciple(body.principleId);
   if (!shared) return error(res, 'Principle not found', 404);
   json(res, { shared, success: true });
@@ -298,6 +376,7 @@ async function handleShare(req, res) {
 async function handleImport(req, res) {
   const body = await readBody(req);
   if (!body.principle && !body.solution) return error(res, 'principle or solution is required');
+  const { importPrinciple } = loadExperienceCore();
   const result = await importPrinciple(body);
   if (!result) return error(res, 'Import failed (embedding unavailable)', 503);
   json(res, { imported: result, success: true });
@@ -326,30 +405,25 @@ async function handleFeedback(req, res) {
   // Support short ID prefix (8 chars) — resolve to full UUID via Qdrant scroll
   if (pointId.length < 36) {
     try {
-      const scrollRes = await fetch(`${QDRANT_BASE}/collections/${body.collection}/points/scroll`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {}) },
-        body: JSON.stringify({ limit: 100, with_payload: false }),
-        signal: AbortSignal.timeout(5000),
-      });
-      if (scrollRes.ok) {
-        const points = (await scrollRes.json()).result?.points || [];
-        const match = points.find(p => String(p.id).startsWith(pointId));
-        if (match) pointId = match.id;
-        else return error(res, `No point found matching prefix "${pointId}" in ${body.collection}`, 404);
-      } else {
+      const resolved = await resolvePointIdPrefix(body.collection, pointId);
+      if (!resolved.ok) {
         return error(res, 'Failed to resolve short ID — Qdrant unavailable', 503);
       }
+      if (!resolved.id) {
+        return error(res, `No point found matching prefix "${pointId}" in ${body.collection}`, 404);
+      }
+      pointId = resolved.id;
     } catch {
       return error(res, 'Failed to resolve short ID — provide full UUID', 400);
     }
   }
-
+  const { recordFeedback } = loadExperienceCore();
   await recordFeedback(body.collection, pointId, resolvedVerdict, normalizedReason);
   json(res, { ok: true, resolvedId: pointId, verdict: resolvedVerdict, ...(normalizedReason ? { reason: normalizedReason } : {}) });
 }
 
 function handleUser(req, res) {
+  const { EXP_USER } = loadExperienceCore();
   json(res, { user: EXP_USER });
 }
 
@@ -357,6 +431,7 @@ async function handleTimeline(req, res, url) {
   const topic = url.searchParams.get('topic');
   if (!topic) return error(res, 'topic query parameter is required');
 
+  const { getEmbeddingRaw, searchCollection, getEdgesOfType } = loadExperienceCore();
   // Semantic search for experiences matching the topic
   const vector = await getEmbeddingRaw(topic);
   if (!vector) return error(res, 'Embedding unavailable', 503);
@@ -400,6 +475,28 @@ async function handleTimeline(req, res, url) {
   json(res, { topic, timeline, count: timeline.length });
 }
 
+async function handleSearch(req, res) {
+  if (!requireAuth(req, res)) return;
+  const body = await readBody(req);
+  if (!body.query || typeof body.query !== 'string') return error(res, 'query is required');
+  const limit = Math.min(body.limit || 5, 20);
+
+  const { getEmbeddingRaw, searchCollection } = loadExperienceCore();
+  const vector = await getEmbeddingRaw(body.query, AbortSignal.timeout(2000));
+  if (!vector) return error(res, 'Embedding unavailable', 503);
+
+  const collection = 'experience-behavioral'; // Phase 6: always behavioral
+  const points = await searchCollection(collection, vector, limit);
+
+  const mapped = points.map(p => {
+    const payload = p.payload || {};
+    const json = (() => { try { return JSON.parse(payload.json || '{}'); } catch { return {}; } })();
+    return { id: p.id, score: p.score, text: payload.text || json.solution || '', collection };
+  });
+
+  json(res, { points: mapped });
+}
+
 const VALID_OUTCOMES = new Set(['success', 'fail', 'retry', 'cancelled']);
 const KNOWN_RUNTIMES = new Set(['claude', 'gemini', 'codex', 'opencode']);
 
@@ -410,7 +507,21 @@ async function handleRouteModel(req, res) {
   if (body.runtime !== undefined && body.runtime !== null && !KNOWN_RUNTIMES.has(body.runtime)) {
     return error(res, `runtime must be one of: ${[...KNOWN_RUNTIMES].join(', ')}, or null`);
   }
+  const { routeModel } = loadExperienceCore();
   const result = await routeModel(body.task, body.context || null, body.runtime || null);
+  res.writeHead(200, { 'Content-Type': 'application/json', 'X-Route-Source': result.source || 'default', ...CORS });
+  res.end(JSON.stringify(result));
+}
+
+async function handleRouteTask(req, res) {
+  const body = await readBody(req);
+  if (!body.task || typeof body.task !== 'string') return error(res, 'task is required and must be a string');
+  if (body.task.length > 2000) return error(res, 'task must be 2000 characters or less');
+  if (body.runtime !== undefined && body.runtime !== null && !KNOWN_RUNTIMES.has(body.runtime)) {
+    return error(res, `runtime must be one of: ${[...KNOWN_RUNTIMES].join(', ')}, or null`);
+  }
+  const { routeTask } = loadExperienceCore();
+  const result = await routeTask(body.task, body.context || null, body.runtime || null);
   res.writeHead(200, { 'Content-Type': 'application/json', 'X-Route-Source': result.source || 'default', ...CORS });
   res.end(JSON.stringify(result));
 }
@@ -422,6 +533,7 @@ async function handleRouteFeedback(req, res) {
   if (!VALID_OUTCOMES.has(body.outcome)) {
     return error(res, `outcome must be one of: ${[...VALID_OUTCOMES].join(', ')}`);
   }
+  const { routeFeedback } = loadExperienceCore();
   const ok = await routeFeedback(body.taskHash, body.tier || null, body.model || null, body.outcome, body.retryCount || 0, body.duration || null);
   res.writeHead(200, { 'Content-Type': 'application/json', 'X-Route-Source': 'feedback', ...CORS });
   res.end(JSON.stringify({ ok }));
@@ -434,7 +546,7 @@ async function handleBrainProxy(req, res) {
   if (!body.prompt) return error(res, 'prompt is required');
   const timeoutMs = body.timeoutMs || 8000;
   try {
-    const { classifyViaBrain } = require(path.join(os.homedir(), '.experience', 'experience-core.js'));
+    const { classifyViaBrain } = loadExperienceCore();
     const result = await classifyViaBrain(body.prompt, timeoutMs);
     res.writeHead(200, { 'Content-Type': 'application/json', ...CORS });
     res.end(JSON.stringify({ ok: true, result }));
@@ -458,8 +570,11 @@ const server = http.createServer(async (req, res) => {
   const p = url.pathname;
 
   try {
-    // GET endpoints — open (no auth required)
+    // Keep health open for liveness checks; protect other GET APIs when auth is configured.
     if (p === '/health' && req.method === 'GET') return await handleHealth(req, res);
+    if (req.method === 'GET' && isProtectedGetPath(p)) {
+      if (!requireAuth(req, res, { allowReadToken: isReadOnlyApiPath(p) })) return;
+    }
     if (p === '/api/stats' && req.method === 'GET') return await handleStats(req, res, url);
     if (p === '/api/gates' && req.method === 'GET') return await handleGates(req, res);
     if (p === '/api/graph' && req.method === 'GET') return await handleGraph(req, res, url);
@@ -471,14 +586,17 @@ const server = http.createServer(async (req, res) => {
       if (!requireAuth(req, res)) return;
       if (p === '/api/intercept') return await handleIntercept(req, res);
       if (p === '/api/posttool') return await handlePostTool(req, res);
+      if (p === '/api/prompt-stale') return await handlePromptStale(req, res);
       if (p === '/api/extract') return await handleExtract(req, res);
       if (p === '/api/evolve') return await handleEvolve(req, res);
       if (p === '/api/principles/share') return await handleShare(req, res);
       if (p === '/api/principles/import') return await handleImport(req, res);
       if (p === '/api/feedback') return await handleFeedback(req, res);
+      if (p === '/api/route-task') return await handleRouteTask(req, res);
       if (p === '/api/route-model') return await handleRouteModel(req, res);
       if (p === '/api/route-feedback') return await handleRouteFeedback(req, res);
       if (p === '/api/brain') return await handleBrainProxy(req, res);
+      if (p === '/api/search') return await handleSearch(req, res);
     }
 
     error(res, 'Not found', 404);
@@ -502,4 +620,28 @@ if (require.main === module) {
   });
 }
 
-module.exports = { server, handleHealth, handleIntercept, handlePostTool, handleExtract, handleEvolve, handleStats, handleGates, handleGraph, handleTimeline, handleShare, handleImport, handleFeedback, handleUser, handleRouteModel, handleRouteFeedback };
+module.exports = {
+  server,
+  handleHealth,
+  handleIntercept,
+  handlePostTool,
+  handlePromptStale,
+  handleExtract,
+  handleEvolve,
+  handleStats,
+  handleGates,
+  handleGraph,
+  handleTimeline,
+  handleSearch,
+  handleShare,
+  handleImport,
+  handleFeedback,
+  handleUser,
+  handleRouteModel,
+  handleRouteFeedback,
+  isProtectedGetPath,
+  isReadOnlyApiPath,
+  loadExperienceCore,
+  resolvePointIdPrefix,
+  RUNTIME_DIR,
+};

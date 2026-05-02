@@ -7,7 +7,9 @@ ROOT_DIR="$(cd "$SRC_DIR/.." && pwd)"
 
 SERVER_URL=""
 SERVER_TOKEN=""
+SERVER_READ_TOKEN=""
 CLEAN_MODE=false
+CONFIG_FALLBACK_FILE="${HOME}/.experience/config.json"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -19,6 +21,10 @@ while [ $# -gt 0 ]; do
       SERVER_TOKEN="${2:-}"
       shift 2
       ;;
+    --read-token)
+      SERVER_READ_TOKEN="${2:-}"
+      shift 2
+      ;;
     --clean)
       CLEAN_MODE=true
       shift
@@ -26,12 +32,16 @@ while [ $# -gt 0 ]; do
     --help|-h)
       cat <<'EOF'
 Usage:
-  bash .experience/setup-thin-client.sh --server http://your-vps:8082 [--token TOKEN] [--clean]
+  bash .experience/setup-thin-client.sh [--server http://your-vps:8082] [--token TOKEN] [--read-token TOKEN] [--clean]
 
 Options:
-  --server   Required. Experience Engine VPS base URL.
+  --server   Optional if ~/.experience/config.json already contains serverBaseUrl.
   --token    Optional. Bearer token used by POST endpoints.
+  --read-token Optional. Read-only token for /api/stats and /api/gates.
   --clean    Backup and remove old local brain state so this machine becomes a true thin client.
+Fallback:
+  When flags are omitted, the script reuses serverBaseUrl/serverAuthToken/serverReadAuthToken
+  from ~/.experience/config.json if that file already exists.
 EOF
       exit 0
       ;;
@@ -42,12 +52,47 @@ EOF
   esac
 done
 
+load_config_fallback() {
+  local key="$1"
+  local config_file="$2"
+  if [ ! -f "$config_file" ]; then
+    return 0
+  fi
+
+  node -e '
+    const fs = require("fs");
+    const [configFile, key] = process.argv.slice(1);
+    try {
+      const raw = fs.readFileSync(configFile, "utf8");
+      const parsed = JSON.parse(raw);
+      const value = parsed[key];
+      if (typeof value === "string") process.stdout.write(value);
+    } catch (error) {
+      process.stderr.write(`[WARN] Failed to read ${configFile}: ${error.message}\n`);
+      process.exit(1);
+    }
+  ' "$config_file" "$key"
+}
+
 if [ -z "$SERVER_URL" ]; then
-  echo "[ERROR] --server is required" >&2
+  SERVER_URL="$(load_config_fallback serverBaseUrl "$CONFIG_FALLBACK_FILE")"
+fi
+
+if [ -z "$SERVER_TOKEN" ]; then
+  SERVER_TOKEN="$(load_config_fallback serverAuthToken "$CONFIG_FALLBACK_FILE")"
+fi
+
+if [ -z "$SERVER_READ_TOKEN" ]; then
+  SERVER_READ_TOKEN="$(load_config_fallback serverReadAuthToken "$CONFIG_FALLBACK_FILE")"
+fi
+
+if [ -z "$SERVER_URL" ]; then
+  echo "[ERROR] --server is required (or set serverBaseUrl in $CONFIG_FALLBACK_FILE)" >&2
   exit 1
 fi
 
 mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/tmp" "$INSTALL_DIR/offline-queue"
+rm -rf "$INSTALL_DIR/tmp/bootstrap.lock"
 
 ensure_line_in_file() {
   local file="$1" line="$2"
@@ -56,7 +101,7 @@ ensure_line_in_file() {
   grep -Fqx "$line" "$file" 2>/dev/null || printf '\n%s\n' "$line" >> "$file"
 }
 
-for f in interceptor.js interceptor-post.js interceptor-prompt.js stop-extractor.js remote-client.js extract-compact.js exp-client-drain.js health-check.sh exp-feedback.js exp-feedback exp-bootstrap.sh exp-health-last exp-shell-init.sh; do
+for f in interceptor.js interceptor-post.js interceptor-prompt.js stop-extractor.js remote-client.js extract-compact.js exp-client-drain.js health-check.sh exp-feedback.js exp-feedback exp-bootstrap.sh exp-health-last exp-shell-init.sh sync-install.sh; do
   cp "$SRC_DIR/$f" "$INSTALL_DIR/$f"
 done
 
@@ -78,6 +123,7 @@ chmod +x \
   "$INSTALL_DIR/exp-bootstrap.sh" \
   "$INSTALL_DIR/exp-health-last" \
   "$INSTALL_DIR/exp-shell-init.sh" \
+  "$INSTALL_DIR/sync-install.sh" \
   "$INSTALL_DIR/exp-server-maintain.js" \
   "$INSTALL_DIR/exp-portable-backup.js" \
   "$INSTALL_DIR/exp-portable-restore.js"
@@ -106,6 +152,7 @@ cat > "$INSTALL_DIR/config.json" <<EOF
 {
   "serverBaseUrl": "${SERVER_URL%/}",
   "serverAuthToken": "${SERVER_TOKEN}",
+  "serverReadAuthToken": "${SERVER_READ_TOKEN}",
   "serverTimeoutMs": 5000,
   "serverExtractTimeoutMs": 60000,
   "version": "thin-client",
