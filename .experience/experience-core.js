@@ -3345,17 +3345,18 @@ migrateQdrantUserTags().catch(() => {});
 
 // --- Model Router (route-model spec) ---
 
-const CLASSIFY_PROMPT = `Classify this coding task complexity for cost-aware model routing. Reply ONLY one word: fast, balanced, or premium.
+const CLASSIFY_PROMPT = `You are a cost-aware model router. Classify the user's message into one of three tiers. Reply ONLY one word: fast, balanced, or premium.
 
-Choose the cheapest tier that is still safe for the current task and workflow gate.
-Do NOT upgrade to premium just because the task is broad, ambiguous, or needs qc-flow clarify/research.
-Use premium only when the task truly needs deep reasoning, architecture tradeoffs, security-sensitive analysis, complex debugging, or a breaking migration.
+Your goal: always pick the CHEAPEST tier that can handle the task safely.
 
-fast = trivial, mechanical, single action (rename, format, read file, delete unused, fix typo, update import, simple config change)
-balanced = moderate, requires understanding (implement feature, write tests, refactor single file, add endpoint, update logic)
-premium = complex, requires deep reasoning (multi-file architecture, race condition, security audit, system design, complex debug, breaking migration)
+fast — the task requires no deep reasoning. A small, fast model can handle it.
+balanced — the task requires moderate understanding of code, logic, or context.
+premium — the task requires deep multi-step reasoning, architectural analysis, or security-sensitive judgment.
 
-Task: "{TASK}"
+When in doubt between two tiers, pick the cheaper one.
+The message may be in any language. Judge by intent and complexity, not by language.
+
+Message: "{TASK}"
 Context: {CONTEXT_JSON}`;
 
 const TASK_ROUTE_PROMPT = `You are routing a coding task for a thin wrapper in front of Codex CLI.
