@@ -14,3 +14,4 @@ health-check.sh
 .claude/settings.local.json
 .quick-codex-flow/
 .quick-codex-lock/
+fixtures/config-vps.json
