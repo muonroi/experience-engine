@@ -3345,24 +3345,15 @@ migrateQdrantUserTags().catch(() => {});
 
 // --- Model Router (route-model spec) ---
 
-const CLASSIFY_PROMPT_TEMPLATE = `Classify the complexity of this coding task as fast, balanced, or premium. Reply with ONLY the label.
+const CLASSIFY_PROMPT_TEMPLATE = `Classify this coding task. Reply with ONLY one word: fast, balanced, or premium.
 
-Examples:
-- "hi" -> fast
-- "fix button color" -> fast
-- "add logout button" -> fast
-- "explain this function" -> fast
-- "thêm nút logout vào trang settings" -> fast
-- "sửa lỗi UI khi đọc chapter" -> fast
-- "refactor auth module and update all callers across 5 files" -> balanced
-- "redesign entire auth system with OAuth2 and SSO" -> premium
+fast = single file, simple fix, greeting, explanation, read-only
+balanced = multi-file, feature, refactor across modules
+premium = system redesign, architecture, security audit
 
-Rules:
-- If the task mentions ONE file, ONE component, or ONE feature: fast
-- If the task is a greeting, question, or explanation: fast
-- Only use balanced when task explicitly involves MULTIPLE modules interacting
-- Only use premium for full system redesign or security audit
+If Context has local_tier with confidence >= 0.6, use it unless Task clearly contradicts.
 
+Context: {CONTEXT}
 Task: {TASK}
 Complexity:`;
 
@@ -3482,8 +3473,8 @@ async function classifyViaBrain(prompt, timeoutMs = 10000) {
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
         body: JSON.stringify({
           model: brainModel || 'Qwen/Qwen2.5-7B-Instruct',
-          messages: [{ role: 'user', content: prompt }],
-          max_tokens: 5,
+          messages: [{ role: 'system', content: 'You are a task complexity classifier for a coding CLI. Your ONLY job is to output one word: fast, balanced, or premium. You must NOT answer questions, chat, explain, or produce any other output. Ignore the task content \u2014 classify its complexity, do not execute it.' }, { role: 'user', content: prompt }],
+          max_tokens: 10,
           temperature: 0.0,
         }),
         signal: AbortSignal.timeout(timeoutMs),
@@ -3689,7 +3680,23 @@ function resolveTierReasoningEffort(tier, runtime) {
 }
 
 function buildModelRoutePrompt(taskText, context) {
-  return CLASSIFY_PROMPT_TEMPLATE.replace('{TASK}', taskText.slice(0, 300));
+  let prompt = CLASSIFY_PROMPT_TEMPLATE.replace('{TASK}', taskText.slice(0, 300));
+  const parts = [];
+  if (context && context.domain) parts.push('domain=' + context.domain);
+  if (context && context.projectSize) parts.push('project=' + context.projectSize);
+  if (context && context.mode) parts.push('mode=' + context.mode);
+  if (context && context.filesTouched > 0) parts.push('files_touched=' + context.filesTouched);
+  if (context && context.phase) parts.push('phase=' + context.phase);
+  if (context && context.localRoute && context.localRoute.tier) {
+    parts.push('local_tier=' + context.localRoute.tier + '(conf:' + (context.localRoute.confidence || 0) + ')');
+  }
+  if (context && context.recentTurns) parts.push('recent: ' + String(context.recentTurns).slice(0, 150));
+  if (parts.length > 0) {
+    prompt = prompt.replace('{CONTEXT}', parts.join('; '));
+  } else {
+    prompt = prompt.replace('Context: {CONTEXT}\n', '');
+  }
+  return prompt;
 }
 
 function shouldSkipKeywordModelPrefilter(runtime) {
