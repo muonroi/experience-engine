@@ -70,4 +70,14 @@ copy_file "$ROOT_DIR/tools/exp-server-maintain.js" "exp-server-maintain.js"
 copy_file "$ROOT_DIR/tools/exp-portable-backup.js" "exp-portable-backup.js"
 copy_file "$ROOT_DIR/tools/exp-portable-restore.js" "exp-portable-restore.js"
 
+# Sync src/ modules (required after modular refactor)
+if [ -d "$SRC_DIR/src" ]; then
+  mkdir -p "$TARGET_DIR/src"
+  for f in "$SRC_DIR/src/"*.js; do
+    [ -f "$f" ] || continue
+    install -m 644 "$f" "$TARGET_DIR/src/$(basename "$f")"
+    log "Synced: src/$(basename "$f")"
+  done
+fi
+
 log "Runtime sync complete: $TARGET_DIR"
