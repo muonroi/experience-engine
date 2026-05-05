@@ -66,6 +66,7 @@ const COLLECTIONS = [
   { name: 'experience-behavioral', topK: 3, budgetChars: 1200 },
   { name: 'experience-selfqa',     topK: 2, budgetChars: 1000 },
 ];
+const SELFQA_COLLECTION = 'experience-selfqa';
 const EDGE_COLLECTION = 'experience-edges';
 const ROUTES_COLLECTION = 'experience-routes';
 const DEDUP_THRESHOLD = 0.85;
@@ -119,7 +120,7 @@ module.exports = {
   getMinConfidence, getHighConfidence,
   getExpUser, EXP_USER,
   getHomeExpDir, getStoreDir, getActivityLogPath,
-  COLLECTIONS, EDGE_COLLECTION, ROUTES_COLLECTION,
+  COLLECTIONS, SELFQA_COLLECTION, EDGE_COLLECTION, ROUTES_COLLECTION,
   DEDUP_THRESHOLD, QUERY_MAX_CHARS, MAX_SESSION_UNIQUE, COMPACT_DIM,
   VALID_FEEDBACK_VERDICTS, VALID_NOISE_REASONS, VALID_NOISE_DISPOSITIONS, VALID_NOISE_SOURCES,
   NOISE_SUPPRESSION_THRESHOLD, RECENT_VALIDATION_WINDOW_MS,
