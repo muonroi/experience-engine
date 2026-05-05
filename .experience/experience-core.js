@@ -3515,24 +3515,19 @@ function _delegateSession() {
 }
 
 function _delegateUtils() {
+  // Only delegate functions unique to utils — scoring/format/noise already delegated by their own modules
   detectContext = _utils.detectContext;
   normalizeTechLabel = _utils.normalizeTechLabel;
   commandSuggestsDomain = _utils.commandSuggestsDomain;
   extractProjectPath = _utils.extractProjectPath;
   extractProjectSlug = _utils.extractProjectSlug;
   buildQuery = _utils.buildQuery;
-  computeEffectiveConfidence = _utils.computeEffectiveConfidence;
-  computeEffectiveScore = _utils.computeEffectiveScore;
-  rerankByQuality = _utils.rerankByQuality;
-  formatPoints = _utils.formatPoints;
   dedupePointsBySource = _utils.dedupePointsBySource;
   pointSourceKey = _utils.pointSourceKey;
   applyBudget = _utils.applyBudget;
   inferLanguageMismatch = _utils.inferLanguageMismatch;
   hasRecentValidatedConfirmation = _utils.hasRecentValidatedConfirmation;
   isCodeSpecificHint = _utils.isCodeSpecificHint;
-  shouldSuppressForNoise = _utils.shouldSuppressForNoise;
-  filterNoiseSuppressedPoints = _utils.filterNoiseSuppressedPoints;
   normalizeSourceMeta = _utils.normalizeSourceMeta;
   resolveRuntimeFromSourceMeta = _utils.resolveRuntimeFromSourceMeta;
   detectRuntime = _utils.detectRuntime;

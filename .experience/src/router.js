@@ -13,7 +13,10 @@ const {
   getOllamaGenerateUrl,
   activityLog,
 } = require("./config");
-const { estimateTextUnits, logCostCall } = require("./embedding");
+const { estimateTextUnits, logCostCall, getEmbedding } = require("./embedding");
+const { checkQdrant, fileStoreRead, fileStoreWrite, fileStoreUpsert, searchCollection, buildQdrantUserFilter } = require("./qdrant");
+const { extractProjectSlug } = require("./utils");
+const { callBrainWithFallback } = require("./brain-llm");
 
 
 function isRouterEnabled() {
