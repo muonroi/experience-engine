@@ -155,14 +155,13 @@ describe('NOISE-05: cross-project penalty', () => {
       `cross-project (${crossProject.toFixed(4)}) should be < same-project (${sameProject.toFixed(4)})`);
   });
 
-  it('penalty is exactly 0.50 raw (before confidence weighting)', () => {
-    // Calculate expected difference
+  it('penalty is exactly 0.85 raw for cross-project non-principle (before confidence weighting)', () => {
     const base = computeEffectiveScore({ score: 0.7 }, { _projectSlug: 'a' }, null, 'a');
     const penalized = computeEffectiveScore({ score: 0.7 }, { _projectSlug: 'b' }, null, 'a');
-    // Raw penalty = 0.70, scaled by confidence weight
+    // Raw penalty = 0.85, scaled by confidence weight
     const confWeight = 0.5 * 0.7; // default conf=0.5, hits=0, ageFactor=0.7
     const scale = 0.6 + 0.4 * confWeight;
-    const expectedDiff = 0.70 * scale;
+    const expectedDiff = 0.85 * scale;
     const actualDiff = base - penalized;
     assert.ok(Math.abs(actualDiff - expectedDiff) < 0.001,
       `expected penalty diff ~${expectedDiff.toFixed(4)}, got ${actualDiff.toFixed(4)}`);
@@ -266,15 +265,16 @@ describe('NOISE-07: rerankByQuality cross-project demotion', () => {
       `same-project (${sameProjectScore.toFixed(3)}) should beat cross-project (${crossProjectScore.toFixed(3)}) with 0.70 penalty`);
   });
 
-  it('legacy rules (no projectSlug) are not penalized', () => {
+  it('legacy rules (no projectSlug) get moderate penalty vs same-project', () => {
     const points = [
       mkPoint(0.70, { hitCount: 5, confidence: 0.7 }),  // no _projectSlug
       mkPoint(0.70, { _projectSlug: 'tcis.libraries', hitCount: 5, confidence: 0.7 }),
     ];
     const ranked = rerankByQuality(points, null, 'tcis.libraries');
-    // Both should have very similar scores (no penalty for either)
-    assert.ok(Math.abs(ranked[0]._effectiveScore - ranked[1]._effectiveScore) < 0.01,
-      'legacy rule should score same as matching-project rule');
+    const legacyScore = ranked.find(p => !JSON.parse(p.payload.json)._projectSlug)?._effectiveScore;
+    const sameScore = ranked.find(p => JSON.parse(p.payload.json)._projectSlug === 'tcis.libraries')?._effectiveScore;
+    assert.ok(sameScore > legacyScore,
+      'same-project rule should score higher than unknown-origin legacy rule');
   });
 });
 

@@ -170,7 +170,7 @@ const PROBATIONARY_T2_SURFACE_LIMIT = 2;
 const ORGANIC_SUPPORT_SEMANTIC_THRESHOLD = 0.58;
 const ORGANIC_SUPPORT_TOKEN_OVERLAP_THRESHOLD = 0.34;
 const ORGANIC_SUPPORT_MAX_CANDIDATES = 8;
-const NOISE_SUPPRESSION_THRESHOLD = 2;
+const NOISE_SUPPRESSION_THRESHOLD = 1; // Suppress after first noise signal to improve precision
 const RECENT_VALIDATION_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 
 // --- Session-persistent tracking (file-based, survives process restarts) ---
@@ -2234,11 +2234,32 @@ async function getEmbedding(text, signal, meta = {}) {
   const p = EMBED_PROVIDERS[provider] || EMBED_PROVIDERS.ollama;
   const units = estimateTextUnits(text, 8000);
   const startedAt = Date.now();
-  const vector = await p.fn(text, signal);
+  let vector = await p.fn(text, signal);
   logCostCall('embed', provider, meta.source || 'general', units, {
     ok: !!vector,
     durationMs: Date.now() - startedAt,
   });
+  if (vector) return vector;
+
+  // Retry once after 500ms backoff
+  await new Promise(r => setTimeout(r, 500));
+  const retryStart = Date.now();
+  vector = await p.fn(text, signal);
+  logCostCall('embed', provider, meta.source || 'general-retry', units, {
+    ok: !!vector,
+    durationMs: Date.now() - retryStart,
+  });
+  if (vector) return vector;
+
+  // Fallback to Ollama if primary provider is not already Ollama
+  if (provider !== 'ollama' && EMBED_PROVIDERS.ollama) {
+    const fallbackStart = Date.now();
+    vector = await EMBED_PROVIDERS.ollama.fn(text, signal);
+    logCostCall('embed', 'ollama', meta.source || 'general-fallback', units, {
+      ok: !!vector,
+      durationMs: Date.now() - fallbackStart,
+    });
+  }
   return vector;
 }
 
@@ -2248,7 +2269,7 @@ async function embedOllama(text, signal) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: getEmbedModel(), input: text }),
-      signal: signal || AbortSignal.timeout(10000),
+      signal: signal || AbortSignal.timeout(5000),
     });
     if (!res.ok) return null;
     return (await res.json()).embeddings?.[0] || null;
@@ -2263,7 +2284,7 @@ async function embedOpenAI(text, signal) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getEmbedKey()}` },
       body: JSON.stringify({ model: getEmbedModel() || 'text-embedding-3-small', input: text.slice(0, 8000) }),
-      signal: signal || AbortSignal.timeout(10000),
+      signal: signal || AbortSignal.timeout(5000),
     });
     if (!res.ok) return null;
     return (await res.json()).data?.[0]?.embedding || null;
@@ -2277,7 +2298,7 @@ async function embedGemini(text, signal) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: { parts: [{ text: text.slice(0, 8000) }] } }),
-      signal: signal || AbortSignal.timeout(10000),
+      signal: signal || AbortSignal.timeout(5000),
     });
     if (!res.ok) return null;
     return (await res.json()).embedding?.values || null;
@@ -2290,7 +2311,7 @@ async function embedVoyageAI(text, signal) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getEmbedKey()}` },
       body: JSON.stringify({ model: getEmbedModel() || 'voyage-code-3', input: [text.slice(0, 8000)] }),
-      signal: signal || AbortSignal.timeout(10000),
+      signal: signal || AbortSignal.timeout(5000),
     });
     if (!res.ok) return null;
     return (await res.json()).data?.[0]?.embedding || null;
@@ -2383,11 +2404,11 @@ function computeEffectiveScore(point, data, queryDomain, queryProjectSlug, query
     if (scopeLang === 'all') {
       projectPenalty = 0; // Universal rules surface everywhere
     } else if (!data._projectSlug) {
-      // No project slug on entry — apply moderate penalty (unknown origin)
-      projectPenalty = principleLike ? 0.05 : 0.25;
+      // No project slug on entry — apply heavier penalty (unknown origin)
+      projectPenalty = principleLike ? 0.10 : 0.35;
     } else if (queryProjectSlug !== data._projectSlug) {
-      // Cross-project — heavy penalty
-      projectPenalty = principleLike ? 0.18 : 0.70;
+      // Cross-project — near-elimination penalty for non-principles
+      projectPenalty = principleLike ? 0.22 : 0.85;
     }
   }
   // Phase 108: temporal boost/penalty from confirmedAt trace
@@ -2842,6 +2863,7 @@ const SEEDED_BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD = 5;
 const SEEDED_BEHAVIORAL_TO_PRINCIPLE_MIN_CONFIDENCE = 0.72;
 const DOGFOOD_BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD = 4;
 const DOGFOOD_BEHAVIORAL_TO_PRINCIPLE_MIN_CONFIDENCE = 0.64;
+const PROMOTE_COOLDOWN_MS = 48 * 60 * 60 * 1000; // 48h cooldown after demotion before re-promotion
 
 function uniqueConfirmationCount(data, field) {
   const values = Array.isArray(data?.[field]) ? data[field] : [];
@@ -2923,6 +2945,9 @@ async function evolve(trigger) {
       continue;
     }
     if (!data || getValidatedHitCount(data) < T2_TO_T1_HIT_THRESHOLD) continue;
+    // Cooldown: skip recently demoted entries to prevent promote/demote oscillation
+    const demotedAt = data.demotedAt ? new Date(data.demotedAt).getTime() : 0;
+    if (demotedAt && (Date.now() - demotedAt) < PROMOTE_COOLDOWN_MS) continue;
     // Bootstrap faster: organic lessons should reach T1 while still fresh enough to matter.
     const ageMs = Date.now() - new Date(data.createdAt || 0).getTime();
     const fastDogfoodPromote = data.createdFrom === 'session-extractor'
@@ -2950,6 +2975,9 @@ async function evolve(trigger) {
     const data = parsePayload(entry);
     ensureSignalMetrics(data);
     if (!data) continue;
+    // Cooldown: skip entries recently demoted from T0 to prevent oscillation
+    const demotedFromT0At = data.demotedFromT0At ? new Date(data.demotedFromT0At).getTime() : 0;
+    if (demotedFromT0At && (Date.now() - demotedFromT0At) < PROMOTE_COOLDOWN_MS) continue;
     const promoteProbationary = data.createdFrom === 'evolution-abstraction' && getValidatedHitCount(data) >= PROBATIONARY_PRINCIPLE_HIT_THRESHOLD;
     const promoteMatureBehavioral = shouldPromoteBehavioralToPrinciple(data);
     if (!promoteProbationary && !promoteMatureBehavioral) continue;
@@ -3157,6 +3185,52 @@ async function evolve(trigger) {
           age: Math.round(age / (24 * 60 * 60 * 1000)),
         });
       }
+    }
+  }
+
+  // Step 5: Route collection compaction — TTL 30 days, cap 5000 entries
+  const ROUTE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+  const ROUTE_MAX_ENTRIES = 5000;
+  try {
+    const allRoutes = await getAllEntries('experience-routes');
+    let routesPruned = 0;
+    // Phase 1: TTL — delete routes older than 30 days
+    for (const entry of allRoutes) {
+      const data = parsePayload(entry);
+      if (!data) continue;
+      const routeAge = now - new Date(data.createdAt || 0).getTime();
+      if (routeAge > ROUTE_TTL_MS) {
+        await deleteEntry('experience-routes', entry.id);
+        routesPruned++;
+      }
+    }
+    // Phase 2: Cap — if still over limit, delete oldest entries
+    if (allRoutes.length - routesPruned > ROUTE_MAX_ENTRIES) {
+      const remaining = allRoutes
+        .filter(e => { const d = parsePayload(e); return d && (now - new Date(d.createdAt || 0).getTime()) <= ROUTE_TTL_MS; })
+        .sort((a, b) => new Date(parsePayload(a)?.createdAt || 0).getTime() - new Date(parsePayload(b)?.createdAt || 0).getTime());
+      const excess = remaining.length - ROUTE_MAX_ENTRIES;
+      for (let i = 0; i < excess && i < remaining.length; i++) {
+        await deleteEntry('experience-routes', remaining[i].id);
+        routesPruned++;
+      }
+    }
+    if (routesPruned > 0) {
+      results.archived += routesPruned;
+      activityLog({ op: 'evolve-route-compaction', pruned: routesPruned });
+    }
+  } catch { /* route compaction is best-effort */ }
+
+  // Step 6: Aggressive T2 pruning — 14 days for never-surfaced entries (was 90 days)
+  const FOURTEEN_DAYS = 14 * 24 * 60 * 60 * 1000;
+  const freshT2 = await getAllEntries('experience-selfqa');
+  for (const entry of freshT2) {
+    const data = parsePayload(entry);
+    if (!data) continue;
+    const age = now - new Date(data.createdAt || 0).getTime();
+    if (age > FOURTEEN_DAYS && (data.hitCount || 0) === 0 && (data.surfaceCount || 0) === 0) {
+      await deleteEntry('experience-selfqa', entry.id);
+      results.archived++;
     }
   }
 
