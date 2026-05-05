@@ -1,35 +1,41 @@
 /**
  * utils.js — Shared utility functions for Experience Engine.
- * Pure functions: scoring, formatting, context detection, noise analysis.
- * Extracted from experience-core.js. Zero npm dependencies.
+ * Extracted verbatim from experience-core.js. Zero npm dependencies.
+ * IMPORTANT: This is a pure extract — no behavior changes.
+ * Improvements/optimizations happen AFTER full extraction is verified.
  */
 'use strict';
 
+const { getMinConfidence, getHighConfidence } = require('./config');
+
 // ============================================================
-//  Context Detection
+//  Language/context detection
 // ============================================================
 
-const EXT_MAP = {
-  '.ts': 'TypeScript', '.tsx': 'TypeScript', '.mts': 'TypeScript', '.cts': 'TypeScript',
-  '.js': 'JavaScript', '.jsx': 'JavaScript', '.mjs': 'JavaScript', '.cjs': 'JavaScript',
-  '.cs': 'C#', '.fs': 'F#', '.py': 'Python', '.rb': 'Ruby',
-  '.go': 'Go', '.rs': 'Rust', '.java': 'Java', '.kt': 'Kotlin',
-  '.swift': 'Swift', '.php': 'PHP', '.scala': 'Scala',
-  '.css': 'CSS', '.scss': 'CSS', '.less': 'CSS',
-  '.html': 'HTML', '.vue': 'Vue', '.svelte': 'Svelte',
-  '.yaml': 'YAML', '.yml': 'YAML', '.json': 'JSON', '.xml': 'XML', '.toml': 'TOML',
-  '.md': 'Markdown', '.mdx': 'Markdown', '.sql': 'SQL',
-  '.sh': 'Shell', '.bash': 'Shell', '.zsh': 'Shell', '.ps1': 'PowerShell',
+const LANG_MAP = {
+  '.ts': 'TypeScript', '.tsx': 'TypeScript React',
+  '.js': 'JavaScript', '.jsx': 'JavaScript React',
+  '.cs': 'C#', '.fs': 'F#',
+  '.py': 'Python', '.rb': 'Ruby',
+  '.rs': 'Rust', '.go': 'Go',
+  '.java': 'Java', '.kt': 'Kotlin',
+  '.swift': 'Swift', '.cpp': 'C++', '.c': 'C',
+  '.lua': 'Lua', '.sh': 'Shell', '.bash': 'Shell',
+  '.ps1': 'PowerShell', '.psm1': 'PowerShell',
+  '.sql': 'SQL', '.graphql': 'GraphQL',
+  '.html': 'HTML', '.css': 'CSS', '.scss': 'SCSS',
+  '.yaml': 'YAML', '.yml': 'YAML', '.json': 'JSON',
+  '.xml': 'XML', '.proto': 'Protobuf',
   '.dockerfile': 'Docker', '.tf': 'Terraform',
 };
 
 function detectContext(filePath) {
-  if (!filePath || typeof filePath !== 'string') return null;
-  const normalized = filePath.replace(/\\/g, '/').toLowerCase();
-  for (const [ext, lang] of Object.entries(EXT_MAP)) {
-    if (normalized.endsWith(ext)) return lang;
-  }
-  return null;
+  if (!filePath) return null;
+  const normalized = filePath.replace(/\\/g, '/');
+  const parts = normalized.split('.');
+  if (parts.length < 2) return null;
+  const ext = '.' + parts.pop().toLowerCase();
+  return LANG_MAP[ext] || null;
 }
 
 function normalizeTechLabel(label) {
@@ -63,30 +69,102 @@ function commandSuggestsDomain(actionText, domain) {
 }
 
 // ============================================================
-//  Path / Project Slug
+//  Path extraction
 // ============================================================
 
-function extractProjectPath(toolInput) {
-  return toolInput?.file_path || toolInput?.path || toolInput?.cmd || toolInput?.command || '';
+/**
+ * Check if a path string looks like an absolute path (any OS).
+ */
+function isAbsolutePath(p) {
+  if (!p) return false;
+  // Windows: C:\ or C:/
+  if (/^[A-Za-z]:[\\/]/.test(p)) return true;
+  // Unix/MSYS: starts with /
+  if (p.startsWith('/')) return true;
+  return false;
 }
 
-function extractProjectSlug(filePath) {
-  if (!filePath || typeof filePath !== 'string') return null;
-  const normalized = filePath.replace(/\\/g, '/').toLowerCase();
-  const patterns = [
-    /\/sources\/[^/]+\/([^/]+)/,
-    /\/repos\/([^/]+)/,
-    /\/projects\/([^/]+)/,
-    /\/workspace\/([^/]+)/,
-    /\/Personal\/([^/]+)/,
-    /\/Code\/([^/]+)/,
-    /\/muonroi\/([^/]+)/,
-  ];
-  for (const pattern of patterns) {
-    const match = normalized.match(pattern);
-    if (match) return match[1].replace(/[^a-z0-9._-]/g, '');
+/**
+ * Extract a meaningful project path from a shell command string.
+ * Handles: cd targets, explicit file paths in arguments.
+ * Supports: Windows (D:\path), Unix (/path), mixed (D:/path), MSYS (/d/path).
+ * Returns first valid absolute path found, or null.
+ */
+function extractPathFromCommand(cmd) {
+  if (!cmd || typeof cmd !== 'string') return null;
+
+  // Strategy 1: Look for "cd <path>" — strongest project signal
+  // Matches: cd "path", cd 'path', cd path (with &&, ||, ; terminators)
+  const cdMatch = cmd.match(/\bcd\s+["']?([^"';&|$\n]+?)["']?\s*(?:[;&|]|\s*$)/);
+  if (cdMatch) {
+    const p = cdMatch[1].trim();
+    if (isAbsolutePath(p)) return p;
   }
+
+  // Strategy 2: Scan for absolute paths in the command
+  // Collects all candidate paths and picks the best (longest, most specific)
+  const candidates = [];
+
+  // Windows: D:\path or D:/path (drive letter)
+  const winMatches = cmd.matchAll(/[A-Za-z]:[\\/][^\s"';&|$*?<>]+/g);
+  for (const m of winMatches) candidates.push(m[0]);
+
+  // Unix absolute: /path/to/something (at least 2 segments to avoid bare /)
+  const unixMatches = cmd.matchAll(/(?:^|\s|["'=])(\/{1}(?!dev\/null)[A-Za-z][^\s"';&|$*?<>]*\/[^\s"';&|$*?<>]*)/g);
+  for (const m of unixMatches) candidates.push(m[1]);
+
+  // MSYS: /d/Personal/... (single lowercase letter after /)
+  const msysMatches = cmd.matchAll(/\/([a-z])\/[^\s"';&|$*?<>]+/g);
+  for (const m of msysMatches) candidates.push(m[0]);
+
+  if (candidates.length === 0) return null;
+
+  // Pick the longest candidate (most specific path = best project signal)
+  candidates.sort((a, b) => b.length - a.length);
+  return candidates[0];
+}
+
+/**
+ * Extract a project slug from a file path for project-aware filtering.
+ * Detects common patterns: /sources/{org}/{project}/, /repos/{project}/, etc.
+ * Returns lowercase slug or null.
+ */
+function extractProjectSlug(filePath) {
+  if (!filePath) return null;
+  const normalized = filePath.replace(/\\/g, '/');
+  // Match common repo-workspace layouts first so Windows/WSL paths map to the same slug.
+  const patterns = [
+    /^[a-z]:\/personal\/core\/([^/]+)/i,
+    /\/mnt\/[a-z]\/personal\/core\/([^/]+)/i,
+    /^[a-z]:\/sources\/[^/]+\/([^/]+)/i,
+    /\/sources\/[^/]+\/([^/]+)/i,
+    /\/repos\/([^/]+)/i,
+    /\/projects\/([^/]+)/i,
+    /\/workspace\/([^/]+)/i,
+    /\/home\/[^/]+\/([^/]+)/i,
+  ];
+  for (const pat of patterns) {
+    const m = normalized.match(pat);
+    if (m) return m[1].toLowerCase();
+  }
+  const explicitRepo = normalized.match(/\/([^/]+)\/(?:src|tests|test|tools|docs|sdk|\.experience|bin)(?:\/|$)/i);
+  if (explicitRepo) return explicitRepo[1].toLowerCase();
+  // Fallback: use first 2 meaningful path segments
+  const parts = normalized.split('/').filter(p => p && p !== '.' && p !== '..');
+  if (parts.length >= 2) return parts.slice(0, 2).join('/').toLowerCase();
   return null;
+}
+
+function extractProjectPath(toolInput) {
+  const raw = toolInput?.file_path || toolInput?.path || '';
+  if (raw) return raw.replace(/\\/g, '/');
+
+  // For Bash/Shell commands: extract project path from command text
+  const cmd = toolInput?.command || toolInput?.cmd || '';
+  if (!cmd) return null;
+
+  const extracted = extractPathFromCommand(cmd);
+  return extracted ? extracted.replace(/\\/g, '/') : null;
 }
 
 // ============================================================
@@ -117,48 +195,91 @@ function computeEffectiveConfidence(data) {
   return base * ageFactor;
 }
 
-function computeEffectiveScore(point, data, queryDomain, queryProjectSlug, queryText) {
-  let score = point.score || 0;
-  const conf = computeEffectiveConfidence(data);
-  const confWeight = Math.max(0.6, Math.min(1.0, conf * 0.7 + 0.3));
-  score *= confWeight;
-  if (queryDomain && data.domain) {
-    const qd = normalizeTechLabel(queryDomain);
-    const dd = normalizeTechLabel(data.domain);
-    if (qd && dd && qd !== dd) score -= 0.08;
+const SEEDED_BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD = 5;
+
+function getValidatedHitCount(data) {
+  if (!data || typeof data !== 'object') return 0;
+  return data.hitCount || 0;
+}
+
+function computeEffectiveScore(point, data, queryDomain, queryProjectSlug, queryText = '') {
+  const cosine = point.score || 0;
+  const hitBoost = Math.log2(1 + (data.hitCount || 0)) * 0.08;
+  const normalizedQuery = String(queryText || '').toLowerCase();
+  const daysSinceHit = data.lastHitAt
+    ? (Date.now() - new Date(data.lastHitAt).getTime()) / 86400000
+    : 0;
+  const recencyPenalty = daysSinceHit > 30
+    ? Math.min(0.15, (daysSinceHit - 30) / 335 * 0.15)
+    : 0;
+  const ignorePenalty = Math.min(0.30, (data.ignoreCount || 0) * 0.05);
+  const irrelevantPenalty = Math.min(0.24, (data.irrelevantCount || 0) * 0.04);
+  const unusedPenalty = Math.min(0.18, (data.unusedCount || 0) * 0.03);
+  const noiseReasonCounts = data.noiseReasonCounts || {};
+  const noiseReasonPenalty = Math.min(
+    0.18,
+    ((noiseReasonCounts.wrong_repo || 0) * 0.05)
+      + ((noiseReasonCounts.wrong_language || 0) * 0.04)
+      + ((noiseReasonCounts.wrong_task || 0) * 0.03)
+      + ((noiseReasonCounts.stale_rule || 0) * 0.06)
+  );
+  // P3: Heavier domain penalty (was 0.08/0.03, now 0.20/0.05)
+  const domainPenalty = (queryDomain && data.domain && queryDomain !== data.domain) ? 0.20
+    : (queryDomain && !data.domain) ? 0.05 : 0;
+  // P0: Project-aware penalty — cross-project suggestions heavily penalized
+  // v2: bypass penalty when scope.lang='all' (universal behavioral rules should surface everywhere)
+  let projectPenalty = 0;
+  if (queryProjectSlug) {
+    const scopeLang = data.scope?.lang;
+    const principleLike = !!data.principle || data.createdFrom === 'evolution-abstraction' || getValidatedHitCount(data) >= SEEDED_BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD;
+    if (scopeLang === 'all') {
+      projectPenalty = 0; // Universal rules surface everywhere
+    } else if (!data._projectSlug) {
+      // No project slug on entry — apply heavier penalty (unknown origin)
+      projectPenalty = principleLike ? 0.10 : 0.35;
+    } else if (queryProjectSlug !== data._projectSlug) {
+      // Cross-project — near-elimination penalty for non-principles
+      projectPenalty = principleLike ? 0.22 : 0.85;
+    }
   }
-  const hits = data.hitCount || 0;
-  if (hits > 0) score += Math.log2(hits + 1) * 0.05;
-  if (data.lastHitAt) {
-    const daysSince = (Date.now() - new Date(data.lastHitAt).getTime()) / 86400000;
-    if (daysSince > 30) score -= Math.min(0.15, (daysSince - 30) / 365 * 0.15);
+  // Phase 108: temporal boost/penalty from confirmedAt trace
+  let temporalAdj = 0;
+  const confirmed = Array.isArray(data.confirmedAt) ? data.confirmedAt : [];
+  if (confirmed.length > 0) {
+    const mostRecent = new Date(confirmed[confirmed.length - 1]).getTime();
+    const daysSinceConfirm = (Date.now() - mostRecent) / 86400000;
+    if (daysSinceConfirm <= 7) temporalAdj = 0.05;       // recently confirmed — boost
+    else if (daysSinceConfirm > 60) temporalAdj = -0.08;  // stale — penalty
   }
-  const ignoreCount = data.ignoreCount || 0;
-  if (ignoreCount > 0) score -= Math.min(0.30, ignoreCount * 0.05);
-  const irrelevantCount = data.irrelevantCount || 0;
-  if (irrelevantCount > 0) {
-    const reasonPenalty = (data.noiseReasonCounts?.stale_rule || 0) > 0 ? 0.10 : 0.05;
-    score -= Math.min(0.30, irrelevantCount * reasonPenalty);
+  let conditionAdj = 0;
+  if (Array.isArray(data.conditions) && data.conditions.length > 0) {
+    const normalizedConditions = data.conditions
+      .map((condition) => String(condition || '').trim().toLowerCase())
+      .filter(Boolean);
+    const matchedConditions = normalizedConditions.filter((condition) => normalizedQuery.includes(condition));
+    if (matchedConditions.length === 0) conditionAdj = -0.14;
+    else conditionAdj = Math.min(0.12, matchedConditions.length * 0.04);
   }
-  const unusedCount = data.unusedCount || 0;
-  if (unusedCount > 0) score -= Math.min(0.15, unusedCount * 0.03);
-  if (queryProjectSlug && data._projectSlug && queryProjectSlug !== data._projectSlug) score -= 0.30;
-  if (data.superseded) score *= 0.5;
-  return Math.max(score, 0);
+  // Phase 108: superseded experience penalty
+  const supersededPenalty = data.superseded ? 0.15 : 0;
+  // Wave 3: Confidence weighting — low-confidence entries rank lower
+  const confWeight = computeEffectiveConfidence(data);
+  const rawScore = cosine + hitBoost - recencyPenalty - ignorePenalty - irrelevantPenalty - unusedPenalty - noiseReasonPenalty - domainPenalty - projectPenalty + temporalAdj + conditionAdj - supersededPenalty;
+  return rawScore * (0.6 + 0.4 * confWeight); // scale: 0.6 floor to avoid zeroing out
 }
 
 // ============================================================
 //  Rerank by quality
 // ============================================================
 
-function rerankByQuality(points, queryDomain, queryProjectSlug, queryText) {
-  if (!Array.isArray(points)) return [];
-  return points.map(p => {
-    let data = {};
-    try { data = JSON.parse(p.payload?.json || '{}'); } catch {}
-    const effectiveScore = computeEffectiveScore(p, data, queryDomain, queryProjectSlug, queryText);
-    return { ...p, _effectiveScore: effectiveScore };
-  }).sort((a, b) => (b._effectiveScore || 0) - (a._effectiveScore || 0));
+function rerankByQuality(points, queryDomain, queryProjectSlug, queryText = '') {
+  return points
+    .map(p => {
+      let data = {};
+      try { data = JSON.parse(p.payload?.json || '{}'); } catch { /* default */ }
+      return { ...p, _effectiveScore: computeEffectiveScore(p, data, queryDomain, queryProjectSlug, queryText) };
+    })
+    .sort((a, b) => b._effectiveScore - a._effectiveScore);
 }
 
 // ============================================================
@@ -166,32 +287,31 @@ function rerankByQuality(points, queryDomain, queryProjectSlug, queryText) {
 // ============================================================
 
 function formatPoints(points) {
-  if (!Array.isArray(points)) return [];
   const lines = [];
   for (const point of points) {
-    try {
-      const data = JSON.parse(point.payload?.json || '{}');
-      const solution = data.solution || data.principle || '';
-      if (!solution) continue;
-      const effectiveConf = computeEffectiveConfidence(data);
-      if (effectiveConf < 0.42 && !point._probationaryT2) continue;
-      const confidence = data.confidence || 0.5;
-      const shortId = String(point.id || '').slice(0, 8);
-      const collection = point._collection || 'unknown';
-      let label;
-      if (point._probationaryT2) {
-        label = `Probationary Suggestion (score: ${(point._effectiveScore || point.score || 0).toFixed(2)})`;
-      } else if (confidence >= 0.60) {
-        label = `Experience - High Confidence (${confidence.toFixed(2)})`;
-      } else if (effectiveConf >= 0.42) {
-        label = `Experience (${confidence.toFixed(2)})`;
-      } else { continue; }
-      let line = `⚠️ [${label}]: ${solution}`;
-      if (data.why) line += `\n   Why: ${data.why}`;
-      if (data.principle) line += `\n   Principle: ${data.principle}`;
-      line += `\n   [id:${shortId} col:${collection}]`;
-      lines.push(line);
-    } catch { /* skip malformed */ }
+    let exp;
+    try { exp = JSON.parse(point.payload?.json || '{}'); } catch { continue; }
+    if (!exp.solution) continue;
+    const effConf = computeEffectiveConfidence(exp);
+    if (effConf < getMinConfidence() && !point._probationaryT2) continue;
+    const displayScore = point._effectiveScore ?? point.score ?? 0;
+    let line;
+    if (point._probationaryT2) {
+      line = `💡 [Probationary Suggestion (${displayScore.toFixed(2)})]: ${exp.solution}`;
+    } else if (displayScore >= getHighConfidence()) {
+      line = `⚠️ [Experience - High Confidence (${displayScore.toFixed(2)})]: ${exp.solution}`;
+    } else {
+      line = `💡 [Suggestion (${displayScore.toFixed(2)})]: ${exp.solution}`;
+    }
+    if (exp.why) {
+      line += `\n   Why: ${exp.why}`;
+    }
+    const pid = String(point.id).slice(0, 8);
+    const coll = point._collection || 'experience-behavioral';
+    line += `\n   [id:${pid} col:${coll}]`;
+    // v3: inline feedback — agent reports noisy/wrong hints
+    line += `\n   ↩ Wrong? POST /api/feedback {"pointId":"${pid}","collection":"${coll}","verdict":"IRRELEVANT","reason":"wrong_repo"}`;
+    lines.push(line);
   }
   return lines;
 }
@@ -332,9 +452,9 @@ function detectRuntime(toolName) {
 
 module.exports = {
   detectContext, normalizeTechLabel, commandSuggestsDomain,
-  extractProjectPath, extractProjectSlug,
+  extractProjectPath, extractProjectSlug, extractPathFromCommand, isAbsolutePath,
   buildQuery, QUERY_MAX_CHARS,
-  computeEffectiveConfidence, computeEffectiveScore,
+  computeEffectiveConfidence, computeEffectiveScore, getValidatedHitCount,
   rerankByQuality,
   formatPoints,
   dedupePointsBySource, pointSourceKey, applyBudget,

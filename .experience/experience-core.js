@@ -24,67 +24,29 @@ const _embedding = require('./src/embedding');
 const _utils = require('./src/utils');
 const _qdrant = require('./src/qdrant');
 
-// --- Native config loader (D-06) ---
-// Reads ~/.experience/config.json BEFORE any other config.
-// setup.sh writes this file. No injection, no env auto-detect.
-// Singleton loader: one cache per process, but refreshes automatically when the file changes.
-const CONFIG_PATH = pathMod.join(os.homedir(), '.experience', 'config.json');
-const configState = { mtimeMs: null, value: {} };
-
-function readConfigFile() {
-  try {
-    return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-  } catch {
-    return {};
-  }
-}
-
-function loadConfig(force = false) {
-  try {
-    const stat = fs.statSync(CONFIG_PATH);
-    if (!force && configState.mtimeMs === stat.mtimeMs) return configState.value;
-    configState.mtimeMs = stat.mtimeMs;
-    configState.value = readConfigFile();
-    return configState.value;
-  } catch {
-    configState.mtimeMs = null;
-    configState.value = {};
-    return configState.value;
-  }
-}
-
-function getConfig() {
-  return loadConfig(false);
-}
-
-function refreshConfig() {
-  return loadConfig(true);
-}
-
-function cfgValue(key, envKey, fallback) {
-  const cfg = getConfig();
-  return cfg[key] ?? process.env[envKey] ?? fallback;
-}
-
-// --- Config (D-07, D-11) ---
-// Priority: config.json > EXPERIENCE_* env vars > defaults
-// NEVER fall back to ambient env (OPENAI_API_KEY, GEMINI_API_KEY, etc.)
-
-function getQdrantBase()     { return cfgValue('qdrantUrl', 'EXPERIENCE_QDRANT_URL', 'http://localhost:6333'); }
-function getQdrantApiKey()   { return cfgValue('qdrantKey', 'EXPERIENCE_QDRANT_KEY', ''); }
-function getOllamaBase()     { return cfgValue('ollamaUrl', 'EXPERIENCE_OLLAMA_URL', 'http://localhost:11434'); }
-function getEmbedProvider()  { return cfgValue('embedProvider', 'EXPERIENCE_EMBED_PROVIDER', 'ollama'); }
-function getBrainProvider()  { return cfgValue('brainProvider', 'EXPERIENCE_BRAIN_PROVIDER', 'ollama'); }
-function getEmbedModel()     { return cfgValue('embedModel', 'EXPERIENCE_EMBED_MODEL', 'nomic-embed-text'); }
-function getBrainModel()     { return cfgValue('brainModel', 'EXPERIENCE_BRAIN_MODEL', 'qwen2.5:3b'); }
-function getEmbedEndpoint()  { return cfgValue('embedEndpoint', 'EXPERIENCE_EMBED_ENDPOINT', ''); }
-function getEmbedKey()       { return cfgValue('embedKey', 'EXPERIENCE_EMBED_KEY', ''); }
-function getBrainEndpoint()  { return cfgValue('brainEndpoint', 'EXPERIENCE_BRAIN_ENDPOINT', ''); }
-function getBrainKey()       { return cfgValue('brainKey', 'EXPERIENCE_BRAIN_KEY', ''); }
-function getEmbedDim()       { return cfgValue('embedDim', 'EXPERIENCE_EMBED_DIM', 768); }
-function getMinConfidence()  { return cfgValue('minConfidence', 'EXPERIENCE_MIN_CONFIDENCE', 0.42); }
-function getHighConfidence() { return cfgValue('highConfidence', 'EXPERIENCE_HIGH_CONFIDENCE', 0.60); }
-function getPromptHookMinScore() { return cfgValue('promptHookMinScore', 'EXPERIENCE_PROMPT_HOOK_MIN_SCORE', getHighConfidence()); }
+// Config delegated to src/config.js — inline delegates for early-init functions
+const cfgValue = _config.cfgValue;
+const getConfig = _config.getConfig;
+const getExpUser = _config.getExpUser;
+const getFileStoreDir = _config.getStoreDir;
+const getEmbedProvider = _config.getEmbedProvider;
+const getEmbedModel = _config.getEmbedModel;
+const getEmbedEndpoint = _config.getEmbedEndpoint;
+const getEmbedKey = _config.getEmbedKey;
+const getEmbedDim = _config.getEmbedDim;
+const getBrainProvider = _config.getBrainProvider;
+const getBrainModel = _config.getBrainModel;
+const getBrainEndpoint = _config.getBrainEndpoint;
+const getBrainKey = _config.getBrainKey;
+const getMinConfidence = _config.getMinConfidence;
+const getHighConfidence = _config.getHighConfidence;
+const getQdrantBase = _config.getQdrantBase;
+const getQdrantApiKey = _config.getQdrantApiKey;
+const getOllamaBase = _config.getOllamaBase;
+const refreshConfig = _config.refreshConfig;
+const getOllamaEmbedUrl = _config.getOllamaEmbedUrl;
+const getOllamaGenerateUrl = _config.getOllamaGenerateUrl;
+const getPromptHookMinScore = () => _config.cfgValue('promptHookMinScore', 'EXPERIENCE_PROMPT_HOOK_MIN_SCORE', _config.getHighConfidence() ? String(_config.getHighConfidence()) : '0.6');
 
 // --- Model Router config ---
 function isRouterEnabled() {
@@ -142,14 +104,6 @@ function validateCodexReasoning(model, reasoningEffort) {
   const normalizedReasoning = normalizeReasoningEffort(reasoningEffort);
   if (!normalizedReasoning) return null;
   return CODEX_ALLOWED_MODEL_REASONING[normalizedModel].has(normalizedReasoning) ? normalizedReasoning : null;
-}
-
-function getOllamaEmbedUrl() {
-  return `${getOllamaBase()}/api/embed`;
-}
-
-function getOllamaGenerateUrl() {
-  return `${getOllamaBase()}/api/generate`;
 }
 
 const COLLECTIONS = [
@@ -801,34 +755,10 @@ async function incrementIgnoreCount(collection, pointId) {
 
 // --- Qdrant availability (per D-14) ---
 let qdrantAvailable = null; // null = unchecked, true/false = checked
-// Phase 109: Multi-user support — user-namespaced store directory
-function getExpUser() {
-  return cfgValue('user', 'EXP_USER', 'default');
-}
-// Backward-compat: many call sites reference EXP_USER directly
-const EXP_USER = getExpUser();
+// EXP_USER from config module for backward compat
+const EXP_USER = _config.EXP_USER;
 
-const FILESTORE_BASE = pathMod.join(os.homedir(), '.experience', 'store');
-
-function getFileStoreDir() {
-  return pathMod.join(FILESTORE_BASE, getExpUser());
-}
-
-// Auto-migrate: if old-style files exist at base and user is 'default', move them
-(() => {
-  if (getExpUser() !== 'default') return;
-  try {
-    const oldFiles = fs.readdirSync(FILESTORE_BASE).filter(f => f.endsWith('.json') && !f.startsWith('.'));
-    if (oldFiles.length > 0 && !fs.existsSync(getFileStoreDir())) {
-      fs.mkdirSync(getFileStoreDir(), { recursive: true });
-      for (const f of oldFiles) {
-        const src = pathMod.join(FILESTORE_BASE, f);
-        const dst = pathMod.join(getFileStoreDir(), f);
-        if (!fs.existsSync(dst)) fs.renameSync(src, dst);
-      }
-    }
-  } catch { /* migration is best-effort */ }
-})();
+// FileStore dir from config module
 
 async function checkQdrant() {
   if (qdrantAvailable !== null) return qdrantAvailable;
@@ -4105,39 +4035,14 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
 // --- Exports ---
 
 // --- Module delegate overrides (Phase 1 refactoring) ---
-// These override original closure functions with extracted module implementations.
-// Original code preserved for backward compatibility.
+// Functions already delegated via const at top of file.
+// Remaining late-init overrides:
 
-// Config module
-function _delegateConfig() {
-  getConfig = _config.getConfig;
-  refreshConfig = _config.refreshConfig;
-  cfgValue = _config.cfgValue;
-  
-  getQdrantBase = _config.getQdrantBase;
-  getQdrantApiKey = _config.getQdrantApiKey;
-  getOllamaBase = _config.getOllamaBase;
-  getOllamaEmbedUrl = _config.getOllamaEmbedUrl;
-  getOllamaGenerateUrl = _config.getOllamaGenerateUrl;
-  
-  getEmbedProvider = _config.getEmbedProvider;
-  getEmbedModel = _config.getEmbedModel;
-  getEmbedEndpoint = _config.getEmbedEndpoint;
-  getEmbedKey = _config.getEmbedKey;
-  getEmbedDim = _config.getEmbedDim;
-  
-  getBrainProvider = _config.getBrainProvider;
-  getBrainModel = _config.getBrainModel;
-  getBrainEndpoint = _config.getBrainEndpoint;
-  getBrainKey = _config.getBrainKey;
-  
-  getMinConfidence = _config.getMinConfidence;
-  getHighConfidence = _config.getHighConfidence;
-  getExpUser = _config.getExpUser;
-  getFileStoreDir = _config.getStoreDir;
+function _delegateLate() {
+  // Nothing left to delegate — all config functions are const at top
 }
 
-// Embedding module
+// Embedding delegates (not hoist-safe at top)
 function _delegateEmbedding() {
   getEmbedding = _embedding.getEmbedding;
   getEmbeddingRaw = _embedding.getEmbeddingRaw;
@@ -4169,7 +4074,7 @@ function _delegateUtils() {
 }
 
 function _delegateAll() {
-  _delegateConfig();
+  _delegateLate();
   _delegateEmbedding();
   _delegateUtils();
 }
