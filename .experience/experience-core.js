@@ -27,6 +27,9 @@ const _session = require('./src/session');
 const _context = require('./src/context');
 const _scoring = require('./src/scoring');
 const _noise = require('./src/noise');
+const _brainllm = require('./src/brain-llm');
+const _format = require('./src/format');
+const _graph = require('./src/graph');
 
 // Config delegated to src/config.js — inline delegates for early-init functions
 const cfgValue = _config.cfgValue;
