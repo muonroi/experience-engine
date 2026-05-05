@@ -1,0 +1,20 @@
+{
+  "env": {
+    "node": true,
+    "es2022": true
+  },
+  "parserOptions": {
+    "ecmaVersion": 2022
+  },
+  "rules": {
+    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
+    "no-var": "error",
+    "prefer-const": "warn",
+    "eqeqeq": ["error", "smart"],
+    "no-throw-literal": "error",
+    "no-eval": "error",
+    "no-implied-eval": "error",
+    "no-new-func": "error"
+  },
+  "ignorePatterns": ["node_modules/", "coverage/", ".experience/src/*.js"]
+}

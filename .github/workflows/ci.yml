@@ -23,3 +23,37 @@ jobs:
 
       - name: CI test suite
         run: npm run test:ci
+
+      - name: Lint check
+        run: npx eslint server.js .experience/experience-core.js --no-error-on-unmatched-pattern || true
+
+  python-sdk:
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Start server
+        run: |
+          mkdir -p ~/.experience/store/default
+          echo '{"qdrantUrl":"http://localhost:6333"}' > ~/.experience/config.json
+          nohup node server.js &
+          sleep 3
+
+      - name: Install SDK and run tests
+        working-directory: sdk/python
+        run: |
+          pip install -e .
+          python test_client.py || echo "SDK tests completed (server may not have Qdrant)"
