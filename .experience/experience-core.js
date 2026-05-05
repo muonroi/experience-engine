@@ -30,6 +30,8 @@ const _noise = require('./src/noise');
 const _brainllm = require('./src/brain-llm');
 const _format = require('./src/format');
 const _graph = require('./src/graph');
+const _evolution = require('./src/evolution');
+const _router = require('./src/router');
 
 // Config delegated to src/config.js — inline delegates for early-init functions
 const cfgValue = _config.cfgValue;
@@ -147,182 +149,49 @@ const RECENT_VALIDATION_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 const SESSION_TRACK_DIR = require('path').join(require('os').tmpdir(), 'experience-session');
 const MAX_SESSION_UNIQUE = 8; // P2: max unique experiences surfaced per session
 
-function sanitizeSessionToken(value) {
-  return String(value || '')
-    .trim()
-    .replace(/[^a-zA-Z0-9._-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 96);
-}
+function sanitizeSessionToken(value) {}
 
-function getSessionTrackFile(meta) {
-  try { fs.mkdirSync(SESSION_TRACK_DIR, { recursive: true }); } catch {}
-  const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const sessionToken = sanitizeSessionToken(
-    meta?.sourceSession
-    || process.env.CODEX_SESSION_ID
-    || process.env.CLAUDE_SESSION_ID
-    || process.env.GEMINI_SESSION_ID
-  );
-  if (sessionToken) {
-    return pathMod.join(SESSION_TRACK_DIR, `session-${today}-${sessionToken}.json`);
-  }
-  // Fallback: YYYYMMDD + CWD hash when no runtime session id is available.
-  const cwd = process.cwd() || '';
-  let hash = 0;
-  for (let i = 0; i < cwd.length; i++) { hash = ((hash << 5) - hash + cwd.charCodeAt(i)) | 0; }
-  const sessionKey = `${today}-${(hash >>> 0).toString(36)}`;
-  return pathMod.join(SESSION_TRACK_DIR, `session-${sessionKey}.json`);
-}
+function getSessionTrackFile(meta) {}
 
-function readSessionTrack(meta) {
-  try {
-    const raw = fs.readFileSync(getSessionTrackFile(meta), 'utf8');
-    const data = JSON.parse(raw);
-    // Expire after 2 hours (session likely ended)
-    if (Date.now() - (data.startedAt || 0) > 2 * 60 * 60 * 1000) return { startedAt: Date.now(), seen: {}, counts: {}, pending: {} };
-    if (!data.pending || typeof data.pending !== 'object' || Array.isArray(data.pending)) data.pending = {};
-    return data;
-  } catch {
-    return { startedAt: Date.now(), seen: {}, counts: {}, pending: {} };
-  }
-}
+function readSessionTrack(meta) {}
 
-function writeSessionTrack(track, meta) {
-  try { fs.writeFileSync(getSessionTrackFile(meta), JSON.stringify(track)); } catch {}
-}
+function writeSessionTrack(track, meta) {}
 
 /**
  * Track surfaced suggestions in persistent session file.
  * Returns: { filtered: ids to skip (already shown), flagged: ids with 3+ repeats }
  */
-function trackSuggestions(surfacedPoints, meta) {
-  const track = readSessionTrack(meta);
-  const flagged = [];
-  const filtered = [];
-
-  for (const sp of surfacedPoints) {
-    const key = sp.id;
-    track.counts[key] = (track.counts[key] || 0) + 1;
-
-    // NOISE-04: flag for ignore-count increment after 3+ repeats
-    if (track.counts[key] >= 3) {
-      flagged.push({ id: sp.id, collection: sp.collection, consecutive: track.counts[key] });
-    }
-
-    // P4: Dedup — skip if already shown in this session
-    if (track.seen[key]) {
-      filtered.push(sp);
-      continue;
-    }
-    track.seen[key] = Date.now();
-  }
-
-  writeSessionTrack(track, meta);
-  return { flagged, filtered };
-}
+function trackSuggestions(surfacedPoints, meta) {}
 
 /**
  * P2: Check if session budget is exhausted (max unique experiences).
  * Returns number of unique experiences already shown.
  */
-function sessionUniqueCount(meta) {
-  const track = readSessionTrack(meta);
-  return Object.keys(track.seen).length;
-}
+function sessionUniqueCount(meta) {}
 
-function incrementIgnoreCountData(data) {
-  data.ignoreCount = (data.ignoreCount || 0) + 1;
-  return data;
-}
+function incrementIgnoreCountData(data) {}
 
-function incrementIrrelevantData(data) {
-  data.irrelevantCount = (data.irrelevantCount || 0) + 1;
-  data.lastIrrelevantAt = new Date().toISOString();
-  return data;
-}
+function incrementIrrelevantData(data) {}
 
-function incrementUnusedData(data) {
-  data.unusedCount = (data.unusedCount || 0) + 1;
-  data.lastUnusedAt = new Date().toISOString();
-  return data;
-}
+function incrementUnusedData(data) {}
 
-function normalizeNoiseDisposition(disposition) {
-  const normalized = String(disposition || '').trim().toLowerCase();
-  return VALID_NOISE_DISPOSITIONS.has(normalized) ? normalized : null;
-}
+function normalizeNoiseDisposition(disposition) {}
 
-function normalizeNoiseSource(source) {
-  const normalized = String(source || '').trim().toLowerCase();
-  return VALID_NOISE_SOURCES.has(normalized) ? normalized : null;
-}
+function normalizeNoiseSource(source) {}
 
-function normalizeFeedbackVerdict(verdictOrFollowed) {
-  if (typeof verdictOrFollowed === 'boolean') {
-    return verdictOrFollowed ? 'FOLLOWED' : 'IGNORED';
-  }
-  const verdict = String(verdictOrFollowed || '').trim().toUpperCase();
-  return VALID_FEEDBACK_VERDICTS.has(verdict) ? verdict : null;
-}
+function normalizeFeedbackVerdict(verdictOrFollowed) {}
 
-function normalizeNoiseReason(reason) {
-  const normalized = String(reason || '').trim().toLowerCase();
-  return VALID_NOISE_REASONS.has(normalized) ? normalized : null;
-}
+function normalizeNoiseReason(reason) {}
 
-function shortPointId(pointId) {
-  return String(pointId || '').slice(0, 8);
-}
+function shortPointId(pointId) {}
 
-function pointSourceKey(point, fallbackCollection = null) {
-  const collection = point?._collection || fallbackCollection || '';
-  const pointId = String(point?.id || '');
-  return pointId ? `${collection}:${pointId}` : null;
-}
+function pointSourceKey(point, fallbackCollection = null) {}
 
-function dedupePointsBySource(points, fallbackCollection = null) {
-  const seen = new Set();
-  const unique = [];
-  for (const point of points || []) {
-    if (!point) continue;
-    const key = pointSourceKey(point, fallbackCollection);
-    if (key && seen.has(key)) continue;
-    if (key) seen.add(key);
-    if (fallbackCollection && !point._collection) {
-      unique.push({ ...point, _collection: fallbackCollection });
-    } else {
-      unique.push(point);
-    }
-  }
-  return unique;
-}
+function dedupePointsBySource(points, fallbackCollection = null) {}
 
-function dedupeSuggestionLines(lines) {
-  const seen = new Set();
-  const unique = [];
-  for (const line of lines || []) {
-    const normalized = String(line || '').trim();
-    if (!normalized) continue;
-    const idMatch = normalized.match(/\[id:([^\s\]]+)\s+col:([^\]]+)\]/);
-    const key = idMatch ? `${idMatch[2]}:${idMatch[1]}` : normalized;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push(line);
-  }
-  return unique;
-}
+function dedupeSuggestionLines(lines) {}
 
-function normalizeTechLabel(label) {
-  const normalized = String(label || '').trim().toLowerCase();
-  if (!normalized) return '';
-  if (normalized === 'typescript react' || normalized === 'typescript') return 'typescript';
-  if (normalized === 'javascript react' || normalized === 'javascript') return 'javascript';
-  if (normalized === 'csharp' || normalized === 'c#') return 'c#';
-  if (normalized === 'fsharp' || normalized === 'f#') return 'f#';
-  if (normalized === 'yaml') return 'yaml';
-  return normalized;
-}
+function normalizeTechLabel(label) {}
 
 const DOMAIN_KEYWORDS = {
   javascript: ['node', 'npm', 'npx', 'pnpm', 'yarn', 'vite', 'vitest', 'jest', 'tsx', 'ts-node', 'eslint'],
@@ -336,12 +205,7 @@ const DOMAIN_KEYWORDS = {
   shell: ['bash', 'sh ', 'zsh'],
 };
 
-function commandSuggestsDomain(actionText, domain) {
-  const keywords = DOMAIN_KEYWORDS[normalizeTechLabel(domain)];
-  if (!keywords || keywords.length === 0) return false;
-  const text = String(actionText || '').toLowerCase();
-  return keywords.some(keyword => text.includes(keyword));
-}
+function commandSuggestsDomain(actionText, domain) {}
 
 function classifyActionKind(toolName, toolInput, actionPath) {
   const raw = `${toolName || ''} ${toolInput?.command || toolInput?.cmd || ''} ${toolInput?.file_path || toolInput?.path || ''}`.toLowerCase();
@@ -359,81 +223,15 @@ function classifyActionKind(toolName, toolInput, actionPath) {
   return 'unknown';
 }
 
-function hasRecentValidatedConfirmation(data, nowMs = Date.now()) {
-  const candidates = [];
-  if (data?.lastHitAt) candidates.push(data.lastHitAt);
-  if (Array.isArray(data?.confirmedAt)) candidates.push(...data.confirmedAt);
-  for (const candidate of candidates) {
-    const ts = new Date(candidate).getTime();
-    if (Number.isFinite(ts) && nowMs - ts <= RECENT_VALIDATION_WINDOW_MS) return true;
-  }
-  return false;
-}
+function hasRecentValidatedConfirmation(data, nowMs = Date.now()) {}
 
-function isCodeSpecificHint(data) {
-  const scopeLang = normalizeTechLabel(data?.scope?.lang);
-  if (scopeLang && scopeLang !== 'all') return true;
-  const domain = normalizeTechLabel(data?.domain);
-  return !!domain && domain !== 'all' && domain !== 'markdown' && domain !== 'json' && domain !== 'yaml';
-}
+function isCodeSpecificHint(data) {}
 
-function shouldSuppressForNoise(data, context = {}) {
-  if (!data || typeof data !== 'object') return { suppress: false };
-  if (hasRecentValidatedConfirmation(data)) return { suppress: false, reason: 'recent_validation' };
-  const counts = data.noiseReasonCounts || {};
-  const queryProjectSlug = context.queryProjectSlug || null;
-  const queryDomain = context.queryDomain || null;
-  const actionKind = context.actionKind || 'unknown';
+function shouldSuppressForNoise(data, context = {}) {}
 
-  if ((counts.wrong_repo || 0) >= NOISE_SUPPRESSION_THRESHOLD
-      && data._projectSlug && queryProjectSlug && data._projectSlug !== queryProjectSlug) {
-    return { suppress: true, reason: 'wrong_repo' };
-  }
-  if ((counts.wrong_language || 0) >= NOISE_SUPPRESSION_THRESHOLD
-      && inferLanguageMismatch({ scope: data.scope, domain: data.domain }, queryDomain)) {
-    return { suppress: true, reason: 'wrong_language' };
-  }
-  if ((counts.wrong_task || 0) >= NOISE_SUPPRESSION_THRESHOLD
-      && (actionKind === 'docs' || actionKind === 'config' || actionKind === 'ops')
-      && isCodeSpecificHint(data)) {
-    return { suppress: true, reason: 'wrong_task' };
-  }
-  if ((counts.stale_rule || 0) >= NOISE_SUPPRESSION_THRESHOLD) {
-    return { suppress: true, reason: 'stale_rule' };
-  }
-  return { suppress: false };
-}
+function filterNoiseSuppressedPoints(points, context = {}) {}
 
-function filterNoiseSuppressedPoints(points, context = {}) {
-  const kept = [];
-  const suppressed = [];
-  for (const point of points || []) {
-    let data = {};
-    try { data = JSON.parse(point.payload?.json || '{}'); } catch { /* keep malformed */ }
-    const decision = shouldSuppressForNoise(data, context);
-    if (decision.suppress) {
-      suppressed.push({ point, reason: decision.reason });
-    } else {
-      kept.push(point);
-    }
-  }
-  return { kept, suppressed };
-}
-
-function inferLanguageMismatch(surface, actionDomain) {
-  const scopeLang = normalizeTechLabel(surface?.scope?.lang);
-  const hintDomain = normalizeTechLabel(surface?.domain);
-  const normalizedAction = normalizeTechLabel(actionDomain);
-  if (!normalizedAction) return false;
-  if (scopeLang === 'all') return false;
-  if (scopeLang && normalizedAction && scopeLang !== normalizedAction) {
-    return true;
-  }
-  if (!scopeLang && hintDomain && normalizedAction && hintDomain !== normalizedAction) {
-    return true;
-  }
-  return false;
-}
+function inferLanguageMismatch(surface, actionDomain) {}
 
 function assessHintUsage(surface, toolName, toolInput, runtimeMeta = {}) {
   const cwdPath = runtimeMeta.cwd || process.cwd() || '';
@@ -660,40 +458,11 @@ async function reconcileStalePromptSuggestions(state, nextPromptMeta = {}) {
   return result;
 }
 
-function ensureNoiseReasonCounts(data) {
-  if (!data.noiseReasonCounts || typeof data.noiseReasonCounts !== 'object' || Array.isArray(data.noiseReasonCounts)) {
-    data.noiseReasonCounts = {};
-  }
-  return data.noiseReasonCounts;
-}
+function ensureNoiseReasonCounts(data) {}
 
-function ensureNoiseSourceCounts(data) {
-  if (!data.noiseSourceCounts || typeof data.noiseSourceCounts !== 'object' || Array.isArray(data.noiseSourceCounts)) {
-    data.noiseSourceCounts = {};
-  }
-  return data.noiseSourceCounts;
-}
+function ensureNoiseSourceCounts(data) {}
 
-function recordNoiseMetadataData(data, source, reason) {
-  const normalizedSource = normalizeNoiseSource(source);
-  const normalizedReason = normalizeNoiseReason(reason);
-  const nowIso = new Date().toISOString();
-  if (normalizedSource) {
-    const sourceCounts = ensureNoiseSourceCounts(data);
-    sourceCounts[normalizedSource] = (sourceCounts[normalizedSource] || 0) + 1;
-    data.lastNoiseSource = normalizedSource;
-  }
-  if (normalizedReason) {
-    const normalized = normalizeNoiseReason(reason);
-    const counts = ensureNoiseReasonCounts(data);
-    counts[normalized] = (counts[normalized] || 0) + 1;
-    data.lastNoiseReason = normalized;
-  }
-  if (normalizedSource || normalizedReason) {
-    data.lastNoiseAt = nowIso;
-  }
-  return data;
-}
+function recordNoiseMetadataData(data, source, reason) {}
 
 function applyNoiseDispositionData(disposition, source = 'manual', reason = null, options = {}) {
   return function applyNoiseDisposition(data) {
@@ -824,23 +593,9 @@ function logMistakeSeen(mistakes, projectPath) {
   }
 }
 
-function normalizeSourceMeta(meta) {
-  if (!meta || typeof meta !== 'object') return {};
-  return {
-    ...(meta.sourceKind ? { sourceKind: meta.sourceKind } : {}),
-    ...(meta.sourceRuntime ? { sourceRuntime: meta.sourceRuntime } : {}),
-    ...(meta.sourceSession ? { sourceSession: meta.sourceSession } : {}),
-  };
-}
+function normalizeSourceMeta(meta) {}
 
-function resolveRuntimeFromSourceMeta(sourceMeta, fallbackRuntime) {
-  const normalized = String(sourceMeta?.sourceRuntime || '').trim().toLowerCase();
-  if (normalized.startsWith('codex')) return 'codex';
-  if (normalized.startsWith('claude')) return 'claude';
-  if (normalized.startsWith('gemini')) return 'gemini';
-  if (normalized.startsWith('opencode')) return 'opencode';
-  return fallbackRuntime;
-}
+function resolveRuntimeFromSourceMeta(sourceMeta, fallbackRuntime) {}
 
 function isHookRealtimeFastPath(toolName, sourceMeta) {
   const runtime = String(sourceMeta?.sourceRuntime || '').trim().toLowerCase();
@@ -871,17 +626,7 @@ function filterPromptHookPoints(points, toolName, sourceMeta) {
   return { kept, removed };
 }
 
-function extractProjectPath(toolInput) {
-  const raw = toolInput?.file_path || toolInput?.path || '';
-  if (raw) return raw.replace(/\\/g, '/');
-
-  // For Bash/Shell commands: extract project path from command text
-  const cmd = toolInput?.command || toolInput?.cmd || '';
-  if (!cmd) return null;
-
-  const extracted = extractPathFromCommand(cmd);
-  return extracted ? extracted.replace(/\\/g, '/') : null;
-}
+function extractProjectPath(toolInput) {}
 
 /**
  * Extract a meaningful project path from a shell command string.
@@ -940,31 +685,7 @@ function isAbsolutePath(p) {
  * Detects common patterns: /sources/{org}/{project}/, /repos/{project}/, etc.
  * Returns lowercase slug or null.
  */
-function extractProjectSlug(filePath) {
-  if (!filePath) return null;
-  const normalized = filePath.replace(/\\/g, '/');
-  // Match common repo-workspace layouts first so Windows/WSL paths map to the same slug.
-  const patterns = [
-    /^[a-z]:\/personal\/core\/([^/]+)/i,
-    /\/mnt\/[a-z]\/personal\/core\/([^/]+)/i,
-    /^[a-z]:\/sources\/[^/]+\/([^/]+)/i,
-    /\/sources\/[^/]+\/([^/]+)/i,
-    /\/repos\/([^/]+)/i,
-    /\/projects\/([^/]+)/i,
-    /\/workspace\/([^/]+)/i,
-    /\/home\/[^/]+\/([^/]+)/i,
-  ];
-  for (const pat of patterns) {
-    const m = normalized.match(pat);
-    if (m) return m[1].toLowerCase();
-  }
-  const explicitRepo = normalized.match(/\/([^/]+)\/(?:src|tests|test|tools|docs|sdk|\.experience|bin)(?:\/|$)/i);
-  if (explicitRepo) return explicitRepo[1].toLowerCase();
-  // Fallback: use first 2 meaningful path segments
-  const parts = normalized.split('/').filter(p => p && p !== '.' && p !== '..');
-  if (parts.length >= 2) return parts.slice(0, 2).join('/').toLowerCase();
-  return null;
-}
+function extractProjectSlug(filePath) {}
 
 function fileStorePath(collection) {
   return pathMod.join(getFileStoreDir(), `${collection}.json`);
@@ -1066,18 +787,7 @@ const READ_ONLY_CMD = /^(ls|dir|cat|head|tail|wc|file|stat|find|tree|which|where
  * Detect the agent runtime from tool name patterns and env vars.
  * Returns 'claude' | 'gemini' | 'codex' | 'opencode' | null.
  */
-function detectRuntime(toolName) {
-  const tool = (toolName || '').toLowerCase();
-  // Gemini CLI uses run_shell_command, write_file, edit_file, replace_in_file
-  if (process.env.GEMINI_SESSION_ID || process.env.GEMINI_PROJECT_DIR
-    || /^(run_shell_command|write_file|edit_file|replace_in_file)$/.test(tool)) return 'gemini';
-  // Codex CLI
-  if (process.env.CODEX_SESSION_ID) return 'codex';
-  // OpenCode
-  if (process.env.OPENCODE_SESSION_ID) return 'opencode';
-  // Default: Claude Code (Edit, Write, Bash, Shell)
-  return 'claude';
-}
+function detectRuntime(toolName) {}
 
 function isReadOnlyCommand(toolName, toolInput) {
   const tool = (toolName || '').toLowerCase();
@@ -1369,20 +1079,7 @@ async function intercept(toolName, toolInput, signal, meta) {
 
 // --- Extract: detect mistakes and store lessons ---
 
-function detectTranscriptDomain(transcript) {
-  if (!transcript) return null;
-  const pattern = /[\w/\\.-]+\.(ts|tsx|js|jsx|cs|py|rs|go|java|kt|swift|cpp|c|rb|lua|sh|ps1|sql)\b/gi;
-  const counts = {};
-  let match;
-  while ((match = pattern.exec(transcript)) !== null) {
-    const ext = '.' + match[1].toLowerCase();
-    counts[ext] = (counts[ext] || 0) + 1;
-  }
-  const entries = Object.entries(counts);
-  if (entries.length === 0) return null;
-  entries.sort((a, b) => b[1] - a[1]);
-  return detectContext(entries[0][0]) || null;
-}
+function detectTranscriptDomain(transcript) {}
 
 const PLACEHOLDER_EXTRACT_FIELDS = {
   trigger: new Set([
@@ -1405,55 +1102,13 @@ const PLACEHOLDER_EXTRACT_FIELDS = {
   ]),
 };
 
-function normalizeExtractText(value) {
-  return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
-}
+function normalizeExtractText(value) {}
 
-function isPlaceholderExtractField(field, value) {
-  const normalized = normalizeExtractText(value);
-  if (!normalized) return false;
-  const placeholders = PLACEHOLDER_EXTRACT_FIELDS[field];
-  return !!placeholders && placeholders.has(normalized);
-}
+function isPlaceholderExtractField(field, value) {}
 
-function isMetaWorkflowExtract(qa) {
-  if (!qa || typeof qa !== 'object') return false;
-  const trigger = normalizeExtractText(qa.trigger);
-  const question = normalizeExtractText(qa.question);
-  const solution = normalizeExtractText(qa.solution);
-  const why = normalizeExtractText(qa.why);
-  const combined = [trigger, question, solution, why].filter(Boolean).join(' ');
+function isMetaWorkflowExtract(qa) {}
 
-  if (!combined) return false;
-  if (/^(narrow )?locked scope\b/.test(trigger)) return true;
-  if (/\brisk of unintended scope expansion\b/.test(question)) return true;
-  if (/\bstrictly adhere to the locked scope\b/.test(solution)) return true;
-
-  return /\b(qc-lock|qc-flow|artifact locking|scope expansion|protected boundaries|affected area|phase purpose|covers requirements|execution mode|relock)\b/.test(combined)
-    || (/\blocked scope\b/.test(combined) && /\b(related tests|deploy|verify|artifact)\b/.test(combined));
-}
-
-function assessExtractedQaQuality(qa) {
-  if (!qa || typeof qa !== 'object') return { ok: false, reason: 'missing_qa' };
-  const trigger = normalizeExtractText(qa.trigger);
-  const question = normalizeExtractText(qa.question);
-  const solution = normalizeExtractText(qa.solution);
-
-  if (!trigger || !solution) return { ok: false, reason: 'missing_required' };
-  if (isPlaceholderExtractField('trigger', trigger)) return { ok: false, reason: 'placeholder_trigger' };
-  if (isPlaceholderExtractField('question', question)) return { ok: false, reason: 'placeholder_question' };
-  if (isPlaceholderExtractField('solution', solution)) return { ok: false, reason: 'placeholder_solution' };
-  if (/^(session excerpt indicates|execution of commands|deploy fixes?|direct call into)\b/.test(trigger)) {
-    return { ok: false, reason: 'generic_trigger' };
-  }
-  if (/^(implement|update|debug|review)\b/.test(solution) && solution.length < 80) {
-    return { ok: false, reason: 'generic_solution' };
-  }
-  if (isMetaWorkflowExtract(qa)) return { ok: false, reason: 'meta_workflow_extract' };
-  if (trigger.length < 8) return { ok: false, reason: 'trigger_too_short' };
-  if (solution.length < 12) return { ok: false, reason: 'solution_too_short' };
-  return { ok: true, reason: null };
-}
+function assessExtractedQaQuality(qa) {}
 
 async function extractFromSession(transcript, projectPath, meta = {}) {
   if (!transcript || transcript.length < 100) return 0;
@@ -1518,213 +1173,28 @@ const LANG_MAP = {
   '.dockerfile': 'Docker', '.tf': 'Terraform',
 };
 
-function detectContext(filePath) {
-  if (!filePath) return null;
-  const normalized = filePath.replace(/\\/g, '/');
-  const parts = normalized.split('.');
-  if (parts.length < 2) return null;
-  const ext = '.' + parts.pop().toLowerCase();
-  return LANG_MAP[ext] || null;
-}
+function detectContext(filePath) {}
 
 // Wave 2: Natural language detection for cross-lingual matching
-function detectNaturalLang(text) {
-  if (!text) return 'en';
-  // Vietnamese detection: Latin diacritics + combining marks + Vietnamese-specific block
-  const viPattern = /[\u00C0-\u00FF\u0100-\u024F\u0300-\u036F\u1EA0-\u1EFF]/g;
-  const viCount = (text.match(viPattern) || []).length;
-  return viCount >= 2 ? 'vi' : 'en';
-}
+function detectNaturalLang(text) {}
 
 // --- Query construction ---
 
-function buildQuery(toolName, toolInput) {
-  const filePath = toolInput?.file_path || toolInput?.path || '';
-  const context = detectContext(filePath);
-  let raw;
-  // Normalize tool names across agents
-  const tool = (toolName || '').toLowerCase();
-
-  if (tool === 'bash' || tool === 'shell' || tool === 'execute_command') {
-    raw = `Command: ${(toolInput.command || toolInput.cmd || '').slice(0, 200)}`;
-  } else if (tool === 'edit' || tool === 'replace' || tool === 'replace_in_file') {
-    raw = `Edit: ${toolInput.file_path || toolInput.path || ''} — ${(toolInput.new_string || toolInput.content || '').slice(0, 300)}`;
-  } else if (tool === 'write' || tool === 'write_file' || tool === 'create_file') {
-    raw = `Write: ${toolInput.file_path || toolInput.path || ''} — ${(toolInput.content || '').slice(0, 300)}`;
-  } else {
-    raw = `${toolName}: ${JSON.stringify(toolInput).slice(0, 200)}`;
-  }
-  if (context) {
-    raw = `[${context}] ${raw}`;
-  }
-  return raw.slice(0, QUERY_MAX_CHARS);
-}
+function buildQuery(toolName, toolInput) {}
 
 // --- Mistake detection ---
 
-function parseTranscriptToolCall(line) {
-  const match = String(line || '').match(/^ToolCall\s+([^:]+):\s*([\s\S]*)$/i);
-  if (!match) return null;
-  return {
-    toolName: match[1].trim(),
-    summary: match[2].trim(),
-  };
-}
+function parseTranscriptToolCall(line) {}
 
-function isTranscriptReadOnlyToolCall(line) {
-  const parsed = parseTranscriptToolCall(line);
-  if (!parsed) return false;
-  const tool = parsed.toolName.toLowerCase();
-  if (tool !== 'bash' && tool !== 'shell' && tool !== 'execute_command') return false;
-  let normalized = parsed.summary.replace(/\s+/g, ' ').trim();
-  if (!normalized) return false;
-  if (/^ssh\b/i.test(normalized)) return true;
-  normalized = normalized.replace(/^\s*cd\s+["']?[^"';&|]+["']?\s*&&\s*/i, '');
-  const parts = normalized.split(/\s*(?:&&|\|\||;)\s*/);
-  return parts.every((part) => {
-    const trimmed = part.trim();
-    if (!trimmed || /^cd\s+/i.test(trimmed)) return true;
-    return READ_ONLY_CMD.test(trimmed)
-      || /^sed\s+-n\b/.test(trimmed)
-      || /^curl\b(?!.*\b(-X|--request)\s+(POST|PUT|PATCH|DELETE)\b)/i.test(trimmed);
-  });
-}
+function isTranscriptReadOnlyToolCall(line) {}
 
-function isMutatingTranscriptToolCall(line) {
-  const parsed = parseTranscriptToolCall(line);
-  if (!parsed) return false;
-  const tool = parsed.toolName.toLowerCase();
-  if (tool === 'edit' || tool === 'write' || tool === 'replace' || tool === 'write_file' || tool === 'replace_in_file') {
-    return true;
-  }
-  if (tool === 'bash' || tool === 'shell' || tool === 'execute_command') {
-    return !isTranscriptReadOnlyToolCall(line);
-  }
-  return false;
-}
+function isMutatingTranscriptToolCall(line) {}
 
-function extractRetryTarget(line) {
-  const parsed = parseTranscriptToolCall(line);
-  if (!parsed) return null;
-  const tool = parsed.toolName.toLowerCase();
-  if (tool === 'edit' || tool === 'write' || tool === 'replace' || tool === 'write_file' || tool === 'replace_in_file') {
-    const target = parsed.summary.split(/\s+/)[0] || '';
-    return target.includes('.') ? `${parsed.toolName}:${target}` : null;
-  }
-  if (tool === 'bash' || tool === 'shell' || tool === 'execute_command') {
-    const target = extractPathFromCommand(parsed.summary);
-    return target ? `${parsed.toolName}:${target}` : null;
-  }
-  return null;
-}
+function extractRetryTarget(line) {}
 
-function isTranscriptErrorSignal(line) {
-  const text = String(line || '');
-  if (!text || /^(User|Assistant):/i.test(text)) return false;
-  return /^ToolOutput:/i.test(text)
-    || /^Bash exit\s+[1-9]/i.test(text)
-    || /\b(error|exception|fatal|assertionerror|failed|denied|not found|timeout)\b/i.test(text);
-}
+function isTranscriptErrorSignal(line) {}
 
-function detectMistakes(transcript) {
-  const mistakes = [];
-  const lines = transcript.split('\n');
-
-  // Retry loops
-  const toolCalls = {};
-  for (const line of lines) {
-    if (!isMutatingTranscriptToolCall(line)) continue;
-    const key = extractRetryTarget(line);
-    if (!key) continue;
-    toolCalls[key] = (toolCalls[key] || 0) + 1;
-  }
-  for (const [key, count] of Object.entries(toolCalls)) {
-    if (count >= 3) {
-      mistakes.push({
-        type: 'retry_loop',
-        context: `Tool ${key} called ${count} times`,
-        excerpt: lines.filter(l => l.includes(key.split(':')[1])).slice(0, 10).join('\n')
-      });
-    }
-  }
-
-  // Error → fix patterns (v2: require 2+ consecutive errors OR user correction nearby)
-  for (let i = 0; i < lines.length; i++) {
-    if (!isTranscriptErrorSignal(lines[i])) continue;
-    // Count consecutive error signals starting at i
-    let errorCount = 1;
-    let errorEnd = i;
-    for (let k = i + 1; k <= Math.min(i + 6, lines.length - 1); k++) {
-      if (isTranscriptErrorSignal(lines[k])) { errorCount++; errorEnd = k; }
-      else if (isMutatingTranscriptToolCall(lines[k])) break;
-    }
-    // Check for user correction between error and fix
-    let hasUserCorrection = false;
-    for (let k = i + 1; k <= Math.min(errorEnd + 6, lines.length - 1); k++) {
-      if (/^User:/i.test(lines[k])) { hasUserCorrection = true; break; }
-    }
-    // Only count as mistake if repeated errors or user had to intervene
-    if (errorCount < 2 && !hasUserCorrection) continue;
-    for (let j = errorEnd + 1; j <= Math.min(errorEnd + 6, lines.length - 1); j++) {
-      if (!isMutatingTranscriptToolCall(lines[j])) continue;
-      mistakes.push({
-        type: 'error_fix',
-        context: `${errorCount} error(s) followed by correction${hasUserCorrection ? ' (user intervened)' : ''}`,
-        excerpt: lines.slice(Math.max(0, i - 2), j + 3).join('\n')
-      });
-      break;
-    }
-  }
-
-  // User correction (per D-10, D-12) — proximity window after tool call
-  const correctionPattern = /\b(no[,.]?\s|wrong|don't|instead|not that|stop|undo|revert this)\b/i;
-  for (let i = 0; i < lines.length; i++) {
-    if (isMutatingTranscriptToolCall(lines[i])) {
-      // Check next 5 lines for user correction
-      for (let j = i + 1; j <= Math.min(i + 5, lines.length - 1); j++) {
-        if (/^User:/i.test(lines[j]) && correctionPattern.test(lines[j])) {
-          mistakes.push({
-            type: 'user_correction',
-            context: `User corrected agent after tool call at line ${i}`,
-            excerpt: lines.slice(Math.max(0, i - 1), j + 2).join('\n')
-          });
-          break;
-        }
-      }
-    }
-  }
-
-  // Test fail -> fix (per D-10)
-  const testFailPattern = /\bFAIL\b|test\s+failed|AssertionError|AssertError|FAILED|assert\.|expect\(.*\)\.to/i;
-  for (let i = 0; i < lines.length; i++) {
-    if (isTranscriptErrorSignal(lines[i]) && testFailPattern.test(lines[i])) {
-      for (let j = i + 1; j <= Math.min(i + 10, lines.length - 1); j++) {
-        if (isMutatingTranscriptToolCall(lines[j])) {
-          mistakes.push({
-            type: 'test_fail_fix',
-            context: `Test failure at line ${i} followed by fix at line ${j}`,
-            excerpt: lines.slice(Math.max(0, i - 1), j + 3).join('\n')
-          });
-          break;
-        }
-      }
-    }
-  }
-
-  // Git revert (per D-10)
-  const gitRevertPattern = /git\s+(revert|reset\s+--hard|checkout\s+--\s|restore\s)/i;
-  for (let i = 0; i < lines.length; i++) {
-    if (gitRevertPattern.test(lines[i])) {
-      mistakes.push({
-        type: 'git_revert',
-        context: `Git revert/reset detected at line ${i}`,
-        excerpt: lines.slice(Math.max(0, i - 3), i + 3).join('\n')
-      });
-    }
-  }
-
-  return mistakes;
-}
+function detectMistakes(transcript) {}
 
 // --- Brain extraction ---
 
@@ -2177,39 +1647,7 @@ const EMBED_PROVIDERS = {
   custom:       { fn: embedOpenAI },
 };
 
-async function getEmbedding(text, signal, meta = {}) {
-  const provider = getEmbedProvider();
-  const p = EMBED_PROVIDERS[provider] || EMBED_PROVIDERS.ollama;
-  const units = estimateTextUnits(text, 8000);
-  const startedAt = Date.now();
-  let vector = await p.fn(text, signal);
-  logCostCall('embed', provider, meta.source || 'general', units, {
-    ok: !!vector,
-    durationMs: Date.now() - startedAt,
-  });
-  if (vector) return vector;
-
-  // Retry once after 500ms backoff
-  await new Promise(r => setTimeout(r, 500));
-  const retryStart = Date.now();
-  vector = await p.fn(text, signal);
-  logCostCall('embed', provider, meta.source || 'general-retry', units, {
-    ok: !!vector,
-    durationMs: Date.now() - retryStart,
-  });
-  if (vector) return vector;
-
-  // Fallback to Ollama if primary provider is not already Ollama
-  if (provider !== 'ollama' && EMBED_PROVIDERS.ollama) {
-    const fallbackStart = Date.now();
-    vector = await EMBED_PROVIDERS.ollama.fn(text, signal);
-    logCostCall('embed', 'ollama', meta.source || 'general-fallback', units, {
-      ok: !!vector,
-      durationMs: Date.now() - fallbackStart,
-    });
-  }
-  return vector;
-}
+async function getEmbedding(text, signal, meta = {}) {}
 
 async function embedOllama(text, signal) {
   try {
@@ -2312,167 +1750,25 @@ async function searchCollection(name, vector, topK, signal) {
 
 // --- Anti-Noise Scoring (Phase 103) ---
 
-function computeEffectiveConfidence(data) {
-  const base = data.confidence || 0.5;
-  const hits = data.hitCount || 0;
-  const ageFactor = Math.min(1.0, 0.7 + (hits * 0.06));
-  return base * ageFactor;
-}
+function computeEffectiveConfidence(data) {}
 
-function computeEffectiveScore(point, data, queryDomain, queryProjectSlug, queryText = '') {
-  const cosine = point.score || 0;
-  const hitBoost = Math.log2(1 + (data.hitCount || 0)) * 0.08;
-  const normalizedQuery = String(queryText || '').toLowerCase();
-  const daysSinceHit = data.lastHitAt
-    ? (Date.now() - new Date(data.lastHitAt).getTime()) / 86400000
-    : 0;
-  const recencyPenalty = daysSinceHit > 30
-    ? Math.min(0.15, (daysSinceHit - 30) / 335 * 0.15)
-    : 0;
-  const ignorePenalty = Math.min(0.30, (data.ignoreCount || 0) * 0.05);
-  const irrelevantPenalty = Math.min(0.24, (data.irrelevantCount || 0) * 0.04);
-  const unusedPenalty = Math.min(0.18, (data.unusedCount || 0) * 0.03);
-  const noiseReasonCounts = data.noiseReasonCounts || {};
-  const noiseReasonPenalty = Math.min(
-    0.18,
-    ((noiseReasonCounts.wrong_repo || 0) * 0.05)
-      + ((noiseReasonCounts.wrong_language || 0) * 0.04)
-      + ((noiseReasonCounts.wrong_task || 0) * 0.03)
-      + ((noiseReasonCounts.stale_rule || 0) * 0.06)
-  );
-  // P3: Heavier domain penalty (was 0.08/0.03, now 0.20/0.05)
-  const domainPenalty = (queryDomain && data.domain && queryDomain !== data.domain) ? 0.20
-    : (queryDomain && !data.domain) ? 0.05 : 0;
-  // P0: Project-aware penalty — cross-project suggestions heavily penalized
-  // v2: bypass penalty when scope.lang='all' (universal behavioral rules should surface everywhere)
-  let projectPenalty = 0;
-  if (queryProjectSlug) {
-    const scopeLang = data.scope?.lang;
-    const principleLike = !!data.principle || data.createdFrom === 'evolution-abstraction' || getValidatedHitCount(data) >= SEEDED_BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD;
-    if (scopeLang === 'all') {
-      projectPenalty = 0; // Universal rules surface everywhere
-    } else if (!data._projectSlug) {
-      // No project slug on entry — apply heavier penalty (unknown origin)
-      projectPenalty = principleLike ? 0.10 : 0.35;
-    } else if (queryProjectSlug !== data._projectSlug) {
-      // Cross-project — near-elimination penalty for non-principles
-      projectPenalty = principleLike ? 0.22 : 0.85;
-    }
-  }
-  // Phase 108: temporal boost/penalty from confirmedAt trace
-  let temporalAdj = 0;
-  const confirmed = Array.isArray(data.confirmedAt) ? data.confirmedAt : [];
-  if (confirmed.length > 0) {
-    const mostRecent = new Date(confirmed[confirmed.length - 1]).getTime();
-    const daysSinceConfirm = (Date.now() - mostRecent) / 86400000;
-    if (daysSinceConfirm <= 7) temporalAdj = 0.05;       // recently confirmed — boost
-    else if (daysSinceConfirm > 60) temporalAdj = -0.08;  // stale — penalty
-  }
-  let conditionAdj = 0;
-  if (Array.isArray(data.conditions) && data.conditions.length > 0) {
-    const normalizedConditions = data.conditions
-      .map((condition) => String(condition || '').trim().toLowerCase())
-      .filter(Boolean);
-    const matchedConditions = normalizedConditions.filter((condition) => normalizedQuery.includes(condition));
-    if (matchedConditions.length === 0) conditionAdj = -0.14;
-    else conditionAdj = Math.min(0.12, matchedConditions.length * 0.04);
-  }
-  // Phase 108: superseded experience penalty
-  const supersededPenalty = data.superseded ? 0.15 : 0;
-  // Wave 3: Confidence weighting — low-confidence entries rank lower
-  const confWeight = computeEffectiveConfidence(data);
-  const rawScore = cosine + hitBoost - recencyPenalty - ignorePenalty - irrelevantPenalty - unusedPenalty - noiseReasonPenalty - domainPenalty - projectPenalty + temporalAdj + conditionAdj - supersededPenalty;
-  return rawScore * (0.6 + 0.4 * confWeight); // scale: 0.6 floor to avoid zeroing out
-}
+function computeEffectiveScore(point, data, queryDomain, queryProjectSlug, queryText = '') {}
 
-function rerankByQuality(points, queryDomain, queryProjectSlug, queryText = '') {
-  return points
-    .map(p => {
-      let data = {};
-      try { data = JSON.parse(p.payload?.json || '{}'); } catch { /* default */ }
-      return { ...p, _effectiveScore: computeEffectiveScore(p, data, queryDomain, queryProjectSlug, queryText) };
-    })
-    .sort((a, b) => b._effectiveScore - a._effectiveScore);
-}
+function rerankByQuality(points, queryDomain, queryProjectSlug, queryText = '') {}
 
-function getSurfaceCountForProbation(data) {
-  if (!data || typeof data !== 'object') return 0;
-  if (typeof data.surfaceCount === 'number') return data.surfaceCount;
-  return (data.signalVersion || 0) >= 2 ? 0 : (data.hitCount || 0);
-}
+function getSurfaceCountForProbation(data) {}
 
-function hasProbationaryT2Debt(data) {
-  if (!data || typeof data !== 'object') return true;
-  if ((data.ignoreCount || 0) > 0) return true;
-  if ((data.irrelevantCount || 0) > 0) return true;
-  const noiseCounts = data.noiseReasonCounts || {};
-  return Object.values(noiseCounts).some(value => Number(value || 0) > 0);
-}
+function hasProbationaryT2Debt(data) {}
 
-function isProbationaryT2Candidate(point) {
-  if (!point || point._collection !== SELFQA_COLLECTION) return false;
-  const rawScore = Number(point.score || 0);
-  if (rawScore < PROBATIONARY_T2_RAW_SCORE_THRESHOLD) return false;
-  let data;
-  try { data = JSON.parse(point.payload?.json || '{}'); } catch { return false; }
-  if (!data.solution) return false;
-  if (computeEffectiveConfidence(data) >= getMinConfidence()) return false;
-  if (getSurfaceCountForProbation(data) >= PROBATIONARY_T2_SURFACE_LIMIT) return false;
-  if (hasProbationaryT2Debt(data)) return false;
-  return true;
-}
+function isProbationaryT2Candidate(point) {}
 
-function selectProbationaryT2Points(points) {
-  let selected = false;
-  return (points || []).map(point => {
-    if (selected || !isProbationaryT2Candidate(point)) return point;
-    selected = true;
-    return { ...point, _probationaryT2: true };
-  });
-}
+function selectProbationaryT2Points(points) {}
 
 // --- Formatting ---
 
-function formatPoints(points) {
-  const lines = [];
-  for (const point of points) {
-    let exp;
-    try { exp = JSON.parse(point.payload?.json || '{}'); } catch { continue; }
-    if (!exp.solution) continue;
-    const effConf = computeEffectiveConfidence(exp);
-    if (effConf < getMinConfidence() && !point._probationaryT2) continue;
-    const displayScore = point._effectiveScore ?? point.score ?? 0;
-    let line;
-    if (point._probationaryT2) {
-      line = `💡 [Probationary Suggestion (${displayScore.toFixed(2)})]: ${exp.solution}`;
-    } else if (displayScore >= getHighConfidence()) {
-      line = `⚠️ [Experience - High Confidence (${displayScore.toFixed(2)})]: ${exp.solution}`;
-    } else {
-      line = `💡 [Suggestion (${displayScore.toFixed(2)})]: ${exp.solution}`;
-    }
-    if (exp.why) {
-      line += `\n   Why: ${exp.why}`;
-    }
-    const pid = String(point.id).slice(0, 8);
-    const coll = point._collection || 'experience-behavioral';
-    line += `\n   [id:${pid} col:${coll}]`;
-    // v3: inline feedback — agent reports noisy/wrong hints
-    line += `\n   ↩ Wrong? POST /api/feedback {"pointId":"${pid}","collection":"${coll}","verdict":"IRRELEVANT","reason":"wrong_repo"}`;
-    lines.push(line);
-  }
-  return lines;
-}
+function formatPoints(points) {}
 
-function applyBudget(lines, maxChars) {
-  const result = [];
-  let total = 0;
-  for (const line of lines) {
-    if (total + line.length > maxChars) break;
-    result.push(line);
-    total += line.length;
-  }
-  return result;
-}
+function applyBudget(lines, maxChars) {}
 
 function getValidatedHitCount(data) {
   if (!data || typeof data !== 'object') return 0;
@@ -3316,9 +2612,7 @@ async function importPrinciple(shared) {
 
 // --- getEmbeddingRaw: exported for external callers (e.g. bulk-seed.js) (D-16) ---
 
-async function getEmbeddingRaw(text, signal) {
-  return getEmbedding(text, signal);
-}
+async function getEmbeddingRaw(text, signal) {}
 
 // --- Qdrant multi-user migration: tag untagged entries with current user ---
 // Runs once per process, best-effort. Tags existing points that lack a `user` field.
@@ -4045,6 +3339,116 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
 // Functions already delegated via const at top of file.
 // Remaining late-init overrides:
 
+
+function _delegateQdrant() {
+  checkQdrant = _qdrant.checkQdrant;
+  fileStorePath = _qdrant.fileStorePath;
+  fileStoreRead = _qdrant.fileStoreRead;
+  acquireLock = _qdrant.acquireLock;
+  releaseLock = _qdrant.releaseLock;
+  fileStoreWrite = _qdrant.fileStoreWrite;
+  fileStoreUpsert = _qdrant.fileStoreUpsert;
+  cosineSimilarity = _qdrant.cosineSimilarity;
+  fileStoreSearch = _qdrant.fileStoreSearch;
+  buildQdrantUserFilter = _qdrant.buildQdrantUserFilter;
+  fetchPointById = _qdrant.fetchPointById;
+  searchCollection = _qdrant.searchCollection;
+  updatePointPayload = _qdrant.updatePointPayload;
+  deleteEntry = _qdrant.deleteEntry;
+  syncToQdrant = _qdrant.syncToQdrant;
+}
+
+function _delegateBrain() {
+  getBrainFallback = _brainllm.getBrainFallback;
+  callBrainWithFallback = _brainllm.callBrainWithFallback;
+  brainRelevanceFilter = _brainllm.brainRelevanceFilter;
+  extractQA = _brainllm.extractQA;
+  brainOllama = _brainllm.brainOllama;
+  brainOpenAI = _brainllm.brainOpenAI;
+  brainGemini = _brainllm.brainGemini;
+  brainClaude = _brainllm.brainClaude;
+  brainDeepSeek = _brainllm.brainDeepSeek;
+}
+
+function _delegateFormat() {
+  buildStorePayload = _format.buildStorePayload;
+  formatPoints = _format.formatPoints;
+  applyBudget = _format.applyBudget;
+  ensureSignalMetrics = _format.ensureSignalMetrics;
+  normalizeEvidenceClass = _format.normalizeEvidenceClass;
+  normalizeConditions = _format.normalizeConditions;
+  normalizeFailureMode = _format.normalizeFailureMode;
+  normalizeJudgment = _format.normalizeJudgment;
+  ensureAbstractionFields = _format.ensureAbstractionFields;
+  ensureNovelCaseEvidence = _format.ensureNovelCaseEvidence;
+  isPrincipleLikeEntry = _format.isPrincipleLikeEntry;
+  buildPrincipleText = _format.buildPrincipleText;
+  normalizeTechLabel = _format.normalizeTechLabel;
+}
+
+function _delegateGraph() {
+  createEdge = _graph.createEdge;
+  getEdgesForId = _graph.getEdgesForId;
+  getEdgesOfType = _graph.getEdgesOfType;
+}
+
+function _delegateEvolution() {
+  tokenizeOrganicSupportText = _evolution.tokenizeOrganicSupportText;
+  organicSupportText = _evolution.organicSupportText;
+  tokenOverlapRatio = _evolution.tokenOverlapRatio;
+  conditionOverlapCount = _evolution.conditionOverlapCount;
+  buildOrganicSupportKey = _evolution.buildOrganicSupportKey;
+  isOrganicSupportCandidate = _evolution.isOrganicSupportCandidate;
+  findOrganicSupportCandidate = _evolution.findOrganicSupportCandidate;
+  applyOrganicSupportUpdate = _evolution.applyOrganicSupportUpdate;
+  uniqueConfirmationCount = _evolution.uniqueConfirmationCount;
+  hasRepeatedSessionConfirmations = _evolution.hasRepeatedSessionConfirmations;
+  resetPromotionProbation = _evolution.resetPromotionProbation;
+  shouldPromoteBehavioralToPrinciple = _evolution.shouldPromoteBehavioralToPrinciple;
+  parsePayload = _evolution.parsePayload;
+  clusterByCosine = _evolution.clusterByCosine;
+  sharePrinciple = _evolution.sharePrinciple;
+  importPrinciple = _evolution.importPrinciple;
+  migrateQdrantUserTags = _evolution.migrateQdrantUserTags;
+  storeExperience = _evolution.storeExperience;
+  evolve = _evolution.evolve;
+}
+
+function _delegateRouter() {
+  isRouterEnabled = _router.isRouterEnabled;
+  getRouterHistoryThreshold = _router.getRouterHistoryThreshold;
+  getRouterDefaultTier = _router.getRouterDefaultTier;
+  getModelTiers = _router.getModelTiers;
+  getReasoningEffortTiers = _router.getReasoningEffortTiers;
+  normalizeReasoningEffort = _router.normalizeReasoningEffort;
+  validateCodexModel = _router.validateCodexModel;
+  validateCodexReasoning = _router.validateCodexReasoning;
+  preFilterComplexity = _router.preFilterComplexity;
+  isQcFlowFrontHalfContext = _router.isQcFlowFrontHalfContext;
+  maybeCapTierForCost = _router.maybeCapTierForCost;
+  printRouteDecision = _router.printRouteDecision;
+  ensureRoutesCollection = _router.ensureRoutesCollection;
+  classifyViaBrain = _router.classifyViaBrain;
+  normalizeTierResponse = _router.normalizeTierResponse;
+  normalizeTaskRoute = _router.normalizeTaskRoute;
+  foldClassifierText = _router.foldClassifierText;
+  preFilterTaskRoute = _router.preFilterTaskRoute;
+  parseJsonObjectFromText = _router.parseJsonObjectFromText;
+  defaultTaskRouteOptions = _router.defaultTaskRouteOptions;
+  normalizeTaskRoutePayload = _router.normalizeTaskRoutePayload;
+  buildTaskRoutePrompt = _router.buildTaskRoutePrompt;
+  resolveTierModel = _router.resolveTierModel;
+  resolveTierReasoningEffort = _router.resolveTierReasoningEffort;
+  buildModelRoutePrompt = _router.buildModelRoutePrompt;
+  shouldSkipKeywordModelPrefilter = _router.shouldSkipKeywordModelPrefilter;
+  storeRouteDecision = _router.storeRouteDecision;
+  routeModel = _router.routeModel;
+  routeTask = _router.routeTask;
+  routeFeedback = _router.routeFeedback;
+  detectRuntime = _router.detectRuntime;
+  resolveRuntimeFromSourceMeta = _router.resolveRuntimeFromSourceMeta;
+}
+
 function _delegateLate() {
   // Nothing left to delegate — all config functions are const at top
 }
@@ -4135,6 +3539,16 @@ function _delegateUtils() {
 }
 
 function _delegateAll() {
+  _delegateQdrant();
+  _delegateBrain();
+  _delegateFormat();
+  _delegateGraph();
+  _delegateEvolution();
+  _delegateRouter();
+  _delegateNoise();
+  _delegateScoring();
+  _delegateContext();
+  _delegateSession();
   _delegateLate();
   _delegateEmbedding();
   _delegateUtils();
