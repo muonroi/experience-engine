@@ -26,6 +26,7 @@ const _qdrant = require('./src/qdrant');
 const _session = require('./src/session');
 const _context = require('./src/context');
 const _scoring = require('./src/scoring');
+const _noise = require('./src/noise');
 
 // Config delegated to src/config.js — inline delegates for early-init functions
 const cfgValue = _config.cfgValue;
@@ -4052,6 +4053,17 @@ function _delegateEmbedding() {
 }
 
 // Utils module
+function _delegateNoise() {
+  hasRecentValidatedConfirmation = _noise.hasRecentValidatedConfirmation;
+  isCodeSpecificHint = _noise.isCodeSpecificHint;
+  shouldSuppressForNoise = _noise.shouldSuppressForNoise;
+  filterNoiseSuppressedPoints = _noise.filterNoiseSuppressedPoints;
+  inferLanguageMismatch = _noise.inferLanguageMismatch;
+  ensureNoiseReasonCounts = _noise.ensureNoiseReasonCounts;
+  ensureNoiseSourceCounts = _noise.ensureNoiseSourceCounts;
+  recordNoiseMetadataData = _noise.recordNoiseMetadataData;
+}
+
 function _delegateScoring() {
   computeEffectiveConfidence = _scoring.computeEffectiveConfidence;
   computeEffectiveScore = _scoring.computeEffectiveScore;
