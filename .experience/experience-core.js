@@ -24,6 +24,7 @@ const _embedding = require('./src/embedding');
 const _utils = require('./src/utils');
 const _qdrant = require('./src/qdrant');
 const _session = require('./src/session');
+const _context = require('./src/context');
 
 // Config delegated to src/config.js — inline delegates for early-init functions
 const cfgValue = _config.cfgValue;
@@ -4050,6 +4051,21 @@ function _delegateEmbedding() {
 }
 
 // Utils module
+function _delegateContext() {
+  detectTranscriptDomain = _context.detectTranscriptDomain;
+  normalizeExtractText = _context.normalizeExtractText;
+  isPlaceholderExtractField = _context.isPlaceholderExtractField;
+  isMetaWorkflowExtract = _context.isMetaWorkflowExtract;
+  assessExtractedQaQuality = _context.assessExtractedQaQuality;
+  detectNaturalLang = _context.detectNaturalLang;
+  parseTranscriptToolCall = _context.parseTranscriptToolCall;
+  isTranscriptReadOnlyToolCall = _context.isTranscriptReadOnlyToolCall;
+  isMutatingTranscriptToolCall = _context.isMutatingTranscriptToolCall;
+  extractRetryTarget = _context.extractRetryTarget;
+  isTranscriptErrorSignal = _context.isTranscriptErrorSignal;
+  detectMistakes = _context.detectMistakes;
+}
+
 function _delegateSession() {
   sanitizeSessionToken = _session.sanitizeSessionToken;
   getSessionTrackFile = _session.getSessionTrackFile;
