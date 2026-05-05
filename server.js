@@ -63,6 +63,38 @@ const RUNTIME_DIR = fs.existsSync(path.join(PACKAGED_RUNTIME_DIR, 'experience-co
 const RUNTIME_CORE_PATH = path.join(RUNTIME_DIR, 'experience-core.js');
 const RUNTIME_JUDGE_WORKER_PATH = path.join(RUNTIME_DIR, 'judge-worker.js');
 
+// --- Rate limiting (token bucket per IP) ---
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const RATE_LIMIT_MAX_REQUESTS = _cfg.server?.rateLimit || 120;
+const _rateBuckets = new Map();
+
+function rateLimit(req, res) {
+  const ip = req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  let bucket = _rateBuckets.get(ip);
+  if (!bucket || now - bucket.windowStart > RATE_LIMIT_WINDOW_MS) {
+    bucket = { windowStart: now, count: 0 };
+    _rateBuckets.set(ip, bucket);
+  }
+  bucket.count++;
+  res.setHeader('X-RateLimit-Limit', RATE_LIMIT_MAX_REQUESTS);
+  res.setHeader('X-RateLimit-Remaining', Math.max(0, RATE_LIMIT_MAX_REQUESTS - bucket.count));
+  if (bucket.count > RATE_LIMIT_MAX_REQUESTS) {
+    res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
+    res.end(JSON.stringify({ error: 'Too many requests' }));
+    return true;
+  }
+  return false;
+}
+
+// Cleanup stale buckets every 5 minutes
+setInterval(() => {
+  const cutoff = Date.now() - RATE_LIMIT_WINDOW_MS * 2;
+  for (const [ip, bucket] of _rateBuckets) {
+    if (bucket.windowStart < cutoff) _rateBuckets.delete(ip);
+  }
+}, 5 * 60 * 1000).unref();
+
 // --- CORS headers ---
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -160,6 +192,16 @@ function readBody(req, maxBytes = 1048576) {
 
 // --- Route handlers ---
 
+// --- Health degradation tracking (G14) ---
+const _healthState = {
+  qdrantConsecutiveFailures: 0,
+  embedConsecutiveFailures: 0,
+  lastQdrantOk: null,
+  lastEmbedOk: null,
+  lastQdrantError: null,
+  lastEmbedError: null,
+};
+
 async function handleHealth(req, res) {
   let qdrant = { status: 'unknown' };
   try {
@@ -168,7 +210,45 @@ async function handleHealth(req, res) {
       signal: AbortSignal.timeout(3000),
     });
     qdrant = { status: r.ok ? 'ok' : 'error', code: r.status };
-  } catch (e) { qdrant = { status: 'unreachable', error: e.message }; }
+    if (r.ok) {
+      _healthState.qdrantConsecutiveFailures = 0;
+      _healthState.lastQdrantOk = new Date().toISOString();
+    } else {
+      _healthState.qdrantConsecutiveFailures++;
+      _healthState.lastQdrantError = new Date().toISOString();
+    }
+  } catch (e) {
+    qdrant = { status: 'unreachable', error: e.message };
+    _healthState.qdrantConsecutiveFailures++;
+    _healthState.lastQdrantError = new Date().toISOString();
+  }
+
+  // Embed health: check last 10 cost-call entries from activity log
+  let embed = { status: 'unknown' };
+  try {
+    const activityPath = path.join(os.homedir(), '.experience', 'activity.jsonl');
+    const lines = fs.readFileSync(activityPath, 'utf8').trim().split('\n').slice(-50);
+    const embedCalls = lines
+      .map(l => { try { return JSON.parse(l); } catch { return null; } })
+      .filter(e => e && e.op === 'cost-call' && e.kind === 'embed')
+      .slice(-10);
+    if (embedCalls.length > 0) {
+      const failures = embedCalls.filter(e => !e.ok).length;
+      const failRate = failures / embedCalls.length;
+      embed = {
+        status: failRate > 0.5 ? 'degraded' : failRate > 0 ? 'warn' : 'ok',
+        recentFailRate: Math.round(failRate * 100) + '%',
+        lastProvider: embedCalls[embedCalls.length - 1]?.provider || 'unknown',
+      };
+      if (failRate > 0.5) {
+        _healthState.embedConsecutiveFailures++;
+        _healthState.lastEmbedError = new Date().toISOString();
+      } else {
+        _healthState.embedConsecutiveFailures = 0;
+        _healthState.lastEmbedOk = new Date().toISOString();
+      }
+    }
+  } catch { embed = { status: 'no-data' }; }
 
   const storeDir = path.join(os.homedir(), '.experience', 'store');
   let fileStore = { status: 'unknown' };
@@ -177,8 +257,79 @@ async function handleHealth(req, res) {
     fileStore = { status: 'ok', path: storeDir };
   } catch { fileStore = { status: 'missing', path: storeDir }; }
 
-  const overall = (qdrant.status === 'ok' || fileStore.status === 'ok') ? 'ok' : 'degraded';
-  json(res, { status: overall, qdrant, fileStore, uptime: process.uptime() });
+  const degraded = qdrant.status !== 'ok' && fileStore.status !== 'ok';
+  const overall = degraded ? 'degraded' : (embed.status === 'degraded' ? 'warn' : 'ok');
+  const alerts = [];
+  if (_healthState.qdrantConsecutiveFailures >= 3) alerts.push('Qdrant unreachable for 3+ checks');
+  if (_healthState.embedConsecutiveFailures >= 3) alerts.push('Embed provider degraded for 3+ checks');
+  json(res, { status: overall, qdrant, embed, fileStore, uptime: process.uptime(), ...(alerts.length > 0 ? { alerts } : {}) });
+}
+
+// --- Prometheus-style metrics endpoint (G13) ---
+function handleMetrics(req, res) {
+  const uptime = process.uptime();
+  const mem = process.memoryUsage();
+  let lines = [];
+  lines.push(`# HELP experience_uptime_seconds Server uptime in seconds`);
+  lines.push(`# TYPE experience_uptime_seconds gauge`);
+  lines.push(`experience_uptime_seconds ${uptime.toFixed(1)}`);
+  lines.push(`# HELP experience_memory_rss_bytes Resident set size`);
+  lines.push(`# TYPE experience_memory_rss_bytes gauge`);
+  lines.push(`experience_memory_rss_bytes ${mem.rss}`);
+  lines.push(`# HELP experience_memory_heap_used_bytes Heap used`);
+  lines.push(`# TYPE experience_memory_heap_used_bytes gauge`);
+  lines.push(`experience_memory_heap_used_bytes ${mem.heapUsed}`);
+  lines.push(`# HELP experience_rate_limit_buckets Active rate limit buckets`);
+  lines.push(`# TYPE experience_rate_limit_buckets gauge`);
+  lines.push(`experience_rate_limit_buckets ${_rateBuckets.size}`);
+  lines.push(`# HELP experience_qdrant_consecutive_failures Qdrant consecutive failures`);
+  lines.push(`# TYPE experience_qdrant_consecutive_failures gauge`);
+  lines.push(`experience_qdrant_consecutive_failures ${_healthState.qdrantConsecutiveFailures}`);
+  lines.push(`# HELP experience_embed_consecutive_failures Embed provider consecutive failures`);
+  lines.push(`# TYPE experience_embed_consecutive_failures gauge`);
+  lines.push(`experience_embed_consecutive_failures ${_healthState.embedConsecutiveFailures}`);
+
+  // Activity-based counters from JSONL
+  try {
+    const activityPath = path.join(os.homedir(), '.experience', 'activity.jsonl');
+    const lines24h = fs.readFileSync(activityPath, 'utf8').trim().split('\n').slice(-500);
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    let intercepts = 0, suggestions = 0, feedbacks = 0, evolves = 0, embedOk = 0, embedFail = 0;
+    for (const l of lines24h) {
+      try {
+        const e = JSON.parse(l);
+        const ts = new Date(e.ts).getTime();
+        if (ts < cutoff) continue;
+        if (e.op === 'intercept') intercepts++;
+        if (e.op === 'intercept' && e.surfacedCount > 0) suggestions++;
+        if (e.op === 'judge-verdict') feedbacks++;
+        if (e.op === 'evolve') evolves++;
+        if (e.op === 'cost-call' && e.kind === 'embed' && e.ok) embedOk++;
+        if (e.op === 'cost-call' && e.kind === 'embed' && !e.ok) embedFail++;
+      } catch {}
+    }
+    lines.push(`# HELP experience_intercepts_24h Intercepts in last 24h`);
+    lines.push(`# TYPE experience_intercepts_24h gauge`);
+    lines.push(`experience_intercepts_24h ${intercepts}`);
+    lines.push(`# HELP experience_suggestions_24h Suggestions surfaced in last 24h`);
+    lines.push(`# TYPE experience_suggestions_24h gauge`);
+    lines.push(`experience_suggestions_24h ${suggestions}`);
+    lines.push(`# HELP experience_feedbacks_24h Judge feedbacks in last 24h`);
+    lines.push(`# TYPE experience_feedbacks_24h gauge`);
+    lines.push(`experience_feedbacks_24h ${feedbacks}`);
+    lines.push(`# HELP experience_evolves_24h Evolution cycles in last 24h`);
+    lines.push(`# TYPE experience_evolves_24h gauge`);
+    lines.push(`experience_evolves_24h ${evolves}`);
+    lines.push(`# HELP experience_embed_ok_24h Successful embed calls in last 24h`);
+    lines.push(`# TYPE experience_embed_ok_24h gauge`);
+    lines.push(`experience_embed_ok_24h ${embedOk}`);
+    lines.push(`# HELP experience_embed_fail_24h Failed embed calls in last 24h`);
+    lines.push(`# TYPE experience_embed_fail_24h gauge`);
+    lines.push(`experience_embed_fail_24h ${embedFail}`);
+  } catch {}
+
+  res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4', ...CORS });
+  res.end(lines.join('\n') + '\n');
 }
 
 async function handleIntercept(req, res) {
@@ -572,6 +723,10 @@ const server = http.createServer(async (req, res) => {
   try {
     // Keep health open for liveness checks; protect other GET APIs when auth is configured.
     if (p === '/health' && req.method === 'GET') return await handleHealth(req, res);
+    if (p === '/metrics' && req.method === 'GET') return handleMetrics(req, res);
+
+    // Rate limit all non-health endpoints
+    if (rateLimit(req, res)) return;
     if (req.method === 'GET' && isProtectedGetPath(p)) {
       if (!requireAuth(req, res, { allowReadToken: isReadOnlyApiPath(p) })) return;
     }
