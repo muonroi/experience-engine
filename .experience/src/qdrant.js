@@ -36,6 +36,10 @@ function resetQdrantCheck() {
   qdrantAvailable = null;
 }
 
+function setQdrantAvailable(value) {
+  qdrantAvailable = !!value;
+}
+
 // ============================================================
 //  FileStore
 // ============================================================
@@ -258,7 +262,7 @@ async function syncToQdrant() {
 // ============================================================
 
 module.exports = {
-  checkQdrant, resetQdrantCheck, qdrantAvailable,
+  checkQdrant, resetQdrantCheck, setQdrantAvailable, qdrantAvailable,
   fileStoreRead, fileStoreWrite, fileStoreSearch, fileStoreUpsert, fileStorePath,
   updatePointPayload,
   searchCollection,
