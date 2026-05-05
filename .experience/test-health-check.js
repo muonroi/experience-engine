@@ -9,6 +9,7 @@ const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
 const SCRIPT_PATH = path.join(__dirname, 'health-check.sh');
+const isWindows = process.platform === 'win32';
 
 function makeHome() {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'exp-health-'));
@@ -53,7 +54,7 @@ function startServer() {
   });
 }
 
-test('health-check reports thin-client server state and remediation hints', async () => {
+test('health-check reports thin-client server state and remediation hints', { skip: isWindows ? 'bash health-check.sh not reliable on Windows' : false }, async () => {
   const homeDir = makeHome();
   const expDir = path.join(homeDir, '.experience');
   const { server, port, received } = await startServer();
@@ -129,7 +130,7 @@ module.exports = {
   }
 });
 
-test('health-check treats local server nodes as healthy without client hooks', async () => {
+test('health-check treats local server nodes as healthy without client hooks', { skip: isWindows ? 'bash health-check.sh not reliable on Windows' : false }, async () => {
   const homeDir = makeHome();
   const expDir = path.join(homeDir, '.experience');
   const { server, port } = await startServer();

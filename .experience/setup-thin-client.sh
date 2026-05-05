@@ -109,6 +109,15 @@ for f in exp-server-maintain.js exp-portable-backup.js exp-portable-restore.js; 
   cp "$ROOT_DIR/tools/$f" "$INSTALL_DIR/$f"
 done
 
+# Sync src/ modules (required after modular refactor for local-mode fallback)
+if [ -d "$SRC_DIR/src" ]; then
+  mkdir -p "$INSTALL_DIR/src"
+  for f in "$SRC_DIR/src/"*.js; do
+    [ -f "$f" ] || continue
+    cp "$f" "$INSTALL_DIR/src/$(basename "$f")"
+  done
+fi
+
 chmod +x \
   "$INSTALL_DIR/interceptor.js" \
   "$INSTALL_DIR/interceptor-post.js" \

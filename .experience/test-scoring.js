@@ -287,7 +287,7 @@ describe('storeExperience payload initialization', () => {
 
 describe('recordHit field updates', () => {
   it('updates lastHitAt and resets ignoreCount', () => {
-    const data = { hitCount: 2, ignoreCount: 5, lastHitAt: null };
+    const data = { hitCount: 2, validatedCount: 2, ignoreCount: 5, lastHitAt: null };
     const updated = recordHitUpdatesFields(data);
     assert.strictEqual(updated.hitCount, 3);
     assert.strictEqual(updated.ignoreCount, 0, 'ignoreCount should reset to 0');

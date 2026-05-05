@@ -62,11 +62,19 @@
   },
   "scripts": {
     "test": "node --test --test-concurrency=1 tests/*.test.js",
+    "test:unit": "node --test --test-concurrency=1 .experience/test-*.js",
     "test:holdout": "node --test tools/test-exp-holdout-harness.js tools/test-exp-holdout-fixtures.js",
     "test:health": "node --test .experience/test-health-check.js .experience/test-setup.js",
     "test:server": "node tools/test-server.js",
     "test:ci": "npm test && npm run test:holdout && npm run test:health && npm run test:server",
+    "test:coverage": "npx c8 --reporter=text --reporter=html --report-dir=coverage node --test --test-concurrency=1 tests/*.test.js .experience/test-*.js",
     "replay:holdout": "node tools/exp-holdout-harness.js --fixture fixtures/holdout --json",
+    "lint": "npx eslint server.js .experience/experience-core.js .experience/src/",
+    "format": "npx prettier --write server.js .experience/experience-core.js .experience/src/",
+    "format:check": "npx prettier --check server.js .experience/experience-core.js .experience/src/",
+    "changelog": "node scripts/generate-changelog.js",
+    "config:encrypt": "node scripts/config-encrypt.js encrypt",
+    "config:status": "node scripts/config-encrypt.js status",
     "pack:dry-run": "npm pack --dry-run"
   },
   "publishConfig": {

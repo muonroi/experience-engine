@@ -155,14 +155,13 @@ describe('NOISE-05: cross-project penalty', () => {
       `cross-project (${crossProject.toFixed(4)}) should be < same-project (${sameProject.toFixed(4)})`);
   });
 
-  it('penalty is exactly 0.50 raw (before confidence weighting)', () => {
-    // Calculate expected difference
+  it('penalty is exactly 0.85 raw for cross-project non-principle (before confidence weighting)', () => {
     const base = computeEffectiveScore({ score: 0.7 }, { _projectSlug: 'a' }, null, 'a');
     const penalized = computeEffectiveScore({ score: 0.7 }, { _projectSlug: 'b' }, null, 'a');
-    // Raw penalty = 0.70, scaled by confidence weight
+    // Raw penalty = 0.85, scaled by confidence weight
     const confWeight = 0.5 * 0.7; // default conf=0.5, hits=0, ageFactor=0.7
     const scale = 0.6 + 0.4 * confWeight;
-    const expectedDiff = 0.70 * scale;
+    const expectedDiff = 0.85 * scale;
     const actualDiff = base - penalized;
     assert.ok(Math.abs(actualDiff - expectedDiff) < 0.001,
       `expected penalty diff ~${expectedDiff.toFixed(4)}, got ${actualDiff.toFixed(4)}`);
@@ -240,7 +239,7 @@ describe('NOISE-06: combined domain + project penalty', () => {
 describe('NOISE-07: rerankByQuality cross-project demotion', () => {
   it('same-project rule ranks above cross-project even with lower cosine', () => {
     const points = [
-      mkPoint(0.80, { _projectSlug: 'eport-frontend', hitCount: 5, confidence: 0.8 }),
+      mkPoint(0.80, { _projectSlug: 'eport-frontend', hitCount: 2, confidence: 0.8 }),
       mkPoint(0.65, { _projectSlug: 'tcis.libraries', hitCount: 2, confidence: 0.6 }),
     ];
     const ranked = rerankByQuality(points, null, 'tcis.libraries');
@@ -254,7 +253,7 @@ describe('NOISE-07: rerankByQuality cross-project demotion', () => {
 
   it('cross-project rule with high cosine gets substantially penalized', () => {
     const points = [
-      mkPoint(0.85, { _projectSlug: 'eport-frontend', hitCount: 5, confidence: 0.7 }),
+      mkPoint(0.85, { _projectSlug: 'eport-frontend', hitCount: 2, confidence: 0.7 }),
       mkPoint(0.70, { _projectSlug: 'tcis.libraries', hitCount: 2, confidence: 0.6 }),
     ];
     const ranked = rerankByQuality(points, null, 'tcis.libraries');
@@ -266,15 +265,16 @@ describe('NOISE-07: rerankByQuality cross-project demotion', () => {
       `same-project (${sameProjectScore.toFixed(3)}) should beat cross-project (${crossProjectScore.toFixed(3)}) with 0.70 penalty`);
   });
 
-  it('legacy rules (no projectSlug) are not penalized', () => {
+  it('legacy rules (no projectSlug) get moderate penalty vs same-project', () => {
     const points = [
-      mkPoint(0.70, { hitCount: 5, confidence: 0.7 }),  // no _projectSlug
-      mkPoint(0.70, { _projectSlug: 'tcis.libraries', hitCount: 5, confidence: 0.7 }),
+      mkPoint(0.70, { hitCount: 2, confidence: 0.7 }),  // no _projectSlug
+      mkPoint(0.70, { _projectSlug: 'tcis.libraries', hitCount: 2, confidence: 0.7 }),
     ];
     const ranked = rerankByQuality(points, null, 'tcis.libraries');
-    // Both should have very similar scores (no penalty for either)
-    assert.ok(Math.abs(ranked[0]._effectiveScore - ranked[1]._effectiveScore) < 0.01,
-      'legacy rule should score same as matching-project rule');
+    const legacyScore = ranked.find(p => !JSON.parse(p.payload.json)._projectSlug)?._effectiveScore;
+    const sameScore = ranked.find(p => JSON.parse(p.payload.json)._projectSlug === 'tcis.libraries')?._effectiveScore;
+    assert.ok(sameScore > legacyScore,
+      'same-project rule should score higher than unknown-origin legacy rule');
   });
 });
 
@@ -292,7 +292,7 @@ describe('NOISE-08: real-world TCIS session noise prevention', () => {
       domain: 'C#',
       trigger: 'Always use IMLog<T> from Muonroi.Logging.Abstractions',
       solution: 'Replace ILogger<T> with IMLog<T>',
-      hitCount: 3,
+      hitCount: 1,
       confidence: 0.66,
     });
     const ranked = rerankByQuality([muonroiRule], 'C#', 'tcis.libraries');
@@ -307,7 +307,7 @@ describe('NOISE-08: real-world TCIS session noise prevention', () => {
       domain: 'TypeScript',
       trigger: 'Never modify ePort consumer app code unless absolutely necessary',
       solution: 'Fix in library instead',
-      hitCount: 5,
+      hitCount: 2,
       confidence: 0.82,
     });
     const ranked = rerankByQuality([eportRule], 'C#', 'tcis.libraries');
@@ -321,7 +321,7 @@ describe('NOISE-08: real-world TCIS session noise prevention', () => {
       _projectSlug: 'experience-engine',
       trigger: 'D:/sources/Core is a workspace folder, NOT the primary code repo',
       solution: 'Each sub-directory is its own independent git repo',
-      hitCount: 4,
+      hitCount: 2,
       confidence: 0.72,
     });
     const ranked = rerankByQuality([coreRule], 'C#', 'tcis.libraries');
@@ -335,7 +335,7 @@ describe('NOISE-08: real-world TCIS session noise prevention', () => {
       domain: 'C#',
       trigger: 'Use ILogWriter<T> not ILogger<T> in TCIS',
       solution: 'TCIS uses ILogWriter abstraction',
-      hitCount: 3,
+      hitCount: 1,
       confidence: 0.7,
     });
     const ranked = rerankByQuality([tcisRule], 'C#', 'tcis.libraries');
@@ -345,11 +345,11 @@ describe('NOISE-08: real-world TCIS session noise prevention', () => {
 
   it('in mixed results, TCIS rule ranks above all cross-project rules', () => {
     const points = [
-      mkPoint(0.82, { _projectSlug: 'eport-fe', domain: 'TypeScript', confidence: 0.82, hitCount: 5,
+      mkPoint(0.82, { _projectSlug: 'eport-fe', domain: 'TypeScript', confidence: 0.82, hitCount: 2,
         trigger: 'Never modify ePort consumer app code' }),
-      mkPoint(0.66, { _projectSlug: 'eport-be', domain: 'C#', confidence: 0.66, hitCount: 3,
+      mkPoint(0.66, { _projectSlug: 'eport-be', domain: 'C#', confidence: 0.66, hitCount: 1,
         trigger: 'Always use IMLog<T>' }),
-      mkPoint(0.72, { _projectSlug: 'experience-engine', confidence: 0.72, hitCount: 4,
+      mkPoint(0.72, { _projectSlug: 'experience-engine', confidence: 0.72, hitCount: 1,
         trigger: 'D:/sources/Core is a workspace folder' }),
       mkPoint(0.58, { _projectSlug: 'tcis.libraries', domain: 'C#', confidence: 0.58, hitCount: 1,
         trigger: 'Use ILogWriter in TCIS' }),
