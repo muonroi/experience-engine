@@ -177,22 +177,34 @@ async function searchCollection(name, vector, topK, signal) {
 // ============================================================
 
 async function updatePointPayload(collection, pointId, updateFn) {
-  const entries = fileStoreRead(collection);
-  const idx = entries.findIndex(e => e.id === pointId);
-  if (idx < 0) {
-    // Create entry if not found
-    const emptyPayload = { json: JSON.stringify({ id: pointId }) };
-    const newEntry = { id: pointId, vector: [], payload: emptyPayload };
-    const updatedData = updateFn(JSON.parse(emptyPayload.json));
-    newEntry.payload.json = JSON.stringify(updatedData);
-    entries.push(newEntry);
-    fileStoreWrite(collection, entries);
+  if (!(await checkQdrant())) {
+    const entries = fileStoreRead(collection);
+    const entry = entries.find(e => e.id === pointId);
+    if (entry && entry.payload?.json) {
+      const data = JSON.parse(entry.payload.json);
+      updateFn(data);
+      entry.payload.json = JSON.stringify(data);
+      fileStoreWrite(collection, entries);
+    }
     return;
   }
-  const data = JSON.parse(entries[idx].payload.json || '{}');
-  const updated = updateFn(data);
-  entries[idx].payload.json = JSON.stringify(updated);
-  fileStoreWrite(collection, entries);
+  try {
+    const res = await fetch(`${getQdrantBase()}/collections/${collection}/points/${pointId}`, {
+      headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return;
+    const point = (await res.json()).result;
+    if (!point?.payload?.json) return;
+    const data = JSON.parse(point.payload.json);
+    updateFn(data);
+    await fetch(`${getQdrantBase()}/collections/${collection}/points/payload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+      body: JSON.stringify({ points: [pointId], payload: { json: JSON.stringify(data) } }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch { /* silent */ }
 }
 
 // ============================================================
@@ -200,24 +212,17 @@ async function updatePointPayload(collection, pointId, updateFn) {
 // ============================================================
 
 async function deleteEntry(collection, id) {
-  // Remove from FileStore
-  const entries = fileStoreRead(collection);
-  const filtered = entries.filter(e => e.id !== id);
-  if (filtered.length !== entries.length) {
-    fileStoreWrite(collection, filtered);
+  if (!(await checkQdrant())) {
+    const entries = fileStoreRead(collection);
+    fileStoreWrite(collection, entries.filter(e => e.id !== id));
+    return;
   }
-
-  // Remove from Qdrant if reachable
-  if (await checkQdrant()) {
-    try {
-      await fetch(`${getQdrantBase()}/collections/${collection}/points/delete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
-        body: JSON.stringify({ points: [id] }),
-        signal: AbortSignal.timeout(5000),
-      });
-    } catch { /* best-effort */ }
-  }
+  await fetch(`${getQdrantBase()}/collections/${collection}/points/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+    body: JSON.stringify({ points: [id] }),
+    signal: AbortSignal.timeout(5000),
+  });
 }
 
 // ============================================================
@@ -225,70 +230,27 @@ async function deleteEntry(collection, id) {
 // ============================================================
 
 async function syncToQdrant() {
-  if (!(await checkQdrant())) {
-    activityLog({ op: 'sync-skip', reason: 'qdrant-unavailable' });
-    return;
-  }
-  const collections = [
-    ...COLLECTIONS.map(c => c.name),
-    'experience-edges',
-    'experience-routes',
-  ];
-
+  if (!(await checkQdrant())) throw new Error('Qdrant not available');
+  const collections = COLLECTIONS.map(c => c.name);
+  let synced = 0;
   for (const coll of collections) {
-    try {
-      const entries = fileStoreRead(coll);
-      if (entries.length === 0) continue;
-
-      const points = entries.map(e => {
-        let payload = e.payload || {};
-        try { payload = typeof payload.json === 'string' ? JSON.parse(payload.json) : payload; } catch {}
-        return {
-          id: e.id,
-          vector: e.vector || [],
-          payload: { ...payload, user: getExpUser() },
-        };
-      });
-
-      // Batch upsert (limit 100 per request per Qdrant recommendation)
-      for (let i = 0; i < points.length; i += 100) {
-        const batch = points.slice(i, i + 100);
-        await fetch(`${getQdrantBase()}/collections/${coll}/points`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
-          body: JSON.stringify({ points: batch }),
-          signal: AbortSignal.timeout(15000),
-        });
-      }
-
-      // Remove deleted entries from Qdrant (entries in Qdrant but not in FileStore)
-      const qdrantIds = new Set(points.map(p => p.id));
-      const res = await fetch(`${getQdrantBase()}/collections/${coll}/points/scroll`, {
-        method: 'POST',
+    const entries = fileStoreRead(coll);
+    if (entries.length === 0) continue;
+    // Batch upsert in chunks of 50
+    for (let i = 0; i < entries.length; i += 50) {
+      const batch = entries.slice(i, i + 50).map(e => ({
+        id: e.id, vector: e.vector, payload: e.payload,
+      }));
+      await fetch(`${getQdrantBase()}/collections/${coll}/points`, {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
-        body: JSON.stringify({ limit: 10000, with_payload: false, filter: { must: [buildQdrantUserFilter()] } }),
-        signal: AbortSignal.timeout(10000),
+        body: JSON.stringify({ points: batch }),
+        signal: AbortSignal.timeout(30000),
       });
-      if (res.ok) {
-        const remotePoints = (await res.json()).result?.points || [];
-        const toDelete = remotePoints.filter(rp => !qdrantIds.has(rp.id)).map(rp => rp.id);
-        if (toDelete.length > 0) {
-          for (let i = 0; i < toDelete.length; i += 100) {
-            await fetch(`${getQdrantBase()}/collections/${coll}/points/delete`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
-              body: JSON.stringify({ points: toDelete.slice(i, i + 100) }),
-              signal: AbortSignal.timeout(10000),
-            });
-          }
-        }
-      }
-
-      activityLog({ op: 'sync', collection: coll, points: points.length });
-    } catch (err) {
-      activityLog({ op: 'sync-error', collection: coll, error: err?.message || String(err) });
+      synced += batch.length;
     }
   }
+  return synced;
 }
 
 // ============================================================
