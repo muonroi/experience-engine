@@ -25,6 +25,7 @@ const _utils = require('./src/utils');
 const _qdrant = require('./src/qdrant');
 const _session = require('./src/session');
 const _context = require('./src/context');
+const _scoring = require('./src/scoring');
 
 // Config delegated to src/config.js — inline delegates for early-init functions
 const cfgValue = _config.cfgValue;
@@ -4051,6 +4052,16 @@ function _delegateEmbedding() {
 }
 
 // Utils module
+function _delegateScoring() {
+  computeEffectiveConfidence = _scoring.computeEffectiveConfidence;
+  computeEffectiveScore = _scoring.computeEffectiveScore;
+  rerankByQuality = _scoring.rerankByQuality;
+  getSurfaceCountForProbation = _scoring.getSurfaceCountForProbation;
+  hasProbationaryT2Debt = _scoring.hasProbationaryT2Debt;
+  isProbationaryT2Candidate = _scoring.isProbationaryT2Candidate;
+  selectProbationaryT2Points = _scoring.selectProbationaryT2Points;
+}
+
 function _delegateContext() {
   detectTranscriptDomain = _context.detectTranscriptDomain;
   normalizeExtractText = _context.normalizeExtractText;
