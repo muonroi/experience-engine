@@ -31,6 +31,15 @@ fs.mkdirSync(TEST_EXP_DIR, { recursive: true });
 for (const file of ['experience-core.js', 'interceptor-post.js', 'judge-worker.js']) {
   fs.copyFileSync(path.join(__dirname, file), path.join(TEST_EXP_DIR, file));
 }
+// Copy src/ modules required by experience-core.js after modular refactor
+const srcDir = path.join(__dirname, 'src');
+if (fs.existsSync(srcDir)) {
+  const destSrc = path.join(TEST_EXP_DIR, 'src');
+  fs.mkdirSync(destSrc, { recursive: true });
+  for (const f of fs.readdirSync(srcDir)) {
+    fs.copyFileSync(path.join(srcDir, f), path.join(destSrc, f));
+  }
+}
 fs.writeFileSync(path.join(TEST_EXP_DIR, 'config.json'), JSON.stringify({ qdrantUrl: 'http://127.0.0.1:1' }, null, 2));
 
 const core = require(path.join(TEST_EXP_DIR, 'experience-core.js'));

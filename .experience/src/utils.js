@@ -199,7 +199,8 @@ const SEEDED_BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD = 5;
 
 function getValidatedHitCount(data) {
   if (!data || typeof data !== 'object') return 0;
-  return data.hitCount || 0;
+  if (typeof data.validatedCount === 'number') return data.validatedCount;
+  return 0;
 }
 
 function computeEffectiveScore(point, data, queryDomain, queryProjectSlug, queryText = '') {
