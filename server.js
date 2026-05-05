@@ -383,6 +383,8 @@ function classifyPostToolOutcome(toolName, toolOutput) {
 
 async function handlePostTool(req, res) {
   const body = await readBody(req);
+  const v = validateBody(body, { toolName: { type: 'string', required: true } });
+  if (!v.ok) return error(res, v.error);
   const core = loadExperienceCore();
   const reconcilePendingHints = core._reconcilePendingHints;
   const activityLog = core._activityLog;
@@ -526,7 +528,8 @@ async function handleGraph(req, res, url) {
 
 async function handleShare(req, res) {
   const body = await readBody(req);
-  if (!body.principleId) return error(res, 'principleId is required');
+  const v = validateBody(body, { principleId: { type: 'string', required: true } });
+  if (!v.ok) return error(res, v.error);
   const { sharePrinciple } = loadExperienceCore();
   const shared = sharePrinciple(body.principleId);
   if (!shared) return error(res, 'Principle not found', 404);
@@ -544,8 +547,11 @@ async function handleImport(req, res) {
 
 async function handleFeedback(req, res) {
   const body = await readBody(req);
-  if (!body.pointId) return error(res, 'pointId is required');
-  if (!body.collection) return error(res, 'collection is required');
+  const v = validateBody(body, {
+    pointId: { type: 'string', required: true },
+    collection: { type: 'string', required: true },
+  });
+  if (!v.ok) return error(res, v.error);
   const verdict = typeof body.verdict === 'string' ? body.verdict.trim().toUpperCase() : null;
   const followed = typeof body.followed === 'boolean' ? body.followed : null;
   if (!verdict && followed === null) return error(res, 'verdict is required (or legacy followed boolean)');
@@ -662,8 +668,8 @@ const KNOWN_RUNTIMES = new Set(['claude', 'gemini', 'codex', 'opencode']);
 
 async function handleRouteModel(req, res) {
   const body = await readBody(req);
-  if (!body.task || typeof body.task !== 'string') return error(res, 'task is required and must be a string');
-  if (body.task.length > 2000) return error(res, 'task must be 2000 characters or less');
+  const v = validateBody(body, { task: { type: 'string', required: true, maxLength: 2000 } });
+  if (!v.ok) return error(res, v.error);
   if (body.runtime !== undefined && body.runtime !== null && !KNOWN_RUNTIMES.has(body.runtime)) {
     return error(res, `runtime must be one of: ${[...KNOWN_RUNTIMES].join(', ')}, or null`);
   }
@@ -675,8 +681,8 @@ async function handleRouteModel(req, res) {
 
 async function handleRouteTask(req, res) {
   const body = await readBody(req);
-  if (!body.task || typeof body.task !== 'string') return error(res, 'task is required and must be a string');
-  if (body.task.length > 2000) return error(res, 'task must be 2000 characters or less');
+  const v = validateBody(body, { task: { type: 'string', required: true, maxLength: 2000 } });
+  if (!v.ok) return error(res, v.error);
   if (body.runtime !== undefined && body.runtime !== null && !KNOWN_RUNTIMES.has(body.runtime)) {
     return error(res, `runtime must be one of: ${[...KNOWN_RUNTIMES].join(', ')}, or null`);
   }
@@ -688,11 +694,11 @@ async function handleRouteTask(req, res) {
 
 async function handleRouteFeedback(req, res) {
   const body = await readBody(req);
-  if (!body.taskHash || typeof body.taskHash !== 'string') return error(res, 'taskHash is required');
-  if (!body.outcome) return error(res, 'outcome is required');
-  if (!VALID_OUTCOMES.has(body.outcome)) {
-    return error(res, `outcome must be one of: ${[...VALID_OUTCOMES].join(', ')}`);
-  }
+  const v = validateBody(body, {
+    taskHash: { type: 'string', required: true },
+    outcome: { type: 'string', required: true, oneOf: VALID_OUTCOMES },
+  });
+  if (!v.ok) return error(res, v.error);
   const { routeFeedback } = loadExperienceCore();
   const ok = await routeFeedback(body.taskHash, body.tier || null, body.model || null, body.outcome, body.retryCount || 0, body.duration || null);
   res.writeHead(200, { 'Content-Type': 'application/json', 'X-Route-Source': 'feedback', ...CORS });
