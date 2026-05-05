@@ -23,6 +23,7 @@ const _config = require('./src/config');
 const _embedding = require('./src/embedding');
 const _utils = require('./src/utils');
 const _qdrant = require('./src/qdrant');
+const _session = require('./src/session');
 
 // Config delegated to src/config.js — inline delegates for early-init functions
 const cfgValue = _config.cfgValue;
@@ -4049,6 +4050,24 @@ function _delegateEmbedding() {
 }
 
 // Utils module
+function _delegateSession() {
+  sanitizeSessionToken = _session.sanitizeSessionToken;
+  getSessionTrackFile = _session.getSessionTrackFile;
+  readSessionTrack = _session.readSessionTrack;
+  writeSessionTrack = _session.writeSessionTrack;
+  trackSuggestions = _session.trackSuggestions;
+  sessionUniqueCount = _session.sessionUniqueCount;
+  incrementIgnoreCountData = _session.incrementIgnoreCountData;
+  incrementIrrelevantData = _session.incrementIrrelevantData;
+  incrementUnusedData = _session.incrementUnusedData;
+  normalizeNoiseDisposition = _session.normalizeNoiseDisposition;
+  normalizeNoiseSource = _session.normalizeNoiseSource;
+  normalizeFeedbackVerdict = _session.normalizeFeedbackVerdict;
+  normalizeNoiseReason = _session.normalizeNoiseReason;
+  shortPointId = _session.shortPointId;
+  dedupeSuggestionLines = _session.dedupeSuggestionLines;
+}
+
 function _delegateUtils() {
   detectContext = _utils.detectContext;
   normalizeTechLabel = _utils.normalizeTechLabel;
