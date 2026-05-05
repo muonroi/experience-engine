@@ -18,6 +18,12 @@ const fs = require('fs');
 const pathMod = require('path');
 const os = require('os');
 
+// --- Extracted modules (Phase 1 refactoring) ---
+const _config = require('./src/config');
+const _embedding = require('./src/embedding');
+const _utils = require('./src/utils');
+const _qdrant = require('./src/qdrant');
+
 // --- Native config loader (D-06) ---
 // Reads ~/.experience/config.json BEFORE any other config.
 // setup.sh writes this file. No injection, no env auto-detect.
@@ -4097,5 +4103,76 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
 }
 
 // --- Exports ---
+
+// --- Module delegate overrides (Phase 1 refactoring) ---
+// These override original closure functions with extracted module implementations.
+// Original code preserved for backward compatibility.
+
+// Config module
+function _delegateConfig() {
+  getConfig = _config.getConfig;
+  refreshConfig = _config.refreshConfig;
+  cfgValue = _config.cfgValue;
+  
+  getQdrantBase = _config.getQdrantBase;
+  getQdrantApiKey = _config.getQdrantApiKey;
+  getOllamaBase = _config.getOllamaBase;
+  getOllamaEmbedUrl = _config.getOllamaEmbedUrl;
+  getOllamaGenerateUrl = _config.getOllamaGenerateUrl;
+  
+  getEmbedProvider = _config.getEmbedProvider;
+  getEmbedModel = _config.getEmbedModel;
+  getEmbedEndpoint = _config.getEmbedEndpoint;
+  getEmbedKey = _config.getEmbedKey;
+  getEmbedDim = _config.getEmbedDim;
+  
+  getBrainProvider = _config.getBrainProvider;
+  getBrainModel = _config.getBrainModel;
+  getBrainEndpoint = _config.getBrainEndpoint;
+  getBrainKey = _config.getBrainKey;
+  
+  getMinConfidence = _config.getMinConfidence;
+  getHighConfidence = _config.getHighConfidence;
+  getExpUser = _config.getExpUser;
+  getFileStoreDir = _config.getStoreDir;
+}
+
+// Embedding module
+function _delegateEmbedding() {
+  getEmbedding = _embedding.getEmbedding;
+  getEmbeddingRaw = _embedding.getEmbeddingRaw;
+}
+
+// Utils module
+function _delegateUtils() {
+  detectContext = _utils.detectContext;
+  normalizeTechLabel = _utils.normalizeTechLabel;
+  commandSuggestsDomain = _utils.commandSuggestsDomain;
+  extractProjectPath = _utils.extractProjectPath;
+  extractProjectSlug = _utils.extractProjectSlug;
+  buildQuery = _utils.buildQuery;
+  computeEffectiveConfidence = _utils.computeEffectiveConfidence;
+  computeEffectiveScore = _utils.computeEffectiveScore;
+  rerankByQuality = _utils.rerankByQuality;
+  formatPoints = _utils.formatPoints;
+  dedupePointsBySource = _utils.dedupePointsBySource;
+  pointSourceKey = _utils.pointSourceKey;
+  applyBudget = _utils.applyBudget;
+  inferLanguageMismatch = _utils.inferLanguageMismatch;
+  hasRecentValidatedConfirmation = _utils.hasRecentValidatedConfirmation;
+  isCodeSpecificHint = _utils.isCodeSpecificHint;
+  shouldSuppressForNoise = _utils.shouldSuppressForNoise;
+  filterNoiseSuppressedPoints = _utils.filterNoiseSuppressedPoints;
+  normalizeSourceMeta = _utils.normalizeSourceMeta;
+  resolveRuntimeFromSourceMeta = _utils.resolveRuntimeFromSourceMeta;
+  detectRuntime = _utils.detectRuntime;
+}
+
+function _delegateAll() {
+  _delegateConfig();
+  _delegateEmbedding();
+  _delegateUtils();
+}
+_delegateAll();
 
 module.exports = { intercept, interceptWithMeta, recordFeedback, recordJudgeFeedback, classifyViaBrain, extractFromSession, recordHit, recordSurface, recordHoldoutOutcome, incrementIgnoreCount, syncToQdrant, evolve, getEmbeddingRaw, searchCollection, deleteEntry, createEdge, getEdgesForId, getEdgesOfType, EDGE_COLLECTION, sharePrinciple, importPrinciple, EXP_USER, extractProjectSlug, migrateQdrantUserTags, routeTask, routeModel, routeFeedback, _updatePointPayload: updatePointPayload, _applyHitUpdate: applyHitUpdate, _applySurfaceUpdate: applySurfaceUpdate, _applyHoldoutOutcome: recordHoldoutOutcomeOnData, _activityLog: activityLog, _detectContext: detectContext, _buildQuery: buildQuery, _computeEffectiveScore: computeEffectiveScore, _computeEffectiveConfidence: computeEffectiveConfidence, _rerankByQuality: rerankByQuality, _formatPoints: formatPoints, _isProbationaryT2Candidate: isProbationaryT2Candidate, _selectProbationaryT2Points: selectProbationaryT2Points, _isHookRealtimeFastPath: isHookRealtimeFastPath, _isPromptHookPrecisionGate: isPromptHookPrecisionGate, _filterPromptHookPoints: filterPromptHookPoints, _storeExperiencePayload: (qa, domain, projectSlug) => buildStorePayload(require('crypto').randomUUID(), qa, domain || null, projectSlug || null), _extractProjectSlug: extractProjectSlug, _buildStorePayload: buildStorePayload, _recordHitUpdatesFields: applyHitUpdate, _recordSurfaceUpdatesFields: applySurfaceUpdate, _applyOrganicSupportUpdate: applyOrganicSupportUpdate, _isOrganicSupportCandidate: isOrganicSupportCandidate, _trackSuggestions: trackSuggestions, _sessionUniqueCount: sessionUniqueCount, _incrementIgnoreCountData: incrementIgnoreCountData, _incrementUnusedData: incrementUnusedData, _applyNoiseDispositionData: applyNoiseDispositionData, _shouldSuppressForNoise: shouldSuppressForNoise, _filterNoiseSuppressedPoints: filterNoiseSuppressedPoints, _reconcilePendingHints: reconcilePendingHints, _reconcileStalePromptSuggestions: reconcileStalePromptSuggestions, _assessHintUsage: assessHintUsage, _detectTranscriptDomain: detectTranscriptDomain, _detectNaturalLang: detectNaturalLang, _callBrainWithFallback: callBrainWithFallback, _isReadOnlyCommand: isReadOnlyCommand, _brainRelevanceFilter: brainRelevanceFilter, _extractProjectPath: extractProjectPath, _extractPathFromCommand: extractPathFromCommand, _detectRuntime: detectRuntime, _resolveRuntimeFromSourceMeta: resolveRuntimeFromSourceMeta, _isRouterEnabled: isRouterEnabled, _assessExtractedQaQuality: assessExtractedQaQuality, _normalizeExtractText: normalizeExtractText, _detectMistakes: detectMistakes, _shouldPromoteBehavioralToPrinciple: shouldPromoteBehavioralToPrinciple, _buildPrincipleText: buildPrincipleText, _getValidatedHitCount: getValidatedHitCount };
