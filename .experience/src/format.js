@@ -2,6 +2,7 @@
 
 const { getMinConfidence, getHighConfidence } = require('./config');
 const { computeEffectiveConfidence } = require('./scoring');
+const { detectNaturalLang } = require('./context');
 
 function buildStorePayload(id, qa, domain, projectSlug) {
   // Wave 2: Tag natural language for cross-lingual matching
