@@ -25,7 +25,10 @@ jobs:
         run: npm run test:ci
 
       - name: Lint check
-        run: npx eslint server.js .experience/experience-core.js --no-error-on-unmatched-pattern || true
+        run: npx eslint server.js .experience/experience-core.js .experience/src/ --no-error-on-unmatched-pattern
+
+      - name: Coverage check
+        run: npm run test:coverage
 
   python-sdk:
     runs-on: ubuntu-latest
@@ -56,4 +59,4 @@ jobs:
         working-directory: sdk/python
         run: |
           pip install -e .
-          python test_client.py || echo "SDK tests completed (server may not have Qdrant)"
+          python test_client.py

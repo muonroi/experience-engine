@@ -362,6 +362,18 @@ async function getJson(base, requestPath, token = '') {
       const feedbackVerdictData = await feedbackVerdictRes.json();
       assert(feedbackVerdictRes.status === 200, 'feedback with verdict returns 200');
       assert(feedbackVerdictData.verdict === 'IGNORED', 'feedback echoes verdict');
+
+      console.log('\n--- /v1/ API versioning ---');
+      const v1HealthRes = await fetch(`${base}/v1/health`);
+      assert(v1HealthRes.status === 200, '/v1/health returns 200');
+      const v1Health = await v1HealthRes.json();
+      assert('status' in v1Health, '/v1/health has status field');
+
+      const v1InterceptRes = await postJson(base, '/v1/api/intercept', {
+        toolName: 'Write',
+        toolInput: { file_path: 'test.js' },
+      }, AUTH_TOKEN);
+      assert(v1InterceptRes.status === 200, '/v1/api/intercept returns 200');
     } finally {
       server.close(async () => {
         await harness.cleanup();

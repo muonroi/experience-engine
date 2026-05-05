@@ -8,8 +8,10 @@ info:
     url: https://github.com/muonroi/experience-engine/blob/main/LICENSE
 
 servers:
+  - url: http://localhost:8082/v1
+    description: Local development server (versioned)
   - url: http://localhost:8082
-    description: Local development server
+    description: Local development server (unversioned, backward compat)
 
 security:
   - bearerAuth: []

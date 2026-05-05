@@ -235,3 +235,122 @@ class Client:
         if reason is not None:
             payload["reason"] = reason
         return self._request("POST", "/api/feedback", payload)
+
+    def prompt_stale(self, tool_name, tool_input=None, surfaced_ids=None):
+        """POST /api/prompt-stale — Reconcile stale prompt-only suggestions.
+
+        Args:
+            tool_name: Tool name from the original intercept
+            tool_input: Tool input dict
+            surfaced_ids: List of surfaced hint objects
+
+        Returns:
+            dict with reconciliation results
+        """
+        return self._request("POST", "/api/prompt-stale", {
+            "toolName": tool_name,
+            "toolInput": tool_input or {},
+            "surfacedIds": surfaced_ids or [],
+        })
+
+    def route_task(self, task, context=None, runtime=None):
+        """POST /api/route-task — Intelligent wrapper task routing.
+
+        Args:
+            task: Task description (max 2000 chars)
+            context: Optional context string
+            runtime: Optional runtime ('claude', 'gemini', 'codex', 'opencode')
+
+        Returns:
+            dict with 'tier', 'source', 'model', etc.
+        """
+        body = {"task": task}
+        if context is not None:
+            body["context"] = context
+        if runtime is not None:
+            body["runtime"] = runtime
+        return self._request("POST", "/api/route-task", body)
+
+    def route_model(self, task, context=None, runtime=None):
+        """POST /api/route-model — Intelligent model tier routing.
+
+        Args:
+            task: Task description (max 2000 chars)
+            context: Optional context string
+            runtime: Optional runtime ('claude', 'gemini', 'codex', 'opencode')
+
+        Returns:
+            dict with 'tier', 'model', 'reasoningEffort', 'source', etc.
+        """
+        body = {"task": task}
+        if context is not None:
+            body["context"] = context
+        if runtime is not None:
+            body["runtime"] = runtime
+        return self._request("POST", "/api/route-model", body)
+
+    def route_feedback(self, task_hash, outcome, duration_ms=None, runtime=None):
+        """POST /api/route-feedback — Record agent outcome for routing learning.
+
+        Args:
+            task_hash: Hash of the routed task
+            outcome: 'success', 'fail', 'retry', or 'cancelled'
+            duration_ms: Optional task duration in milliseconds
+            runtime: Optional runtime identifier
+
+        Returns:
+            dict with 'ok' (bool)
+        """
+        body = {"taskHash": task_hash, "outcome": outcome}
+        if duration_ms is not None:
+            body["durationMs"] = duration_ms
+        if runtime is not None:
+            body["runtime"] = runtime
+        return self._request("POST", "/api/route-feedback", body)
+
+    def brain(self, prompt, timeout_ms=None):
+        """POST /api/brain — Proxy brain LLM calls.
+
+        Args:
+            prompt: Prompt text to send to the brain LLM
+            timeout_ms: Optional timeout in milliseconds
+
+        Returns:
+            dict with 'ok' (bool) and 'result'
+        """
+        body = {"prompt": prompt}
+        if timeout_ms is not None:
+            body["timeoutMs"] = timeout_ms
+        return self._request("POST", "/api/brain", body)
+
+    def metrics(self):
+        """GET /metrics — Prometheus-format metrics.
+
+        Returns:
+            str with Prometheus text format metrics
+        """
+        url = f"{self.base_url}/metrics"
+        req = Request(url, method="GET")
+        try:
+            with urlopen(req, timeout=self.timeout) as resp:
+                return resp.read().decode("utf-8")
+        except HTTPError as e:
+            raise ExperienceAPIError(e.code, str(e), url) from e
+        except URLError as e:
+            raise ExperienceAPIError(0, f"Connection failed: {e.reason}", url) from e
+
+    def search(self, query, collection=None, limit=5):
+        """POST /api/search — Semantic search across experience entries.
+
+        Args:
+            query: Search query text
+            collection: Optional collection name
+            limit: Max results (default 5)
+
+        Returns:
+            dict with 'points' list
+        """
+        body = {"query": query, "limit": limit}
+        if collection is not None:
+            body["collection"] = collection
+        return self._request("POST", "/api/search", body)
