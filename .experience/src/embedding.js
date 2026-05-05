@@ -81,19 +81,17 @@ const EMBED_PROVIDERS = {
 //  Cost Logging (used by getEmbedding)
 // ============================================================
 
-function estimateTextUnits(text, maxPerUnit) {
-  const len = (text || '').length;
-  return Math.max(1, Math.ceil(len / maxPerUnit));
+function estimateTextUnits(text, cap = 12000) {
+  return Math.min(String(text || '').length, cap);
 }
 
 function logCostCall(kind, provider, source, units, extra = {}) {
   activityLog({
-    ts: new Date().toISOString(),
     op: 'cost-call',
     kind,
-    provider,
-    source,
-    units,
+    provider: provider || 'unknown',
+    source: source || 'unknown',
+    units: Math.max(0, Math.round(Number(units) || 0)),
     ...extra,
   });
 }
