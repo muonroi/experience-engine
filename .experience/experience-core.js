@@ -1409,7 +1409,12 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
     ...sourceMeta
   });
 
-  return { suggestions: lines.length > 0 ? lines.join('\n---\n') : null, surfacedIds: shownSurfacedMeta, route: routeResult || null };
+  let suggestions = null;
+  if (lines.length > 0) {
+    suggestions = lines.join('\n---\n');
+    suggestions += '\n───\nFeedback reasons: wrong_repo | wrong_language | wrong_task | stale_rule — or verdict:"IGNORED" if you chose to skip.';
+  }
+  return { suggestions, surfacedIds: shownSurfacedMeta, route: routeResult || null };
 }
 
 // --- intercept: backward-compatible wrapper returning string|null ---
@@ -2491,10 +2496,8 @@ function formatPoints(points) {
     let exp;
     try { exp = JSON.parse(point.payload?.json || '{}'); } catch { continue; }
     if (!exp.solution) continue;
-    // Use effective confidence for the MIN_CONFIDENCE filter (NOISE-03)
     const effConf = computeEffectiveConfidence(exp);
     if (effConf < getMinConfidence() && !point._probationaryT2) continue;
-    // Use _effectiveScore (from rerankByQuality) for display, fallback to raw score
     const displayScore = point._effectiveScore ?? point.score ?? 0;
     let line;
     if (point._probationaryT2) {
@@ -2504,14 +2507,14 @@ function formatPoints(points) {
     } else {
       line = `💡 [Suggestion (${displayScore.toFixed(2)})]: ${exp.solution}`;
     }
-    // v2: append why when present so agent understands the motivation
     if (exp.why) {
       line += `\n   Why: ${exp.why}`;
     }
-    // v2: append point ID so agent can call POST /api/feedback when ignoring
     const pid = String(point.id).slice(0, 8);
     const coll = point._collection || 'experience-behavioral';
     line += `\n   [id:${pid} col:${coll}]`;
+    // v3: inline feedback — agent reports noisy/wrong hints
+    line += `\n   ↩ Wrong? POST /api/feedback {"pointId":"${pid}","collection":"${coll}","verdict":"IRRELEVANT","reason":"wrong_repo"}`;
     lines.push(line);
   }
   return lines;
