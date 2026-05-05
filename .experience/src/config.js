@@ -33,9 +33,35 @@ function loadConfig(force = false) {
 function getConfig() { return loadConfig(false); }
 function refreshConfig() { return loadConfig(true); }
 
+// Auto-decrypt enc: prefixed values at runtime
+const _decryptCache = new Map();
+let _configKey = null;
+function _tryDecrypt(value) {
+  if (!value || typeof value !== 'string' || !value.startsWith('enc:')) return value;
+  if (_decryptCache.has(value)) return _decryptCache.get(value);
+  try {
+    if (!_configKey) {
+      const keyPath = pathMod.join(os.homedir(), '.experience', '.config-key');
+      if (!fs.existsSync(keyPath)) return value;
+      _configKey = Buffer.from(fs.readFileSync(keyPath, 'utf8').trim(), 'hex');
+    }
+    const buf = Buffer.from(value.slice(4), 'base64');
+    const iv = buf.subarray(0, 12);
+    const tag = buf.subarray(12, 28);
+    const data = buf.subarray(28);
+    const crypto = require('crypto');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', _configKey, iv);
+    decipher.setAuthTag(tag);
+    const decrypted = Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
+    _decryptCache.set(value, decrypted);
+    return decrypted;
+  } catch { return value; }
+}
+
 function cfgValue(key, envKey, fallback) {
   const cfg = getConfig();
-  return cfg[key] ?? process.env[envKey] ?? fallback;
+  const raw = cfg[key] ?? process.env[envKey] ?? fallback;
+  return _tryDecrypt(raw);
 }
 
 // --- Config accessors ---

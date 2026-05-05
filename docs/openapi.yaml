@@ -1,0 +1,636 @@
+openapi: 3.1.0
+info:
+  title: Experience Engine API
+  description: REST API for AI agent experience learning system. Zero npm dependencies.
+  version: 0.1.1
+  license:
+    name: MIT
+    url: https://github.com/muonroi/experience-engine/blob/main/LICENSE
+
+servers:
+  - url: http://localhost:8082
+    description: Local development server
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Set via server.authToken in ~/.experience/config.json
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, warn, degraded]
+        qdrant:
+          type: object
+          properties:
+            status:
+              type: string
+              enum: [ok, error, unreachable, unknown]
+            code:
+              type: integer
+            error:
+              type: string
+        embed:
+          type: object
+          properties:
+            status:
+              type: string
+              enum: [ok, warn, degraded, no-data, unknown]
+            recentFailRate:
+              type: string
+            lastProvider:
+              type: string
+        fileStore:
+          type: object
+          properties:
+            status:
+              type: string
+              enum: [ok, missing, unknown]
+            path:
+              type: string
+        uptime:
+          type: number
+        alerts:
+          type: array
+          items:
+            type: string
+
+    InterceptRequest:
+      type: object
+      required: [toolName]
+      properties:
+        toolName:
+          type: string
+          description: Name of the tool being called (e.g. "Bash", "Edit")
+        toolInput:
+          type: object
+          description: Tool input payload
+        sourceKind:
+          type: string
+          default: manual-api
+        sourceRuntime:
+          type: string
+          default: api
+        sourceSession:
+          type: string
+        cwd:
+          type: string
+
+    InterceptResponse:
+      type: object
+      properties:
+        suggestions:
+          type: string
+          nullable: true
+          description: Formatted hint text or null if no suggestions
+        hasSuggestions:
+          type: boolean
+        surfacedIds:
+          type: array
+          items:
+            type: object
+            properties:
+              collection:
+                type: string
+              id:
+                type: string
+              solution:
+                type: string
+        route:
+          type: object
+          nullable: true
+          properties:
+            tier:
+              type: string
+              enum: [fast, balanced, premium]
+            model:
+              type: string
+            confidence:
+              type: number
+            source:
+              type: string
+
+    PostToolRequest:
+      type: object
+      properties:
+        toolName:
+          type: string
+        toolInput:
+          type: object
+        toolOutput:
+          type: object
+        surfacedIds:
+          type: array
+          items:
+            type: object
+        sourceKind:
+          type: string
+        sourceRuntime:
+          type: string
+        sourceSession:
+          type: string
+
+    ExtractRequest:
+      type: object
+      required: [transcript]
+      properties:
+        transcript:
+          type: string
+          description: Session transcript text
+        projectPath:
+          type: string
+
+    FeedbackRequest:
+      type: object
+      required: [pointId, collection]
+      properties:
+        pointId:
+          type: string
+          description: Full UUID or 8-char prefix
+        collection:
+          type: string
+          enum: [experience-principles, experience-behavioral, experience-selfqa]
+        verdict:
+          type: string
+          enum: [FOLLOWED, IGNORED, IRRELEVANT]
+        reason:
+          type: string
+          enum: [wrong_repo, wrong_language, wrong_task, stale_rule]
+          description: Required when verdict is IRRELEVANT
+        followed:
+          type: boolean
+          description: "Legacy: true=FOLLOWED, false=IGNORED"
+          deprecated: true
+
+    FeedbackResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        resolvedId:
+          type: string
+        verdict:
+          type: string
+        reason:
+          type: string
+
+    RouteTaskRequest:
+      type: object
+      required: [task]
+      properties:
+        task:
+          type: string
+          maxLength: 2000
+        context:
+          type: object
+        runtime:
+          type: string
+
+    RouteResponse:
+      type: object
+      properties:
+        tier:
+          type: string
+          enum: [fast, balanced, premium]
+        model:
+          type: string
+        reasoningEffort:
+          type: string
+          nullable: true
+        confidence:
+          type: number
+        source:
+          type: string
+        reason:
+          type: string
+
+    RouteFeedbackRequest:
+      type: object
+      required: [taskHash, tier, model]
+      properties:
+        taskHash:
+          type: string
+        tier:
+          type: string
+        model:
+          type: string
+        outcome:
+          type: string
+        retryCount:
+          type: integer
+        duration:
+          type: number
+
+    EvolveResponse:
+      type: object
+      properties:
+        promoted:
+          type: integer
+        abstracted:
+          type: integer
+        demoted:
+          type: integer
+        archived:
+          type: integer
+
+    StatsResponse:
+      type: object
+      properties:
+        since:
+          type: string
+        totalIntercepts:
+          type: integer
+        suggestions:
+          type: integer
+        misses:
+          type: integer
+        totalMistakes:
+          type: integer
+        totalStored:
+          type: integer
+        extractSessions:
+          type: integer
+        evolveCount:
+          type: integer
+        promoted:
+          type: integer
+        demoted:
+          type: integer
+        abstracted:
+          type: integer
+        archived:
+          type: integer
+        projects:
+          type: object
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: Qdrant, embed provider, and FileStore status. Always open (no auth).
+      security: []
+      responses:
+        '200':
+          description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      description: Prometheus text format metrics for monitoring.
+      security: []
+      responses:
+        '200':
+          description: Prometheus text format
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /api/intercept:
+    post:
+      summary: Query experience before tool call
+      description: Returns relevant suggestions and model routing for the given tool invocation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InterceptRequest'
+      responses:
+        '200':
+          description: Suggestions and route
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InterceptResponse'
+        '400':
+          description: Missing toolName
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+        '429':
+          description: Rate limited
+
+  /api/posttool:
+    post:
+      summary: Post-tool reconciliation
+      description: Records tool outcome and triggers judge evaluation of surfaced suggestions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostToolRequest'
+      responses:
+        '200':
+          description: Reconciliation result
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/extract:
+    post:
+      summary: Extract lessons from session transcript
+      description: Analyzes transcript for mistakes and stores learned experiences.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExtractRequest'
+      responses:
+        '200':
+          description: Extraction result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stored:
+                    type: integer
+                  mistakes:
+                    type: integer
+
+  /api/evolve:
+    post:
+      summary: Trigger evolution cycle
+      description: Runs promotion (T2→T1→T0), demotion, archival, and route compaction.
+      responses:
+        '200':
+          description: Evolution metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvolveResponse'
+
+  /api/feedback:
+    post:
+      summary: Record agent feedback on suggestion
+      description: Report whether a surfaced hint was followed, ignored, or irrelevant.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeedbackRequest'
+      responses:
+        '200':
+          description: Feedback recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedbackResponse'
+
+  /api/stats:
+    get:
+      summary: Observability statistics
+      description: Aggregated activity metrics. Supports ?since=7d query param.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: since
+          in: query
+          schema:
+            type: string
+            default: 7d
+        - name: all
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatsResponse'
+
+  /api/gates:
+    get:
+      summary: Readiness gate report
+      description: Three-gate readiness assessment (Build, Dogfood, Acceptance).
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Gate report
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/user:
+    get:
+      summary: Current user identity
+      responses:
+        '200':
+          description: User info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    type: string
+
+  /api/route-task:
+    post:
+      summary: Intelligent task routing
+      description: Classifies task complexity and routes to appropriate model tier.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RouteTaskRequest'
+      responses:
+        '200':
+          description: Route decision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RouteResponse'
+
+  /api/route-model:
+    post:
+      summary: Model tier routing
+      description: Routes to specific model based on task analysis.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RouteTaskRequest'
+      responses:
+        '200':
+          description: Route decision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RouteResponse'
+
+  /api/route-feedback:
+    post:
+      summary: Route outcome feedback
+      description: Records agent outcome for routing learning.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RouteFeedbackRequest'
+      responses:
+        '200':
+          description: Feedback recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+
+  /api/principles/share:
+    post:
+      summary: Export a principle
+      description: Exports a principle for sharing with other instances.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [principleId]
+              properties:
+                principleId:
+                  type: string
+      responses:
+        '200':
+          description: Shared principle data
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/principles/import:
+    post:
+      summary: Import a principle
+      description: Imports a shared principle into the local brain.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Import result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  principle:
+                    type: string
+
+  /api/brain:
+    post:
+      summary: Proxy brain LLM calls
+      description: Proxies LLM calls for clients behind firewall.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt:
+                  type: string
+                timeoutMs:
+                  type: integer
+                  default: 10000
+      responses:
+        '200':
+          description: LLM response
+          content:
+            application/json:
+              schema:
+                type: object
+        '502':
+          description: Brain call failed
+
+  /api/prompt-stale:
+    post:
+      summary: Reconcile stale prompt suggestions
+      description: Cleans up prompt-only suggestions that were never acted upon.
+      responses:
+        '200':
+          description: Reconciliation result
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/graph:
+    get:
+      summary: Experience graph edges
+      description: Returns edges for an experience entry.
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Graph edges
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/timeline:
+    get:
+      summary: Semantic timeline
+      description: Returns timeline of experiences related to a topic.
+      parameters:
+        - name: topic
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Timeline entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
