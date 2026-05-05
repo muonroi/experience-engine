@@ -81,7 +81,7 @@ test.before(async () => {
 
 test.after(async () => {
   await new Promise(r => fakeEmbedServer.close(r));
-  fs.rmSync(testHome, { recursive: true, force: true });
+  try { fs.rmSync(testHome, { recursive: true, force: true }); } catch {}
 });
 
 test.beforeEach(() => {

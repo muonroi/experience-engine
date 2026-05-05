@@ -290,11 +290,11 @@ function handleMetrics(req, res) {
   lines.push(`experience_embed_consecutive_failures ${_healthState.embedConsecutiveFailures}`);
 
   // Activity-based counters from JSONL
+  let intercepts = 0, suggestions = 0, feedbacks = 0, evolves = 0, embedOk = 0, embedFail = 0;
   try {
     const activityPath = path.join(os.homedir(), '.experience', 'activity.jsonl');
     const lines24h = fs.readFileSync(activityPath, 'utf8').trim().split('\n').slice(-500);
     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-    let intercepts = 0, suggestions = 0, feedbacks = 0, evolves = 0, embedOk = 0, embedFail = 0;
     for (const l of lines24h) {
       try {
         const e = JSON.parse(l);
@@ -308,25 +308,25 @@ function handleMetrics(req, res) {
         if (e.op === 'cost-call' && e.kind === 'embed' && !e.ok) embedFail++;
       } catch {}
     }
-    lines.push(`# HELP experience_intercepts_24h Intercepts in last 24h`);
-    lines.push(`# TYPE experience_intercepts_24h gauge`);
-    lines.push(`experience_intercepts_24h ${intercepts}`);
-    lines.push(`# HELP experience_suggestions_24h Suggestions surfaced in last 24h`);
-    lines.push(`# TYPE experience_suggestions_24h gauge`);
-    lines.push(`experience_suggestions_24h ${suggestions}`);
-    lines.push(`# HELP experience_feedbacks_24h Judge feedbacks in last 24h`);
-    lines.push(`# TYPE experience_feedbacks_24h gauge`);
-    lines.push(`experience_feedbacks_24h ${feedbacks}`);
-    lines.push(`# HELP experience_evolves_24h Evolution cycles in last 24h`);
-    lines.push(`# TYPE experience_evolves_24h gauge`);
-    lines.push(`experience_evolves_24h ${evolves}`);
-    lines.push(`# HELP experience_embed_ok_24h Successful embed calls in last 24h`);
-    lines.push(`# TYPE experience_embed_ok_24h gauge`);
-    lines.push(`experience_embed_ok_24h ${embedOk}`);
-    lines.push(`# HELP experience_embed_fail_24h Failed embed calls in last 24h`);
-    lines.push(`# TYPE experience_embed_fail_24h gauge`);
-    lines.push(`experience_embed_fail_24h ${embedFail}`);
   } catch {}
+  lines.push(`# HELP experience_intercepts_24h Intercepts in last 24h`);
+  lines.push(`# TYPE experience_intercepts_24h gauge`);
+  lines.push(`experience_intercepts_24h ${intercepts}`);
+  lines.push(`# HELP experience_suggestions_24h Suggestions surfaced in last 24h`);
+  lines.push(`# TYPE experience_suggestions_24h gauge`);
+  lines.push(`experience_suggestions_24h ${suggestions}`);
+  lines.push(`# HELP experience_feedbacks_24h Judge feedbacks in last 24h`);
+  lines.push(`# TYPE experience_feedbacks_24h gauge`);
+  lines.push(`experience_feedbacks_24h ${feedbacks}`);
+  lines.push(`# HELP experience_evolves_24h Evolution cycles in last 24h`);
+  lines.push(`# TYPE experience_evolves_24h gauge`);
+  lines.push(`experience_evolves_24h ${evolves}`);
+  lines.push(`# HELP experience_embed_ok_24h Successful embed calls in last 24h`);
+  lines.push(`# TYPE experience_embed_ok_24h gauge`);
+  lines.push(`experience_embed_ok_24h ${embedOk}`);
+  lines.push(`# HELP experience_embed_fail_24h Failed embed calls in last 24h`);
+  lines.push(`# TYPE experience_embed_fail_24h gauge`);
+  lines.push(`experience_embed_fail_24h ${embedFail}`);
 
   res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4', ...CORS });
   res.end(lines.join('\n') + '\n');
