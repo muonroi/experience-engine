@@ -16,5 +16,5 @@
     "no-implied-eval": "error",
     "no-new-func": "error"
   },
-  "ignorePatterns": ["node_modules/", "coverage/", ".experience/src/*.js"]
+  "ignorePatterns": ["node_modules/", "coverage/"]
 }

@@ -37,6 +37,13 @@ const os = require('node:os');
 
 const { parseSince, loadEvents, filterEvents, computeStats, loadTop5 } = require('./tools/exp-stats');
 const { checkGates } = require('./tools/exp-gates');
+const { validateBody } = require('./.experience/src/validate');
+
+// --- Structured logger (zero-dep) ---
+function slog(level, msg, meta = {}) {
+  const entry = JSON.stringify({ ts: new Date().toISOString(), level, msg, ...meta });
+  process[level === 'error' ? 'stderr' : 'stdout'].write(entry + '\n');
+}
 
 // --- Config ---
 const _cfg = (() => {
@@ -269,7 +276,7 @@ async function handleHealth(req, res) {
 function handleMetrics(req, res) {
   const uptime = process.uptime();
   const mem = process.memoryUsage();
-  let lines = [];
+  const lines = [];
   lines.push(`# HELP experience_uptime_seconds Server uptime in seconds`);
   lines.push(`# TYPE experience_uptime_seconds gauge`);
   lines.push(`experience_uptime_seconds ${uptime.toFixed(1)}`);
@@ -334,7 +341,8 @@ function handleMetrics(req, res) {
 
 async function handleIntercept(req, res) {
   const body = await readBody(req);
-  if (!body.toolName) return error(res, 'toolName is required');
+  const v = validateBody(body, { toolName: { type: 'string', required: true } });
+  if (!v.ok) return error(res, v.error);
   const meta = {
     sourceKind: body.sourceKind || 'manual-api',
     sourceRuntime: body.sourceRuntime || 'api',
@@ -375,6 +383,8 @@ function classifyPostToolOutcome(toolName, toolOutput) {
 
 async function handlePostTool(req, res) {
   const body = await readBody(req);
+  const v = validateBody(body, { toolName: { type: 'string', required: true } });
+  if (!v.ok) return error(res, v.error);
   const core = loadExperienceCore();
   const reconcilePendingHints = core._reconcilePendingHints;
   const activityLog = core._activityLog;
@@ -458,7 +468,8 @@ async function handlePromptStale(req, res) {
 
 async function handleExtract(req, res) {
   const body = await readBody(req);
-  if (!body.transcript) return error(res, 'transcript is required');
+  const v = validateBody(body, { transcript: { type: 'string', required: true } });
+  if (!v.ok) return error(res, v.error);
   const { extractFromSession } = loadExperienceCore();
   const stored = await extractFromSession(body.transcript, body.projectPath || null, {
     sourceKind: body.sourceKind || 'manual-api',
@@ -517,7 +528,8 @@ async function handleGraph(req, res, url) {
 
 async function handleShare(req, res) {
   const body = await readBody(req);
-  if (!body.principleId) return error(res, 'principleId is required');
+  const v = validateBody(body, { principleId: { type: 'string', required: true } });
+  if (!v.ok) return error(res, v.error);
   const { sharePrinciple } = loadExperienceCore();
   const shared = sharePrinciple(body.principleId);
   if (!shared) return error(res, 'Principle not found', 404);
@@ -535,8 +547,11 @@ async function handleImport(req, res) {
 
 async function handleFeedback(req, res) {
   const body = await readBody(req);
-  if (!body.pointId) return error(res, 'pointId is required');
-  if (!body.collection) return error(res, 'collection is required');
+  const v = validateBody(body, {
+    pointId: { type: 'string', required: true },
+    collection: { type: 'string', required: true },
+  });
+  if (!v.ok) return error(res, v.error);
   const verdict = typeof body.verdict === 'string' ? body.verdict.trim().toUpperCase() : null;
   const followed = typeof body.followed === 'boolean' ? body.followed : null;
   if (!verdict && followed === null) return error(res, 'verdict is required (or legacy followed boolean)');
@@ -653,8 +668,8 @@ const KNOWN_RUNTIMES = new Set(['claude', 'gemini', 'codex', 'opencode']);
 
 async function handleRouteModel(req, res) {
   const body = await readBody(req);
-  if (!body.task || typeof body.task !== 'string') return error(res, 'task is required and must be a string');
-  if (body.task.length > 2000) return error(res, 'task must be 2000 characters or less');
+  const v = validateBody(body, { task: { type: 'string', required: true, maxLength: 2000 } });
+  if (!v.ok) return error(res, v.error);
   if (body.runtime !== undefined && body.runtime !== null && !KNOWN_RUNTIMES.has(body.runtime)) {
     return error(res, `runtime must be one of: ${[...KNOWN_RUNTIMES].join(', ')}, or null`);
   }
@@ -666,8 +681,8 @@ async function handleRouteModel(req, res) {
 
 async function handleRouteTask(req, res) {
   const body = await readBody(req);
-  if (!body.task || typeof body.task !== 'string') return error(res, 'task is required and must be a string');
-  if (body.task.length > 2000) return error(res, 'task must be 2000 characters or less');
+  const v = validateBody(body, { task: { type: 'string', required: true, maxLength: 2000 } });
+  if (!v.ok) return error(res, v.error);
   if (body.runtime !== undefined && body.runtime !== null && !KNOWN_RUNTIMES.has(body.runtime)) {
     return error(res, `runtime must be one of: ${[...KNOWN_RUNTIMES].join(', ')}, or null`);
   }
@@ -679,11 +694,11 @@ async function handleRouteTask(req, res) {
 
 async function handleRouteFeedback(req, res) {
   const body = await readBody(req);
-  if (!body.taskHash || typeof body.taskHash !== 'string') return error(res, 'taskHash is required');
-  if (!body.outcome) return error(res, 'outcome is required');
-  if (!VALID_OUTCOMES.has(body.outcome)) {
-    return error(res, `outcome must be one of: ${[...VALID_OUTCOMES].join(', ')}`);
-  }
+  const v = validateBody(body, {
+    taskHash: { type: 'string', required: true },
+    outcome: { type: 'string', required: true, oneOf: VALID_OUTCOMES },
+  });
+  if (!v.ok) return error(res, v.error);
   const { routeFeedback } = loadExperienceCore();
   const ok = await routeFeedback(body.taskHash, body.tier || null, body.model || null, body.outcome, body.retryCount || 0, body.duration || null);
   res.writeHead(200, { 'Content-Type': 'application/json', 'X-Route-Source': 'feedback', ...CORS });
@@ -718,7 +733,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const p = url.pathname;
+  const p = url.pathname.startsWith('/v1') ? url.pathname.slice(3) : url.pathname;
 
   try {
     // Keep health open for liveness checks; protect other GET APIs when auth is configured.
@@ -764,14 +779,28 @@ const server = http.createServer(async (req, res) => {
 process.on('unhandledRejection', (reason) => {
   const msg = reason instanceof Error ? reason.stack || reason.message : String(reason);
   try { require('node:fs').appendFileSync(require('node:path').join(require('node:os').homedir(), '.experience', 'server-errors.log'), `[${new Date().toISOString()}] UnhandledRejection: ${msg}\n`); } catch {}
-  console.error(`[Experience Engine] UnhandledRejection: ${msg}`);
+  slog('error', 'UnhandledRejection', { detail: msg });
 });
+
+// --- Graceful shutdown ---
+function shutdown(signal) {
+  slog('info', 'shutdown', { signal });
+  server.close(() => {
+    slog('info', 'shutdown_complete');
+    process.exit(0);
+  });
+  setTimeout(() => {
+    slog('error', 'shutdown_timeout');
+    process.exit(1);
+  }, 10_000).unref();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 // Only start when run directly (not when required for testing)
 if (require.main === module) {
   server.listen(PORT, () => {
-    console.log(`Experience Engine API running on http://localhost:${PORT}`);
-    console.log(`Health: http://localhost:${PORT}/health`);
+    slog('info', 'server_started', { port: PORT, health: `http://localhost:${PORT}/health` });
   });
 }
 
