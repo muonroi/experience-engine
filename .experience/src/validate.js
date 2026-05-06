@@ -7,7 +7,7 @@ function validateBody(body, schema) {
   if (!body || typeof body !== 'object') return { ok: false, error: 'request body must be a JSON object' };
   for (const [field, rules] of Object.entries(schema)) {
     const val = body[field];
-    if (rules.required && (val === undefined || val === null)) {
+    if (rules.required && (val === undefined || val === null || val === '')) {
       return { ok: false, error: `${field} is required` };
     }
     if (val === undefined || val === null) continue;
