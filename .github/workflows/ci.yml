@@ -28,7 +28,8 @@ jobs:
         run: npx eslint server.js .experience/experience-core.js .experience/src/ --no-error-on-unmatched-pattern
 
       - name: Coverage check
-        run: npm run test:coverage
+        timeout-minutes: 3
+        run: npx c8@8 --lines 60 --functions 50 --branches 40 --reporter=text node --test --test-concurrency=1 tests/server-*.test.js tests/interceptor.test.js tests/embedding.test.js tests/qdrant-io.test.js tests/experience-core-routing.test.js tests/experience-core-task-routing.test.js tests/experience-core-evolution.test.js tests/npm-cli.test.js
 
   python-sdk:
     runs-on: ubuntu-latest
