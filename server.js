@@ -22,6 +22,7 @@
  *   POST /api/route-model           — Intelligent model tier routing
  *   POST /api/route-feedback        — Record agent outcome for routing learning
  *   POST /api/brain                 — Proxy brain LLM calls (for clients behind firewall)
+ *   POST /api/phase-outcome         — GSD phase-grain reinforcement (gated by ENABLE_PHASE_OUTCOME=1)
  *
  * Config: ~/.experience/config.json (server.port, server.authToken, server.readAuthToken)
  * Start: node server.js
@@ -739,6 +740,35 @@ async function handleBrainProxy(req, res) {
   }
 }
 
+// P1 Item 3: phase-outcome endpoint, gated by ENABLE_PHASE_OUTCOME=1.
+async function handlePhaseOutcome(req, res) {
+  if (process.env.ENABLE_PHASE_OUTCOME !== '1' && _cfg.enablePhaseOutcome !== true) {
+    return error(res, 'phase-outcome endpoint is disabled (set ENABLE_PHASE_OUTCOME=1)', 404);
+  }
+  const body = await readBody(req);
+  const v = validateBody(body, {
+    sessionId: { type: 'string', required: true },
+    phaseName: { type: 'string', required: true },
+    outcome: { type: 'string', required: true },
+  });
+  if (!v.ok) return error(res, v.error);
+
+  let phaseModule;
+  try {
+    phaseModule = require(path.join(RUNTIME_DIR, 'src', 'phase-outcome.js'));
+  } catch (err) {
+    return error(res, `phase-outcome module unavailable: ${err.message}`, 503);
+  }
+
+  const core = loadExperienceCore();
+  const result = await phaseModule.applyPhaseOutcome(body, {
+    recordFeedback: core.recordFeedback,
+    activityLog: core._activityLog,
+  });
+  if (!result.ok) return error(res, result.error || 'phase-outcome failed', 400);
+  json(res, result);
+}
+
 // --- Server ---
 
 const server = http.createServer(async (req, res) => {
@@ -784,6 +814,7 @@ const server = http.createServer(async (req, res) => {
       if (p === '/api/route-feedback') return await handleRouteFeedback(req, res);
       if (p === '/api/brain') return await handleBrainProxy(req, res);
       if (p === '/api/search') return await handleSearch(req, res);
+      if (p === '/api/phase-outcome') return await handlePhaseOutcome(req, res);
     }
 
     error(res, 'Not found', 404);
