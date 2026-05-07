@@ -101,22 +101,41 @@ ensure_line_in_file() {
   grep -Fqx "$line" "$file" 2>/dev/null || printf '\n%s\n' "$line" >> "$file"
 }
 
-for f in interceptor.js interceptor-post.js interceptor-prompt.js stop-extractor.js remote-client.js extract-compact.js exp-client-drain.js health-check.sh exp-feedback.js exp-feedback exp-bootstrap.sh exp-health-last exp-shell-init.sh sync-install.sh; do
+# ── Thin-client minimum file set ───────────────────────────────────────────
+#
+# Thin-client routes EVERY brain operation through remote-client.js → VPS.
+# It does NOT need:
+#   - experience-core.js (full local brain)
+#   - src/* modules (router, qdrant, embedding — all server-side)
+#   - judge-worker.js (judge runs on the server)
+#   - activity-watch.js + exp-pane-* + exp-open-pane + exp-watch
+#     (these tail local activity.jsonl which only the server writes)
+#   - exp-server-maintain.js (server admin)
+#   - exp-portable-backup.js / exp-portable-restore.js (talk to local Qdrant)
+#
+# Anything not in this list is a smell — interceptors check isRemoteMode()
+# before requiring core, so installing core locally will silently drift the
+# thin-client into a half-local state on the next interceptor invocation.
+THIN_CLIENT_FILES=(
+  interceptor.js
+  interceptor-post.js
+  interceptor-prompt.js
+  stop-extractor.js
+  remote-client.js
+  extract-compact.js
+  exp-client-drain.js
+  health-check.sh
+  exp-feedback.js
+  exp-feedback
+  exp-bootstrap.sh
+  exp-health-last
+  exp-shell-init.sh
+  sync-install.sh
+)
+
+for f in "${THIN_CLIENT_FILES[@]}"; do
   cp "$SRC_DIR/$f" "$INSTALL_DIR/$f"
 done
-
-for f in exp-server-maintain.js exp-portable-backup.js exp-portable-restore.js; do
-  cp "$ROOT_DIR/tools/$f" "$INSTALL_DIR/$f"
-done
-
-# Sync src/ modules (required after modular refactor for local-mode fallback)
-if [ -d "$SRC_DIR/src" ]; then
-  mkdir -p "$INSTALL_DIR/src"
-  for f in "$SRC_DIR/src/"*.js; do
-    [ -f "$f" ] || continue
-    cp "$f" "$INSTALL_DIR/src/$(basename "$f")"
-  done
-fi
 
 chmod +x \
   "$INSTALL_DIR/interceptor.js" \
@@ -132,10 +151,47 @@ chmod +x \
   "$INSTALL_DIR/exp-bootstrap.sh" \
   "$INSTALL_DIR/exp-health-last" \
   "$INSTALL_DIR/exp-shell-init.sh" \
-  "$INSTALL_DIR/sync-install.sh" \
-  "$INSTALL_DIR/exp-server-maintain.js" \
-  "$INSTALL_DIR/exp-portable-backup.js" \
-  "$INSTALL_DIR/exp-portable-restore.js"
+  "$INSTALL_DIR/sync-install.sh"
+
+# ── Prune local-only artefacts ─────────────────────────────────────────────
+#
+# Idempotent. If a prior full setup.sh (or sync-install) dropped local-only
+# files into ~/.experience, remove them so this machine becomes a true thin
+# client. These removals are SAFE — nothing in THIN_CLIENT_FILES requires
+# them at runtime (interceptors check isRemoteMode() and never reach core
+# in thin mode).
+LOCAL_ONLY_FILES=(
+  experience-core.js
+  judge-worker.js
+  activity-watch.js
+  exp-server-maintain.js
+  exp-portable-backup.js
+  exp-portable-restore.js
+  exp-open-pane
+  exp-watch
+  exp-pane-bottom
+  exp-pane-left
+  exp-pane-right
+)
+
+PRUNE_STAMP="$(date +%Y%m%d-%H%M%S)"
+PRUNE_BACKUP="$INSTALL_DIR/backup-thin-client/$PRUNE_STAMP-prune"
+pruned=0
+for f in "${LOCAL_ONLY_FILES[@]}"; do
+  if [ -e "$INSTALL_DIR/$f" ]; then
+    mkdir -p "$PRUNE_BACKUP"
+    mv "$INSTALL_DIR/$f" "$PRUNE_BACKUP/$f"
+    pruned=$((pruned + 1))
+  fi
+done
+if [ -d "$INSTALL_DIR/src" ]; then
+  mkdir -p "$PRUNE_BACKUP"
+  mv "$INSTALL_DIR/src" "$PRUNE_BACKUP/src"
+  pruned=$((pruned + 1))
+fi
+if [ "$pruned" -gt 0 ]; then
+  echo "  ✓ Pruned $pruned local-only artefacts (backup: $PRUNE_BACKUP)"
+fi
 
 mkdir -p "$HOME/.local/bin"
 ln -sf "$INSTALL_DIR/exp-feedback" "$HOME/.local/bin/exp-feedback"

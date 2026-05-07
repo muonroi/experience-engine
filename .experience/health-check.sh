@@ -89,13 +89,27 @@ run_checks() {
   fi
 
   # 2. Core files
-  for f in experience-core.js interceptor.js interceptor-post.js interceptor-prompt.js stop-extractor.js remote-client.js health-check.sh; do
+  #
+  # Thin-client never needs experience-core.js — interceptors short-circuit to
+  # remote-client when serverBaseUrl is configured. Detect mode early so we
+  # check the right file set.
+  local _early_server_base; _early_server_base=$(read_cfg serverBaseUrl)
+  local CORE_FILES=(interceptor.js interceptor-post.js interceptor-prompt.js stop-extractor.js remote-client.js health-check.sh)
+  if [ -z "$_early_server_base" ]; then
+    # Local / hybrid mode — experience-core.js is required
+    CORE_FILES=(experience-core.js "${CORE_FILES[@]}")
+  fi
+  for f in "${CORE_FILES[@]}"; do
     if [ -f "$EXP_DIR/$f" ]; then
       check "$f" "ok" "$(wc -l < "$EXP_DIR/$f") lines"
     else
       check "$f" "fail" "Missing" "Re-run setup.sh so ~/.experience gets refreshed"
     fi
   done
+  # In thin-client mode, surface that experience-core.js is intentionally absent.
+  if [ -n "$_early_server_base" ] && [ ! -f "$EXP_DIR/experience-core.js" ]; then
+    check "experience-core.js" "ok" "Not required in thin-client mode (routes through remote-client)"
+  fi
 
   # 2b. Mode detection
   local server_base; server_base=$(read_cfg serverBaseUrl)
@@ -332,14 +346,21 @@ run_checks() {
   fi
 
   # 10. Portable migration tools
-  local missing_tools=()
-  for f in "$EXP_DIR/exp-server-maintain.js" "$EXP_DIR/exp-portable-backup.js" "$EXP_DIR/exp-portable-restore.js"; do
-    [ -f "$f" ] || missing_tools+=("$(basename "$f")")
-  done
-  if [ "${#missing_tools[@]}" -eq 0 ]; then
-    check "Portable Backup" "ok" "Maintenance and backup tools present"
+  #
+  # These talk to local Qdrant + FileStore — useless in thin-client mode where
+  # the brain lives on the VPS. Skip the check when serverBaseUrl is set.
+  if [ -n "$_early_server_base" ]; then
+    check "Portable Backup" "ok" "Not required in thin-client mode (brain lives on VPS)"
   else
-    check "Portable Backup" "warn" "Missing: ${missing_tools[*]}" "Update the repo checkout so VPS maintenance/backup scripts are available"
+    local missing_tools=()
+    for f in "$EXP_DIR/exp-server-maintain.js" "$EXP_DIR/exp-portable-backup.js" "$EXP_DIR/exp-portable-restore.js"; do
+      [ -f "$f" ] || missing_tools+=("$(basename "$f")")
+    done
+    if [ "${#missing_tools[@]}" -eq 0 ]; then
+      check "Portable Backup" "ok" "Maintenance and backup tools present"
+    else
+      check "Portable Backup" "warn" "Missing: ${missing_tools[*]}" "Update the repo checkout so VPS maintenance/backup scripts are available"
+    fi
   fi
 }
 
