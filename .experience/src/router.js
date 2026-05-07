@@ -173,11 +173,13 @@ async function ensureRoutesCollection() {
 
 // Fire once on module load — removes per-call overhead from routeModel()
 ensureRoutesCollection().catch(() => {});
-async function classifyViaBrain(prompt, timeoutMs = 10000) {
-  const brainProvider = getBrainProvider();
-  const endpoint = getBrainEndpoint();
-  const brainModel = getBrainModel();
-  const key = getBrainKey() || '';
+async function classifyViaBrain(prompt, timeoutMs = 10000, options = {}) {
+  // P1 Item 2: optional per-call overrides for cross-model judge consensus.
+  // When omitted, falls back to env-driven brain config (existing behavior).
+  const brainProvider = options.provider || getBrainProvider();
+  const endpoint = options.endpoint || getBrainEndpoint();
+  const brainModel = options.model || getBrainModel();
+  const key = options.key || getBrainKey() || '';
   const units = estimateTextUnits(prompt, 4000);
 
   if (brainProvider === 'siliconflow' || endpoint) {
