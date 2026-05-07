@@ -641,24 +641,38 @@ async function handleTimeline(req, res, url) {
   json(res, { topic, timeline, count: timeline.length });
 }
 
+const KNOWN_COLLECTIONS = new Set(['experience-behavioral', 'experience-principles']);
+
 async function handleSearch(req, res) {
   if (!requireAuth(req, res)) return;
   const body = await readBody(req);
   if (!body.query || typeof body.query !== 'string') return error(res, 'query is required');
   const limit = Math.min(body.limit || 5, 20);
 
+  // Accept optional `collections: string[]` for thin-client multi-collection queries.
+  // Backwards-compat: omitted → ['experience-behavioral'].
+  let collections;
+  if (Array.isArray(body.collections) && body.collections.length > 0) {
+    collections = body.collections.filter((c) => typeof c === 'string' && KNOWN_COLLECTIONS.has(c));
+    if (collections.length === 0) return error(res, `collections must be a subset of: ${[...KNOWN_COLLECTIONS].join(', ')}`);
+  } else {
+    collections = ['experience-behavioral'];
+  }
+
   const { getEmbeddingRaw, searchCollection } = loadExperienceCore();
   const vector = await getEmbeddingRaw(body.query, AbortSignal.timeout(2000));
   if (!vector) return error(res, 'Embedding unavailable', 503);
 
-  const collection = 'experience-behavioral'; // Phase 6: always behavioral
-  const points = await searchCollection(collection, vector, limit);
-
-  const mapped = points.map(p => {
-    const payload = p.payload || {};
-    const json = (() => { try { return JSON.parse(payload.json || '{}'); } catch { return {}; } })();
-    return { id: p.id, score: p.score, text: payload.text || json.solution || '', collection };
-  });
+  const results = await Promise.all(collections.map((c) => searchCollection(c, vector, limit)));
+  const mapped = [];
+  for (let i = 0; i < collections.length; i++) {
+    const collection = collections[i];
+    for (const p of results[i] || []) {
+      const payload = p.payload || {};
+      const json = (() => { try { return JSON.parse(payload.json || '{}'); } catch { return {}; } })();
+      mapped.push({ id: p.id, score: p.score, text: payload.text || json.solution || '', collection });
+    }
+  }
 
   json(res, { points: mapped });
 }
