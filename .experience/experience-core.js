@@ -140,10 +140,11 @@ async function callBrainWithFallback(prompt, meta = {}) {
 
 // --- interceptWithMeta: main entry point ---
 
-async function interceptWithMeta(toolName, toolInput, signal, meta) {
+async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   const sourceMeta = _utils.normalizeSourceMeta(meta);
   const runtime = _utils.resolveRuntimeFromSourceMeta(sourceMeta, _utils.detectRuntime(toolName));
   const hookRealtimeFastPath = _intercept.isHookRealtimeFastPath(toolName, sourceMeta);
+  const skipRoute = !!(options && options.skipRoute);
   if (_intercept.isReadOnlyCommand(toolName, toolInput)) return { suggestions: null, surfacedIds: [] };
 
   const uniquesSoFar = _session.sessionUniqueCount(sourceMeta);
@@ -160,7 +161,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta) {
   const vector = await _embedding.getEmbedding(query, signal);
   if (!vector) return null;
 
-  const routePromise = !hookRealtimeFastPath && _router.isRouterEnabled()
+  const routePromise = !hookRealtimeFastPath && !skipRoute && _router.isRouterEnabled()
     ? _router.routeModel(query, { files: [filePath].filter(Boolean), domain: queryDomain }, runtime).catch(() => null)
     : Promise.resolve(null);
 
