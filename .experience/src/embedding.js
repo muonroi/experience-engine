@@ -11,6 +11,42 @@ const {
 } = require('./config');
 
 // ============================================================
+//  LRU embedding cache (server-side)
+//  Hot prompts (e.g. PIL Layer 3 / 5 from CLI clients) are issued repeatedly
+//  with identical text. Caching the vector avoids redundant SiliconFlow calls
+//  and keeps p99 latency tight under burst load.
+// ============================================================
+
+const EMBED_CACHE_MAX = 500;
+const EMBED_CACHE_TTL_MS = 60 * 60 * 1000; // 1h
+const _embedCache = new Map();
+
+function embedCacheKey(text) {
+  // Collapse whitespace and bound to the same 8000-char window providers use.
+  return String(text || '').trim().replace(/\s+/g, ' ').slice(0, 8000);
+}
+
+function getCachedEmbedding(text) {
+  const key = embedCacheKey(text);
+  const entry = _embedCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    _embedCache.delete(key);
+    return null;
+  }
+  return entry.vector;
+}
+
+function setCachedEmbedding(text, vector) {
+  const key = embedCacheKey(text);
+  if (_embedCache.size >= EMBED_CACHE_MAX) {
+    const oldest = _embedCache.keys().next().value;
+    if (oldest !== undefined) _embedCache.delete(oldest);
+  }
+  _embedCache.set(key, { vector, expiresAt: Date.now() + EMBED_CACHE_TTL_MS });
+}
+
+// ============================================================
 //  Embedding Providers
 // ============================================================
 
@@ -101,6 +137,10 @@ function logCostCall(kind, provider, source, units, extra = {}) {
 // ============================================================
 
 async function getEmbedding(text, signal, meta = {}) {
+  // Fast path: serve from in-memory LRU cache when available.
+  const cached = getCachedEmbedding(text);
+  if (cached) return cached;
+
   const provider = getEmbedProvider();
   const p = EMBED_PROVIDERS[provider] || EMBED_PROVIDERS.ollama;
   const units = estimateTextUnits(text, 8000);
@@ -110,7 +150,10 @@ async function getEmbedding(text, signal, meta = {}) {
     ok: !!vector,
     durationMs: Date.now() - startedAt,
   });
-  if (vector) return vector;
+  if (vector) {
+    setCachedEmbedding(text, vector);
+    return vector;
+  }
 
   // Retry once after 500ms backoff
   await new Promise(r => setTimeout(r, 500));
@@ -120,7 +163,10 @@ async function getEmbedding(text, signal, meta = {}) {
     ok: !!vector,
     durationMs: Date.now() - retryStart,
   });
-  if (vector) return vector;
+  if (vector) {
+    setCachedEmbedding(text, vector);
+    return vector;
+  }
 
   // Fallback to Ollama if primary provider is not already Ollama
   if (provider !== 'ollama' && EMBED_PROVIDERS.ollama) {
@@ -130,6 +176,7 @@ async function getEmbedding(text, signal, meta = {}) {
       ok: !!vector,
       durationMs: Date.now() - fallbackStart,
     });
+    if (vector) setCachedEmbedding(text, vector);
   }
   return vector;
 }

@@ -349,9 +349,12 @@ async function handleIntercept(req, res) {
     sourceSession: body.sourceSession || null,
     cwd: body.cwd || null,
   };
+  // skipRoute=true lets latency-sensitive callers (e.g. CLI hook fast-path)
+  // bypass the model-routing side-effect of intercept and only get suggestions.
+  const options = { skipRoute: !!body.skipRoute };
   const { interceptWithMeta, intercept: interceptFresh } = loadExperienceCore();
   const resultMeta = typeof interceptWithMeta === 'function'
-    ? await interceptWithMeta(body.toolName, body.toolInput || {}, undefined, meta)
+    ? await interceptWithMeta(body.toolName, body.toolInput || {}, undefined, meta, options)
     : {
       suggestions: await interceptFresh(body.toolName, body.toolInput || {}, undefined, meta),
       surfacedIds: [],
