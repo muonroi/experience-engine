@@ -88,6 +88,104 @@ function resolveUnclearFallback(verdict, toolOutcome, assessment) {
   return 'UNCLEAR';
 }
 
+// P1 Item 2 — Cross-model judge consensus.
+//
+// Reads `judges` array from config.json:
+//   { "judges": [
+//       { "model": "Qwen2.5-7B", "role": "primary" },
+//       { "model": "deepseek-chat", "role": "secondary",
+//         "provider": "siliconflow", "endpoint": "...", "key": "..." }
+//     ] }
+//
+// When `judges` is missing or has length <= 1, falls back to the existing
+// single-judge behavior (call classifyViaBrain with no overrides). When
+// length >= 2, runs all judges in parallel and only reinforces on agreement.
+// Disagreements are appended to ~/.experience/judge-disagreements.jsonl.
+//
+// VALID_VERDICTS is parsed from a brain response; consensus is the verdict
+// returned by ALL configured judges (post-normalization). UNCLEAR responses
+// from individual judges are still UNCLEAR contributions — they cannot
+// agree with any concrete verdict, so disagreement gates them out (safe).
+
+function loadJudgesConfig(expDir) {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(expDir, 'config.json'), 'utf8'));
+    const judges = Array.isArray(cfg.judges) ? cfg.judges : [];
+    return { judges, brainProxyUrl: cfg.brainProxyUrl || null };
+  } catch {
+    return { judges: [], brainProxyUrl: null };
+  }
+}
+
+const DISAGREEMENT_FILE = 'judge-disagreements.jsonl';
+
+function recordDisagreement(expDir, payload) {
+  try {
+    const file = path.join(expDir, DISAGREEMENT_FILE);
+    fs.appendFileSync(file, JSON.stringify({ ts: new Date().toISOString(), ...payload }) + '\n', 'utf8');
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Call brain (via classifyViaBrain) with optional model/provider/endpoint/key
+ * overrides. Falls back to brainProxyUrl when direct call returns null.
+ * Returns the raw response string or null.
+ */
+async function callJudgeBrain({ classifyViaBrain, prompt, judgeConfig, brainProxyUrl, expDir }) {
+  const overrides = judgeConfig
+    ? {
+        ...(judgeConfig.model ? { model: judgeConfig.model } : {}),
+        ...(judgeConfig.provider ? { provider: judgeConfig.provider } : {}),
+        ...(judgeConfig.endpoint ? { endpoint: judgeConfig.endpoint } : {}),
+        ...(judgeConfig.key ? { key: judgeConfig.key } : {}),
+      }
+    : {};
+  let raw = null;
+  try {
+    raw = await classifyViaBrain(prompt, 8000, overrides);
+  } catch { /* fall through to proxy */ }
+  if (raw !== null) return raw;
+  if (!brainProxyUrl) return null;
+  try {
+    const res = await fetch(brainProxyUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, timeoutMs: 8000, ...(judgeConfig?.model ? { model: judgeConfig.model } : {}) }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (res.ok) {
+      const j = await res.json();
+      return j.result || null;
+    }
+  } catch { /* swallow — best-effort */ }
+  return null;
+}
+
+function normaliseVerdict(raw, validSet) {
+  const word = (raw || '').trim().toUpperCase().split(/\s+/)[0];
+  return validSet.has(word) ? word : 'UNCLEAR';
+}
+
+/**
+ * Pure function — given an array of per-judge verdicts, returns
+ * { agreed: boolean, finalVerdict: string|null }.
+ *
+ * Agreement requires ALL judges to return the SAME concrete verdict
+ * (FOLLOWED/IGNORED/IRRELEVANT). Any UNCLEAR or any divergence => no
+ * agreement. Single-judge configs always agree with themselves.
+ */
+function resolveConsensus(verdicts) {
+  if (!Array.isArray(verdicts) || verdicts.length === 0) {
+    return { agreed: false, finalVerdict: null };
+  }
+  const first = verdicts[0];
+  if (!first || first === 'UNCLEAR') return { agreed: false, finalVerdict: null };
+  for (let i = 1; i < verdicts.length; i++) {
+    if (verdicts[i] !== first) return { agreed: false, finalVerdict: null };
+  }
+  return { agreed: true, finalVerdict: first };
+}
+
 // Validate path to prevent path traversal (T-b3s-01)
 // Must reside inside ~/.experience/tmp/ and match judge-*.json pattern
 const tmpDir     = path.join(EXP_DIR, 'tmp');
@@ -139,10 +237,15 @@ async function main() {
     process.exit(0);
   }
 
-  // Judge each suggestion in parallel — one LLM call per suggestion
+  // Judge each suggestion in parallel — one LLM call per suggestion (or N
+  // calls when cross-model consensus is configured).
   const VALID_VERDICTS = new Set(['FOLLOWED', 'IGNORED', 'IRRELEVANT', 'UNCLEAR']);
   const action = shortAction(toolInput);
   const parsedToolInput = parseToolInputObject(toolInputObj || toolInput);
+
+  // P1 Item 2: load judges from config. Empty/single → existing behavior.
+  const { judges: judgesConfig, brainProxyUrl } = loadJudgesConfig(EXP_DIR);
+  const consensusEnabled = judgesConfig.length >= 2;
 
   await Promise.allSettled(surfacedIds.map(async (surface) => {
     const { collection, id, solution } = surface || {};
@@ -167,29 +270,52 @@ async function main() {
       `Your answer (one word):`;
 
     let verdict = 'UNCLEAR';
+    let perJudgeVerdicts = null; // populated only when consensusEnabled
+
     try {
-      let raw = await classifyViaBrain(prompt, 8000);
-      // Fallback: if direct brain call returns null, try VPS brain proxy
-      if (raw === null) {
-        try {
-          const cfg = JSON.parse(fs.readFileSync(path.join(EXP_DIR, 'config.json'), 'utf8'));
-          const proxyUrl = cfg.brainProxyUrl; // e.g. "http://72.61.127.154:8082/api/brain"
-          if (proxyUrl) {
-            const res = await fetch(proxyUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ prompt, timeoutMs: 8000 }),
-              signal: AbortSignal.timeout(10000),
-            });
-            if (res.ok) {
-              const j = await res.json();
-              raw = j.result || null;
-            }
-          }
-        } catch { /* proxy fallback best-effort */ }
+      if (consensusEnabled) {
+        // Parallel calls, one per judge. Each judge sees the same prompt; only
+        // the model/endpoint/key differ.
+        const verdicts = await Promise.all(judgesConfig.map(async (jc) => {
+          const raw = await callJudgeBrain({ classifyViaBrain, prompt, judgeConfig: jc, brainProxyUrl, expDir: EXP_DIR });
+          return normaliseVerdict(raw, VALID_VERDICTS);
+        }));
+        perJudgeVerdicts = judgesConfig.map((jc, i) => ({
+          role: jc.role || (i === 0 ? 'primary' : `judge-${i}`),
+          model: jc.model || null,
+          verdict: verdicts[i],
+        }));
+        const { agreed, finalVerdict } = resolveConsensus(verdicts);
+        verdict = agreed ? finalVerdict : 'UNCLEAR';
+        if (activityLog) {
+          activityLog({
+            op: 'judge-consensus',
+            tool: toolName,
+            action,
+            collection,
+            pointId: id.slice(0, 8),
+            agreed,
+            verdicts: perJudgeVerdicts,
+            finalVerdict: agreed ? finalVerdict : null,
+            toolOutcome,
+          });
+        }
+        if (!agreed) {
+          recordDisagreement(EXP_DIR, {
+            tool: toolName,
+            action,
+            collection,
+            pointId: id.slice(0, 8),
+            verdicts: perJudgeVerdicts,
+            toolOutcome,
+            solution: String(solution).slice(0, 200),
+          });
+        }
+      } else {
+        // Single-judge path: identical to pre-P1 behavior.
+        const raw = await callJudgeBrain({ classifyViaBrain, prompt, judgeConfig: null, brainProxyUrl, expDir: EXP_DIR });
+        verdict = normaliseVerdict(raw, VALID_VERDICTS);
       }
-      const word = (raw || '').trim().toUpperCase().split(/\s+/)[0];
-      if (VALID_VERDICTS.has(word)) verdict = word;
     } catch (err) {
       const reason = err?.name === 'AbortError' ? 'timeout' : 'unreachable';
       if (activityLog) {
@@ -268,5 +394,11 @@ if (require.main === module) {
     applyDeterministicAssessment,
     resolveUnclearFallback,
     resolveQueueFilePath,
+    // P1 Item 2 exports
+    loadJudgesConfig,
+    callJudgeBrain,
+    normaliseVerdict,
+    resolveConsensus,
+    recordDisagreement,
   };
 }
