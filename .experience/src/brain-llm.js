@@ -10,6 +10,7 @@ const { estimateTextUnits, logCostCall } = require('./embedding');
 const cfgValue = _config.cfgValue;
 const getBrainProvider = _config.getBrainProvider;
 const getBrainModel = _config.getBrainModel;
+const getBrainModelForSource = _config.getBrainModelForSource;
 const getBrainEndpoint = _config.getBrainEndpoint;
 const getBrainKey = _config.getBrainKey;
 const getOllamaGenerateUrl = _config.getOllamaGenerateUrl;
@@ -43,33 +44,40 @@ async function callBrainWithFallback(prompt, meta = {}) {
   const primary = BRAIN_FNS[brainProvider] || BRAIN_FNS.ollama;
   const units = estimateTextUnits(prompt, 4000);
 
+  // Source-aware model selection: extract+evolve get the larger pattern-abstraction
+  // model; intercept-filter/judge/route stay on the cheaper hot-path model.
+  const source = meta.source || 'general';
+  const model = getBrainModelForSource(source);
+
   // Allow callers (e.g. route-task) to enforce tighter time budgets than the default 15s.
   const timeoutMs = Number(meta.timeoutMs ?? 0);
   const signal = meta.signal || (Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined);
 
   let startedAt = Date.now();
-  let result = await primary(prompt, { signal });
-  logCostCall('brain', brainProvider, meta.source || 'general', units, {
+  let result = await primary(prompt, { signal, model });
+  logCostCall('brain', brainProvider, source, units, {
     ok: !!result,
     phase: 'primary',
+    model,
     durationMs: Date.now() - startedAt,
   });
   if (result) return result;
 
-  activityLog({ op: 'brain-failure', provider: brainProvider, phase: 'primary' });
+  activityLog({ op: 'brain-failure', provider: brainProvider, phase: 'primary', model });
   if (fallbackProvider && BRAIN_FNS[fallbackProvider]) {
     startedAt = Date.now();
-    result = await BRAIN_FNS[fallbackProvider](prompt, { signal });
-    logCostCall('brain', fallbackProvider, meta.source || 'general', units, {
+    result = await BRAIN_FNS[fallbackProvider](prompt, { signal, model });
+    logCostCall('brain', fallbackProvider, source, units, {
       ok: !!result,
       phase: 'fallback',
+      model,
       durationMs: Date.now() - startedAt,
     });
     if (result) {
-      activityLog({ op: 'brain-fallback', provider: fallbackProvider });
+      activityLog({ op: 'brain-fallback', provider: fallbackProvider, model });
       return result;
     }
-    activityLog({ op: 'brain-failure', provider: fallbackProvider, phase: 'fallback' });
+    activityLog({ op: 'brain-failure', provider: fallbackProvider, phase: 'fallback', model });
   }
   return null;
 }
@@ -152,11 +160,12 @@ async function extractQA(mistake) {
 }
 
 async function brainOllama(prompt, opts = {}) {
+  const model = opts.model || getBrainModel();
   try {
     const res = await fetch(getOllamaGenerateUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: getBrainModel(), prompt, stream: false, options: { temperature: 0.3 } }),
+      body: JSON.stringify({ model, prompt, stream: false, options: { temperature: 0.3 } }),
       signal: opts.signal || AbortSignal.timeout(90000),
     });
     if (!res.ok) return null;
@@ -168,7 +177,8 @@ async function brainOllama(prompt, opts = {}) {
 async function brainOpenAI(prompt, opts = {}) {
   // Reused for any OpenAI-compatible API (OpenAI, SiliconFlow, Together, Groq, etc.)
   const endpoint = getBrainEndpoint() || 'https://api.openai.com/v1/chat/completions';
-  const body = { model: getBrainModel() || 'gpt-4o-mini', messages: [{ role:'user', content: prompt }], temperature: 0.3 };
+  const model = opts.model || getBrainModel() || 'gpt-4o-mini';
+  const body = { model, messages: [{ role:'user', content: prompt }], temperature: 0.3 };
   // Only add json_object mode for known-supporting providers (OpenAI, DeepSeek)
   if (endpoint.includes('openai.com') || endpoint.includes('deepseek.com')) {
     body.response_format = { type: 'json_object' };
@@ -191,7 +201,7 @@ async function brainOpenAI(prompt, opts = {}) {
 
 async function brainGemini(prompt, opts = {}) {
   try {
-    const model = getBrainModel() || 'gemini-2.0-flash';
+    const model = opts.model || getBrainModel() || 'gemini-2.0-flash';
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${getBrainKey()}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -209,7 +219,7 @@ async function brainClaude(prompt, opts = {}) {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': getBrainKey(), 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: getBrainModel() || 'claude-haiku-4-5-20251001', max_tokens: 512, messages: [{ role:'user', content: prompt }] }),
+      body: JSON.stringify({ model: opts.model || getBrainModel() || 'claude-haiku-4-5-20251001', max_tokens: 512, messages: [{ role:'user', content: prompt }] }),
       signal: opts.signal || AbortSignal.timeout(15000),
     });
     if (!res.ok) return null;
@@ -224,7 +234,7 @@ async function brainDeepSeek(prompt, opts = {}) {
     const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getBrainKey()}` },
-      body: JSON.stringify({ model: getBrainModel() || 'deepseek-chat', messages: [{ role:'user', content: prompt }], temperature: 0.3, response_format: { type:'json_object' } }),
+      body: JSON.stringify({ model: opts.model || getBrainModel() || 'deepseek-chat', messages: [{ role:'user', content: prompt }], temperature: 0.3, response_format: { type:'json_object' } }),
       signal: opts.signal || AbortSignal.timeout(15000),
     });
     if (!res.ok) return null;
