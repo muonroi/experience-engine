@@ -72,6 +72,18 @@ function getEmbedProvider()  { return cfgValue('embedProvider', 'EXPERIENCE_EMBE
 function getBrainProvider()  { return cfgValue('brainProvider', 'EXPERIENCE_BRAIN_PROVIDER', 'ollama'); }
 function getEmbedModel()     { return cfgValue('embedModel', 'EXPERIENCE_EMBED_MODEL', 'nomic-embed-text'); }
 function getBrainModel()     { return cfgValue('brainModel', 'EXPERIENCE_BRAIN_MODEL', 'qwen2.5:3b'); }
+// Optional larger model used only for pattern-extraction jobs (extractQA + evolve abstraction).
+// Hot-path jobs (intercept brain-filter, judge, route) keep using getBrainModel() so latency
+// and cost stay bounded. When unset, falls through to getBrainModel.
+function getBrainExtractModel() {
+  const override = cfgValue('brainExtractModel', 'EXPERIENCE_BRAIN_EXTRACT_MODEL', null);
+  return override || getBrainModel();
+}
+// Source-aware model picker. Sources are set by callers via meta.source in callBrainWithFallback.
+function getBrainModelForSource(source) {
+  if (source === 'extract' || source === 'evolve') return getBrainExtractModel();
+  return getBrainModel();
+}
 function getEmbedEndpoint()  { return cfgValue('embedEndpoint', 'EXPERIENCE_EMBED_ENDPOINT', ''); }
 function getEmbedKey()       { return cfgValue('embedKey', 'EXPERIENCE_EMBED_KEY', ''); }
 function getBrainEndpoint()  { return cfgValue('brainEndpoint', 'EXPERIENCE_BRAIN_ENDPOINT', ''); }
@@ -142,7 +154,7 @@ module.exports = {
   getQdrantBase, getQdrantApiKey,
   getOllamaBase, getOllamaEmbedUrl, getOllamaGenerateUrl,
   getEmbedProvider, getEmbedModel, getEmbedEndpoint, getEmbedKey, getEmbedDim,
-  getBrainProvider, getBrainModel, getBrainEndpoint, getBrainKey,
+  getBrainProvider, getBrainModel, getBrainExtractModel, getBrainModelForSource, getBrainEndpoint, getBrainKey,
   getMinConfidence, getHighConfidence,
   getExpUser, EXP_USER,
   getHomeExpDir, getStoreDir, getActivityLogPath,
