@@ -1352,9 +1352,14 @@ const AGENTS = [
       if (!cfg.hooks.BeforeTool.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor')))) {
         cfg.hooks.BeforeTool.unshift({ matcher:'write_file|replace|replace_in_file|shell|execute_command', hooks:[{ name:'experience', type:'command', command:`node "${interceptor}"`, timeout:5000 }] });
       }
-      cfg.hooks.AfterResponse = cfg.hooks.AfterResponse || [];
-      if (!cfg.hooks.AfterResponse.some(h => (h.hooks||[]).some(e => e.command?.includes('stop-extractor')))) {
-        cfg.hooks.AfterResponse.push({ hooks:[{ name:'experience-extractor', type:'command', command:`node "${stop}"`, timeout:90000 }] });
+      cfg.hooks.AfterAgent = cfg.hooks.AfterAgent || [];
+      if (!cfg.hooks.AfterAgent.some(h => (h.hooks||[]).some(e => e.command?.includes('stop-extractor')))) {
+        cfg.hooks.AfterAgent.push({ hooks:[{ name:'experience-extractor', type:'command', command:`node "${stop}"`, timeout:90000 }] });
+      }
+      if (cfg.hooks.AfterResponse) {
+        // Cleanup legacy invalid hook name
+        cfg.hooks.AfterResponse = cfg.hooks.AfterResponse.filter(h => !(h.hooks||[]).some(e => e.command?.includes('stop-extractor')));
+        if (cfg.hooks.AfterResponse.length === 0) delete cfg.hooks.AfterResponse;
       }
     }
   },
