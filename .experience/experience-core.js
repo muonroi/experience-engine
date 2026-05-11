@@ -183,9 +183,14 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
       const detected = (_utils.detectContext(filePath) || '').toLowerCase();
       return detected === sl || detected.startsWith(sl);
     }
+    const cfgExtraRepos = _config.getConfig().muonroiStackRepos;
+    const fileIsMuonroiStack = _utils.isMuonroiStackRepo(filePath, cfgExtraRepos);
     return points.filter(p => {
       try {
         const exp = JSON.parse(p.payload?.json || '{}');
+        // Org-stack gate: muonroi org-knowledge only applies inside muonroi-stack repos.
+        // Prevents MDbContext/MRepository hints from leaking into unrelated .NET projects.
+        if (exp.scope?.org === 'muonroi' && filePath && !fileIsMuonroiStack) return false;
         if (!exp.scope?.lang) return true;
         return fileMatchesLang(exp.scope.lang);
       } catch { return true; }

@@ -76,6 +76,10 @@ function validateEntry(e, idx) {
   if (typeof e.trigger_main !== 'string' || e.trigger_main.length < 8) return `entry[${idx}] trigger_main too short`;
   if (!Array.isArray(e.trigger_variants)) return `entry[${idx}] trigger_variants not array`;
   if (typeof e.guidance !== 'string' || e.guidance.length < 12) return `entry[${idx}] guidance too short`;
+  // scope.org is the cross-repo gate. Without it, applyScopeFilter cannot tell the
+  // hint apart from generic stack knowledge — and it WILL leak into non-org repos.
+  if (!e.scope || typeof e.scope !== 'object') return `entry[${idx}] missing scope object`;
+  if (!e.scope.org || typeof e.scope.org !== 'string') return `entry[${idx}] scope.org required for org-doc entries`;
   return null;
 }
 

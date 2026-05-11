@@ -155,6 +155,31 @@ function extractProjectSlug(filePath) {
   return null;
 }
 
+// Repos considered part of the muonroi org stack — hints tagged
+// scope.org="muonroi" only fire when the file under work belongs to one.
+// Whitelist covers consumer repos that don't carry the muonroi- prefix;
+// any repo whose slug starts with "muonroi-" is implicitly included.
+const DEFAULT_MUONROI_STACK_REPOS = new Set([
+  'storyflow', 'storyflow_ui', 'quick-codex', 'experience-engine',
+]);
+
+function getMuonroiStackRepos(extraFromConfig) {
+  const set = new Set(DEFAULT_MUONROI_STACK_REPOS);
+  if (Array.isArray(extraFromConfig)) {
+    for (const r of extraFromConfig) {
+      if (typeof r === 'string' && r.trim()) set.add(r.trim().toLowerCase());
+    }
+  }
+  return set;
+}
+
+function isMuonroiStackRepo(filePath, extraRepos) {
+  const slug = extractProjectSlug(filePath);
+  if (!slug) return false;
+  if (slug.startsWith('muonroi-') || slug === 'muonroi') return true;
+  return getMuonroiStackRepos(extraRepos).has(slug);
+}
+
 function extractProjectPath(toolInput) {
   const raw = toolInput?.file_path || toolInput?.path || '';
   if (raw) return raw.replace(/\\/g, '/');
@@ -454,6 +479,7 @@ function detectRuntime(toolName) {
 module.exports = {
   detectContext, normalizeTechLabel, commandSuggestsDomain,
   extractProjectPath, extractProjectSlug, extractPathFromCommand, isAbsolutePath,
+  isMuonroiStackRepo, getMuonroiStackRepos,
   buildQuery, QUERY_MAX_CHARS,
   computeEffectiveConfidence, computeEffectiveScore, getValidatedHitCount,
   rerankByQuality,
