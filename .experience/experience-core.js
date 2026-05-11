@@ -164,11 +164,12 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   // brain is org-doc-dominated — without this, top-2 principles can be 100%
   // org-doc, all dropped, leaving zero surfaces despite common-doc existing.
   const queryFilter = (() => {
-    const cfgExtraRepos = _config.getConfig().muonroiStackRepos;
-    const fileIsMuonroiStack = _utils.isMuonroiStackRepo(filePath, cfgExtraRepos);
+    const orgCfg = _config.getConfig().org;
+    const orgName = orgCfg && typeof orgCfg.name === 'string' ? orgCfg.name.trim().toLowerCase() : '';
+    const fileIsOrgStack = orgName ? _utils.isOrgStackRepo(filePath, orgCfg) : false;
     const extra = { must: [], must_not: [], should: [] };
-    if (filePath && !fileIsMuonroiStack) {
-      extra.must_not.push({ key: 'scope_org', match: { value: 'muonroi' } });
+    if (orgName && filePath && !fileIsOrgStack) {
+      extra.must_not.push({ key: 'scope_org', match: { value: orgName } });
     }
     const callerFw = sourceMeta && typeof sourceMeta.framework === 'string'
       ? sourceMeta.framework.toLowerCase().trim() : null;
@@ -220,8 +221,9 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
       const detected = (_utils.detectContext(filePath) || '').toLowerCase();
       return detected === sl || detected.startsWith(sl);
     }
-    const cfgExtraRepos = _config.getConfig().muonroiStackRepos;
-    const fileIsMuonroiStack = _utils.isMuonroiStackRepo(filePath, cfgExtraRepos);
+    const orgCfg = _config.getConfig().org;
+    const orgName = orgCfg && typeof orgCfg.name === 'string' ? orgCfg.name.trim().toLowerCase() : '';
+    const fileIsOrgStack = orgName ? _utils.isOrgStackRepo(filePath, orgCfg) : false;
     // Caller-provided framework hint (e.g. PreToolUse hook that inspected csproj/package.json).
     // Filter is opt-in: when absent, framework dimension passes through. Avoids fragile
     // path-pattern detection inside the hot path while still letting future callers narrow.
@@ -230,9 +232,10 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     return points.filter(p => {
       try {
         const exp = JSON.parse(p.payload?.json || '{}');
-        // Org-stack gate: muonroi org-knowledge only applies inside muonroi-stack repos.
-        // Prevents MDbContext/MRepository hints from leaking into unrelated .NET projects.
-        if (exp.scope?.org === 'muonroi' && filePath && !fileIsMuonroiStack) return false;
+        // Org-stack gate: org-tagged knowledge only applies inside the configured org's repos.
+        // Prevents org-specific hints from leaking into unrelated projects.
+        // Disabled entirely when no org configured (global mode).
+        if (orgName && exp.scope?.org && exp.scope.org.toLowerCase() === orgName && filePath && !fileIsOrgStack) return false;
         // Framework gate (opt-in): when caller asserts a framework AND the hint is tagged
         // to a different specific framework, drop. 'any' / undefined on the hint passes.
         if (callerFramework && exp.scope?.framework) {

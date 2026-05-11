@@ -8,6 +8,9 @@ ROOT_DIR="$(cd "$SRC_DIR/.." && pwd)"
 SERVER_URL=""
 SERVER_TOKEN=""
 SERVER_READ_TOKEN=""
+ORG_NAME="${EXP_ORG_NAME:-}"
+ORG_PATTERNS="${EXP_ORG_PATTERNS:-}"
+HOOK_TIMEOUT_MS=""
 CLEAN_MODE=false
 CONFIG_FALLBACK_FILE="${HOME}/.experience/config.json"
 
@@ -25,6 +28,18 @@ while [ $# -gt 0 ]; do
       SERVER_READ_TOKEN="${2:-}"
       shift 2
       ;;
+    --org-name)
+      ORG_NAME="${2:-}"
+      shift 2
+      ;;
+    --org-patterns)
+      ORG_PATTERNS="${2:-}"
+      shift 2
+      ;;
+    --hook-timeout)
+      HOOK_TIMEOUT_MS="${2:-}"
+      shift 2
+      ;;
     --clean)
       CLEAN_MODE=true
       shift
@@ -32,16 +47,25 @@ while [ $# -gt 0 ]; do
     --help|-h)
       cat <<'EOF'
 Usage:
-  bash .experience/setup-thin-client.sh [--server http://your-vps:8082] [--token TOKEN] [--read-token TOKEN] [--clean]
+  bash .experience/setup-thin-client.sh [options]
 
 Options:
-  --server   Optional if ~/.experience/config.json already contains serverBaseUrl.
-  --token    Optional. Bearer token used by POST endpoints.
-  --read-token Optional. Read-only token for /api/stats and /api/gates.
-  --clean    Backup and remove old local brain state so this machine becomes a true thin client.
+  --server URL         Optional if ~/.experience/config.json already contains serverBaseUrl.
+  --token TOKEN        Bearer token for POST endpoints.
+  --read-token TOKEN   Read-only token for /api/stats and /api/gates.
+  --org-name SLUG      Org slug for cross-project hint filter (empty = global mode).
+                       Env: EXP_ORG_NAME
+  --org-patterns LIST  Comma-sep repo patterns matched against project slug
+                       (`*` glob ok). Auto-included: <orgName>, <orgName>-*.
+                       Env: EXP_ORG_PATTERNS
+  --hook-timeout MS    Client hook abort timeout in ms (default keep existing
+                       or fall back to engine default 2500).
+  --clean              Backup and remove old local brain state.
+
 Fallback:
-  When flags are omitted, the script reuses serverBaseUrl/serverAuthToken/serverReadAuthToken
-  from ~/.experience/config.json if that file already exists.
+  Flags missing → reuse values from ~/.experience/config.json (server*, org,
+  serverHookTimeoutMs). Re-runs are idempotent: existing config values are
+  preserved unless overridden by a flag/env var.
 EOF
       exit 0
       ;;
@@ -84,6 +108,23 @@ fi
 
 if [ -z "$SERVER_READ_TOKEN" ]; then
   SERVER_READ_TOKEN="$(load_config_fallback serverReadAuthToken "$CONFIG_FALLBACK_FILE")"
+fi
+
+if [ -z "$HOOK_TIMEOUT_MS" ]; then
+  HOOK_TIMEOUT_MS="$(load_config_fallback serverHookTimeoutMs "$CONFIG_FALLBACK_FILE")"
+fi
+
+# Preserve existing org block from config when flags absent.
+EXISTING_ORG_JSON=""
+if [ -f "$CONFIG_FALLBACK_FILE" ] && [ -z "$ORG_NAME" ]; then
+  EXISTING_ORG_JSON=$(node -e '
+    try {
+      const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+      if (c.org && typeof c.org.name === "string" && c.org.name.trim()) {
+        process.stdout.write(JSON.stringify(c.org));
+      }
+    } catch {}
+  ' "$CONFIG_FALLBACK_FILE")
 fi
 
 if [ -z "$SERVER_URL" ]; then
@@ -213,17 +254,45 @@ if $CLEAN_MODE; then
   done
 fi
 
-cat > "$INSTALL_DIR/config.json" <<EOF
-{
-  "serverBaseUrl": "${SERVER_URL%/}",
-  "serverAuthToken": "${SERVER_TOKEN}",
-  "serverReadAuthToken": "${SERVER_READ_TOKEN}",
-  "serverTimeoutMs": 5000,
-  "serverExtractTimeoutMs": 60000,
-  "version": "thin-client",
-  "installedAt": "$(date -Iseconds)"
+# Atomic config write — preserves org block + hook timeout from prior install
+# unless explicitly overridden by flags/env.
+INSTALLED_AT="$(date -Iseconds)"
+node -e '
+const fs = require("fs");
+const path = require("path");
+const [target, serverUrl, token, readToken, hookTimeoutRaw, orgName, orgPatternsRaw, existingOrgJson, installedAt] = process.argv.slice(1);
+const cfg = {
+  serverBaseUrl: serverUrl.replace(/\/$/, ""),
+  serverAuthToken: token,
+  serverReadAuthToken: readToken,
+  serverTimeoutMs: 5000,
+  serverExtractTimeoutMs: 60000,
+  version: "thin-client",
+  installedAt,
+};
+const hookTimeout = parseInt(hookTimeoutRaw, 10);
+if (Number.isFinite(hookTimeout) && hookTimeout > 0) cfg.serverHookTimeoutMs = hookTimeout;
+if (orgName && orgName.trim()) {
+  const patterns = orgPatternsRaw
+    ? orgPatternsRaw.split(",").map(s => s.trim()).filter(Boolean)
+    : [];
+  cfg.org = { name: orgName.trim(), repoPatterns: patterns };
+} else if (existingOrgJson) {
+  try { cfg.org = JSON.parse(existingOrgJson); } catch {}
 }
-EOF
+const tmp = target + ".tmp";
+fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2));
+fs.renameSync(tmp, target);
+' \
+  "$INSTALL_DIR/config.json" \
+  "$SERVER_URL" \
+  "$SERVER_TOKEN" \
+  "$SERVER_READ_TOKEN" \
+  "$HOOK_TIMEOUT_MS" \
+  "$ORG_NAME" \
+  "$ORG_PATTERNS" \
+  "$EXISTING_ORG_JSON" \
+  "$INSTALLED_AT"
 
 echo
 echo "Thin client installed to $INSTALL_DIR"

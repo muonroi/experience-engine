@@ -1,5 +1,36 @@
 # Changelog
 
+## [Unreleased]
+
+### Breaking
+
+- **Engine is now org-agnostic.** Removed all hardcoded references to a
+  specific organization name (previously `muonroi`) and consumer-repo
+  whitelist (`storyflow`, `quick-codex`, `experience-engine`). Cross-project
+  hint filtering is now driven entirely by `~/.experience/config.json`:
+  ```json
+  { "org": { "name": "<your-org>", "repoPatterns": ["<extra-slug>", "prefix-*"] } }
+  ```
+  When `org` is absent the engine runs in **global mode** — every hint is
+  eligible, no leak gate. To opt back into filtering, re-run `setup.sh` and
+  answer the new **Step A.5 — Org Binding** prompt (or set `EXP_ORG_NAME` /
+  `EXP_ORG_PATTERNS` for non-interactive mode).
+- `utils.isMuonroiStackRepo()` / `utils.getMuonroiStackRepos()` removed.
+  Replaced by `utils.isOrgStackRepo(filePath, orgConfig)`. Downstream callers
+  outside this repo must update.
+- The previous `seed-entries.jsonl` (org-doc sample seeded from the author's
+  own stack) moved to `examples/seeds/org-doc.example.jsonl`. The universal
+  `seed-common-principles.jsonl` at repo root is unchanged and still safe to
+  ingest as-is.
+
+### Migration
+
+Existing users running on the old hardcoded gate keep working without action:
+just add an `org` block to your `~/.experience/config.json` when convenient
+(or re-run `setup.sh` — your other settings are preserved). Without it, the
+engine surfaces every hint instead of dropping org-tagged ones in foreign
+repos.
+
 ## [0.1.1] - 2026-05-05
 
 ### Features

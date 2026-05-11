@@ -155,29 +155,43 @@ function extractProjectSlug(filePath) {
   return null;
 }
 
-// Repos considered part of the muonroi org stack — hints tagged
-// scope.org="muonroi" only fire when the file under work belongs to one.
-// Whitelist covers consumer repos that don't carry the muonroi- prefix;
-// any repo whose slug starts with "muonroi-" is implicitly included.
-const DEFAULT_MUONROI_STACK_REPOS = new Set([
-  'storyflow', 'storyflow_ui', 'quick-codex', 'experience-engine',
-]);
-
-function getMuonroiStackRepos(extraFromConfig) {
-  const set = new Set(DEFAULT_MUONROI_STACK_REPOS);
-  if (Array.isArray(extraFromConfig)) {
-    for (const r of extraFromConfig) {
-      if (typeof r === 'string' && r.trim()) set.add(r.trim().toLowerCase());
-    }
-  }
-  return set;
+// Org-stack membership test — hints tagged scope.org=<orgName> only fire when
+// the file under work belongs to a repo in the user-configured org.
+//
+// Configuration (per-user, in ~/.experience/config.json):
+//   { "org": { "name": "<orgName>", "repoPatterns": ["<slug>", "prefix-*", ...] } }
+//
+// Matching rules against the file's extracted project slug:
+//   1. exact match to orgConfig.name
+//   2. slug starts with `${orgConfig.name}-`  (e.g. org="acme" → "acme-web" matches)
+//   3. exact match to any literal pattern (case-insensitive)
+//   4. glob match if pattern contains `*` (only `*` wildcard is supported)
+//
+// If orgConfig is absent or has no name, returns false → engine runs in
+// "global mode" where the org filter never fires and every hint is eligible.
+// The repo itself contains zero hardcoded org names by design.
+function _patternToRegex(pat) {
+  const escaped = pat.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  return new RegExp(`^${escaped}$`, 'i');
 }
 
-function isMuonroiStackRepo(filePath, extraRepos) {
+function isOrgStackRepo(filePath, orgConfig) {
+  if (!orgConfig || typeof orgConfig.name !== 'string' || !orgConfig.name.trim()) return false;
   const slug = extractProjectSlug(filePath);
   if (!slug) return false;
-  if (slug.startsWith('muonroi-') || slug === 'muonroi') return true;
-  return getMuonroiStackRepos(extraRepos).has(slug);
+  const name = orgConfig.name.trim().toLowerCase();
+  if (slug === name || slug.startsWith(`${name}-`)) return true;
+  const patterns = Array.isArray(orgConfig.repoPatterns) ? orgConfig.repoPatterns : [];
+  for (const p of patterns) {
+    if (typeof p !== 'string' || !p.trim()) continue;
+    const trimmed = p.trim();
+    if (trimmed.includes('*')) {
+      if (_patternToRegex(trimmed).test(slug)) return true;
+    } else if (trimmed.toLowerCase() === slug) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function extractProjectPath(toolInput) {
@@ -200,14 +214,13 @@ const QUERY_MAX_CHARS = 500;
 
 // Code identifiers (PascalCase types, qualified Type.Method, class : Parent) embed
 // far from natural-language trigger phrases ("When setting timestamps, use
-// IMDateTimeService..."). We extract those identifiers and prepend an NL hint so
+// XDateTimeService..."). We extract those identifiers and prepend an NL hint so
 // the query vector lands closer to NL trigger vectors. Verified +0.15 cosine
-// improvement on muonroi audit cases (IMDateTimeService: 0.536 → 0.691).
+// improvement on benchmark cases (qualified-symbol query: 0.536 → 0.691).
 const _IDENT_PATTERNS = [
   /\bclass\s+\w+\s*:\s*([A-Z][A-Za-z0-9_]*)/g,       // class X : ParentBase  → ParentBase
   /\b([A-Z][A-Za-z0-9_]*\.[A-Z][A-Za-z0-9_]+)\b/g,    // DateTime.UtcNow, SaveChangesAsync (qualified)
   /\b(I[A-Z][A-Za-z0-9_]+(?:Accessor|Service|Context|Repository|Logger|Factory|Provider|Handler))\b/g, // I-prefixed interfaces (common .NET shape)
-  /\b(M[A-Z][A-Za-z0-9_]{2,})\b/g,                    // M-prefixed muonroi wrappers
   /\b([A-Z][A-Za-z0-9_]+(?:Async|Controller|Handler|Service|Repository|Context|Factory|Builder))\b/g, // common .NET type suffixes
   /\bthrow\s+new\s+([A-Z][A-Za-z0-9_]+Exception)\b/g, // throw new XException
 ];
@@ -544,7 +557,7 @@ function detectRuntime(toolName) {
 module.exports = {
   detectContext, normalizeTechLabel, commandSuggestsDomain,
   extractProjectPath, extractProjectSlug, extractPathFromCommand, isAbsolutePath,
-  isMuonroiStackRepo, getMuonroiStackRepos,
+  isOrgStackRepo,
   buildQuery, QUERY_MAX_CHARS,
   computeEffectiveConfidence, computeEffectiveScore, getValidatedHitCount,
   rerankByQuality,
