@@ -139,6 +139,12 @@ Non-interactive mode (CI/scripts):
     EXP_AGENTS           comma-separated agent list (default: all)
                          values: claude,gemini,codex,opencode
                          example: EXP_AGENTS=claude,gemini
+    EXP_ORG_NAME         Optional org slug for cross-project hint filter.
+                         Hints tagged scope.org=<this> only fire inside the
+                         org's repos. Empty/unset = global mode (no filter).
+    EXP_ORG_PATTERNS     Optional comma-sep repo patterns matched against the
+                         project slug (`*` glob ok). Auto-included: <orgName>,
+                         <orgName>-*. Example: EXP_ORG_PATTERNS="storyflow,acme-*"
 
   Example:
     EXP_QDRANT_URL=http://localhost:6333 EXP_EMBED_PROVIDER=openai \
@@ -459,6 +465,8 @@ if [ "$NI_MODE" = "true" ]; then
   BRAIN_PROXY_URL="${EXP_BRAIN_PROXY:-}"
   OLLAMA_URL="${EXP_OLLAMA_URL:-http://localhost:11434}"
   TUNNEL_SSH="${EXP_TUNNEL_SSH:-}"
+  ORG_NAME="${EXP_ORG_NAME:-}"
+  ORG_PATTERNS="${EXP_ORG_PATTERNS:-}"
   KEEP_CONFIG=false
   # Allow caller to bypass dimension probe by setting EXP_EMBED_DIM
   [ -n "${EXP_EMBED_DIM:-}" ] && EMBED_DIM="${EXP_EMBED_DIM}"
@@ -619,6 +627,43 @@ if [ "$KEEP_CONFIG" = "false" ] && [ "$NI_MODE" = "false" ]; then
       exit 1
       ;;
   esac
+fi
+
+# ── Step A.5: Org binding (optional, scope filter) ────────────────────────
+# Engine uses the configured org to prevent cross-project hint leak.
+# Hints tagged scope.org=<orgName> only surface when editing a repo that
+# belongs to that org (matched by repoPatterns or `${orgName}-*` slug prefix).
+# Skip → engine runs in global mode, every hint is eligible (no leak gate).
+if [ "$KEEP_CONFIG" = "false" ] && [ "$NI_MODE" = "false" ]; then
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo " Step A.5 — Org Binding (cross-project filter)"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  # Smart default: detect org slug from cwd's git remote (owner segment).
+  DETECTED_ORG=""
+  if command -v git >/dev/null 2>&1; then
+    _GIT_REMOTE=$(git -C "$PWD" config --get remote.origin.url 2>/dev/null || true)
+    if [ -n "$_GIT_REMOTE" ]; then
+      DETECTED_ORG=$(printf '%s' "$_GIT_REMOTE" \
+        | sed -E 's#^.*[:/]([^/:]+)/[^/]+(\.git)?$#\1#' \
+        | tr '[:upper:]' '[:lower:]' \
+        | head -1)
+    fi
+  fi
+  echo "  Tag your hints with an org name so they only fire inside that org's repos."
+  echo "  Press Enter on a blank prompt to skip (engine runs in global mode)."
+  if [ -n "$DETECTED_ORG" ]; then
+    echo "  Detected from cwd git remote: $DETECTED_ORG"
+    printf "  Org name [$DETECTED_ORG]: "; read -r ORG_NAME
+    ORG_NAME="${ORG_NAME:-$DETECTED_ORG}"
+  else
+    printf "  Org name (empty = global mode): "; read -r ORG_NAME
+  fi
+  ORG_PATTERNS=""
+  if [ -n "$ORG_NAME" ]; then
+    echo "  Repo patterns auto-match: ${ORG_NAME}, ${ORG_NAME}-*"
+    printf "  Extra repo patterns (comma-sep, * glob allowed, empty to skip): "; read -r ORG_PATTERNS
+  fi
 fi
 
 # ── Step B: AI provider selection ────────────────────────────────────────
@@ -1016,6 +1061,23 @@ fi
 if [ "$KEEP_CONFIG" = "false" ]; then
   echo "  Writing config.json..."
 
+  # Build org block (omitted entirely when ORG_NAME empty → global mode).
+  ORG_BLOCK=""
+  if [ -n "${ORG_NAME:-}" ]; then
+    _PATTERN_JSON=""
+    if [ -n "${ORG_PATTERNS:-}" ]; then
+      _PATTERN_JSON=$(printf '%s' "$ORG_PATTERNS" | node -e "
+        let s = ''; process.stdin.on('data', c => s += c).on('end', () => {
+          const arr = s.split(',').map(x => x.trim()).filter(Boolean);
+          process.stdout.write(JSON.stringify(arr));
+        });
+      ")
+    else
+      _PATTERN_JSON="[]"
+    fi
+    ORG_BLOCK="  org: { name: '$ORG_NAME', repoPatterns: $_PATTERN_JSON },"
+  fi
+
   node -e "
 const fs = require('fs');
 const path = require('path');
@@ -1039,6 +1101,7 @@ const cfg = {
   embedDim:       $EMBED_DIM,
   ollamaUrl:      '$OLLAMA_URL',
   tunnelSsh:      '$TUNNEL_SSH',
+$ORG_BLOCK
   minConfidence:  0.42,
   highConfidence: 0.60,
   version:        '3.2',
