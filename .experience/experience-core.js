@@ -180,7 +180,9 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     const CS_FAMILY = new Set(['cs', 'fs']);
     function fileMatchesLang(scopeLang) {
       if (!scopeLang || scopeLang === 'all') return true;
-      const sl = scopeLang.toLowerCase();
+      let sl = String(scopeLang).toLowerCase();
+      const ALIAS = { csharp: 'c#', 'c-sharp': 'c#', fsharp: 'f#', ts: 'typescript', js: 'javascript' };
+      if (ALIAS[sl]) sl = ALIAS[sl];
       if (sl === 'c#') return CS_FAMILY.has(fileExt);
       if (sl === 'javascript' || sl === 'typescript') return JS_FAMILY.has(fileExt);
       if (sl === 'css') return CSS_FAMILY.has(fileExt);
