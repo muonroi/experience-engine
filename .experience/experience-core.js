@@ -195,12 +195,23 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     }
     const cfgExtraRepos = _config.getConfig().muonroiStackRepos;
     const fileIsMuonroiStack = _utils.isMuonroiStackRepo(filePath, cfgExtraRepos);
+    // Caller-provided framework hint (e.g. PreToolUse hook that inspected csproj/package.json).
+    // Filter is opt-in: when absent, framework dimension passes through. Avoids fragile
+    // path-pattern detection inside the hot path while still letting future callers narrow.
+    const callerFramework = sourceMeta && typeof sourceMeta.framework === 'string'
+      ? sourceMeta.framework.toLowerCase().trim() : null;
     return points.filter(p => {
       try {
         const exp = JSON.parse(p.payload?.json || '{}');
         // Org-stack gate: muonroi org-knowledge only applies inside muonroi-stack repos.
         // Prevents MDbContext/MRepository hints from leaking into unrelated .NET projects.
         if (exp.scope?.org === 'muonroi' && filePath && !fileIsMuonroiStack) return false;
+        // Framework gate (opt-in): when caller asserts a framework AND the hint is tagged
+        // to a different specific framework, drop. 'any' / undefined on the hint passes.
+        if (callerFramework && exp.scope?.framework) {
+          const hintFw = String(exp.scope.framework).toLowerCase().trim();
+          if (hintFw && hintFw !== 'any' && hintFw !== callerFramework) return false;
+        }
         if (!exp.scope?.lang) return true;
         return fileMatchesLang(exp.scope.lang);
       } catch { return true; }
