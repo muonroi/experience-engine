@@ -37,7 +37,6 @@ const EDGE_COLLECTION = 'experience-edges';
 const UNUSED_NO_TOUCH_THRESHOLD = 3;
 const PENDING_HINT_TTL_MS = 20 * 60 * 1000;
 const PROMPT_STALE_RECONCILE_MS = 10 * 1000;
-const MAX_SESSION_UNIQUE = 8;
 
 const DOMAIN_KEYWORDS = {
   javascript: ['node', 'npm', 'npx', 'pnpm', 'yarn', 'vite', 'vitest', 'jest', 'tsx', 'ts-node', 'eslint'],
@@ -362,7 +361,6 @@ module.exports = {
   LANG_MAP,
   PLACEHOLDER_EXTRACT_FIELDS,
   ORGANIC_SUPPORT_STOPWORDS,
-  MAX_SESSION_UNIQUE,
   classifyActionKind,
   isAbsolutePath,
   extractPathFromCommand,
