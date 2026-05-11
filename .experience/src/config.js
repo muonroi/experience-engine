@@ -99,10 +99,15 @@ function getExpUser() {
 const EXP_USER = getExpUser();
 
 // --- Constants ---
+// topK bumped from 2/3/2 → 4/6/4: rerank pipeline (cosine → effectiveScore with
+// hit/recency/domain adjustments) sometimes demotes the perfect-cosine match
+// below entries with hit history. Larger top-K gives correct hints headroom to
+// survive rerank, then budgetChars caps the final display volume. Net cost is
+// one Qdrant payload per extra slot — negligible vs the wrong-content cost.
 const COLLECTIONS = [
-  { name: 'experience-principles', topK: 2, budgetChars: 800 },
-  { name: 'experience-behavioral', topK: 3, budgetChars: 1200 },
-  { name: 'experience-selfqa',     topK: 2, budgetChars: 1000 },
+  { name: 'experience-principles', topK: 4, budgetChars: 800 },
+  { name: 'experience-behavioral', topK: 6, budgetChars: 1200 },
+  { name: 'experience-selfqa',     topK: 4, budgetChars: 1000 },
 ];
 const SELFQA_COLLECTION = 'experience-selfqa';
 const EDGE_COLLECTION = 'experience-edges';
