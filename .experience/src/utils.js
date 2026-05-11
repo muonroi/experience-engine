@@ -263,6 +263,12 @@ function buildQuery(toolName, toolInput) {
 function computeEffectiveConfidence(data) {
   const base = data.confidence || 0.5;
   const hits = data.hitCount || 0;
+  // Seed entries originate from authoritative org docs / common standards; their
+  // confidence shouldn't be discounted for lack of usage hits. ageFactor was
+  // designed for organic entries that should prove themselves via accumulated
+  // validations — applying it to seeds drops effConf below minConfidence and
+  // gets them filtered out at display time even when retrieval is perfect.
+  if (typeof data?.createdFrom === 'string' && data.createdFrom.startsWith('seed-')) return base;
   const ageFactor = Math.min(1.0, 0.7 + (hits * 0.06));
   return base * ageFactor;
 }
