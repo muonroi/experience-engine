@@ -32,7 +32,7 @@ const _hittrack = require('./src/hittrack');
 const _intercept = require('./src/intercept');
 
 // --- Constants ---
-const { COLLECTIONS, ROUTES_COLLECTION, SELFQA_COLLECTION, EDGE_COLLECTION, MAX_SESSION_UNIQUE } = _intercept;
+const { COLLECTIONS, ROUTES_COLLECTION, SELFQA_COLLECTION, EDGE_COLLECTION } = _intercept;
 
 const CODEX_ALLOWED_MODEL_REASONING = {
   'gpt-5.4': new Set(['low', 'medium', 'high', 'extra_high']),
@@ -146,12 +146,6 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   const hookRealtimeFastPath = _intercept.isHookRealtimeFastPath(toolName, sourceMeta);
   const skipRoute = !!(options && options.skipRoute);
   if (_intercept.isReadOnlyCommand(toolName, toolInput)) return { suggestions: null, surfacedIds: [] };
-
-  const uniquesSoFar = _session.sessionUniqueCount(sourceMeta);
-  if (uniquesSoFar >= _config.getMaxSessionUnique()) {
-    _activity.activityLog({ op: 'intercept', stage: 'budget_capped', tool: toolName, query: '(budget-capped)', scores: [], result: null, hasResult: false, surfacedCount: 0, project: _utils.extractProjectPath(toolInput), ...sourceMeta });
-    return { suggestions: null, surfacedIds: [] };
-  }
 
   const query = _utils.buildQuery(toolName, toolInput);
   const filePath = toolInput?.file_path || toolInput?.path || _utils.extractProjectPath(toolInput) || '';

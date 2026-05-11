@@ -9,7 +9,6 @@ const fs = require('fs');
 const pathMod = require('path');
 
 const {
-  MAX_SESSION_UNIQUE,
   VALID_FEEDBACK_VERDICTS, VALID_NOISE_REASONS,
   VALID_NOISE_DISPOSITIONS, VALID_NOISE_SOURCES,
 } = require('./config');
