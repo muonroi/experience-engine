@@ -148,7 +148,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   if (_intercept.isReadOnlyCommand(toolName, toolInput)) return { suggestions: null, surfacedIds: [] };
 
   const uniquesSoFar = _session.sessionUniqueCount(sourceMeta);
-  if (uniquesSoFar >= MAX_SESSION_UNIQUE) {
+  if (uniquesSoFar >= _config.getMaxSessionUnique()) {
     _activity.activityLog({ op: 'intercept', stage: 'budget_capped', tool: toolName, query: '(budget-capped)', scores: [], result: null, hasResult: false, surfacedCount: 0, project: _utils.extractProjectPath(toolInput), ...sourceMeta });
     return { suggestions: null, surfacedIds: [] };
   }
