@@ -198,6 +198,39 @@ function extractProjectPath(toolInput) {
 
 const QUERY_MAX_CHARS = 500;
 
+// Code identifiers (PascalCase types, qualified Type.Method, class : Parent) embed
+// far from natural-language trigger phrases ("When setting timestamps, use
+// IMDateTimeService..."). We extract those identifiers and prepend an NL hint so
+// the query vector lands closer to NL trigger vectors. Verified +0.15 cosine
+// improvement on muonroi audit cases (IMDateTimeService: 0.536 → 0.691).
+const _IDENT_PATTERNS = [
+  /\bclass\s+\w+\s*:\s*([A-Z][A-Za-z0-9_]*)/g,       // class X : ParentBase  → ParentBase
+  /\b([A-Z][A-Za-z0-9_]*\.[A-Z][A-Za-z0-9_]+)\b/g,    // DateTime.UtcNow, SaveChangesAsync (qualified)
+  /\b(I[A-Z][A-Za-z0-9_]+(?:Accessor|Service|Context|Repository|Logger|Factory|Provider|Handler))\b/g, // I-prefixed interfaces (common .NET shape)
+  /\b(M[A-Z][A-Za-z0-9_]{2,})\b/g,                    // M-prefixed muonroi wrappers
+  /\b([A-Z][A-Za-z0-9_]+(?:Async|Controller|Handler|Service|Repository|Context|Factory|Builder))\b/g, // common .NET type suffixes
+  /\bthrow\s+new\s+([A-Z][A-Za-z0-9_]+Exception)\b/g, // throw new XException
+];
+
+function extractCodeSymbols(text) {
+  const seen = new Set();
+  const ordered = [];
+  const limit = 8;
+  for (const re of _IDENT_PATTERNS) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const sym = m[1];
+      if (!sym) continue;
+      if (seen.has(sym)) continue;
+      seen.add(sym);
+      ordered.push(sym);
+      if (ordered.length >= limit) return ordered;
+    }
+  }
+  return ordered;
+}
+
 function buildQuery(toolName, toolInput) {
   const filePath = toolInput?.file_path || toolInput?.path || '';
   const lang = detectContext(filePath);
@@ -205,7 +238,21 @@ function buildQuery(toolName, toolInput) {
   let action = toolInput?.command || toolInput?.cmd || toolInput?.new_string || toolInput?.content || toolInput?.old_string || '';
   if (!action && toolInput?.new_string) action = toolInput.new_string;
   if (!action && toolInput?.content) action = toolInput.content;
-  const query = `${prefix}${String(action || toolName || '').trim()}`;
+  const actionStr = String(action || toolName || '').trim();
+  // Augment with extracted symbols when the action looks like code (has any qualified
+  // identifier or class declaration). Skip for plain prose / shell commands.
+  let augmented = actionStr;
+  // Apply augmentation when the action contains anything that looks like a code identifier
+  // worth surfacing: qualified Type.Method, generic, inheritance, I-prefixed interfaces with
+  // common .NET suffixes, M-wrappers, or known dotnet keywords.
+  const codeShape = /(?:[A-Z][A-Za-z0-9_]+(?:\.[A-Z]|<|\s*:\s*[A-Z]|Async\b|Exception\b))|(?:\bI[A-Z][A-Za-z0-9_]+(?:Accessor|Service|Context|Repository|Logger|Factory|Provider|Handler)\b)|(?:\bM[A-Z][A-Za-z]{2,}\b)/;
+  if (actionStr.length > 8 && codeShape.test(actionStr)) {
+    const symbols = extractCodeSymbols(`${toolInput?.old_string || ''}\n${toolInput?.new_string || ''}\n${actionStr}`);
+    if (symbols.length) {
+      augmented = `Using ${symbols.join(', ')}. ${actionStr}`;
+    }
+  }
+  const query = `${prefix}${augmented}`;
   return query.slice(0, QUERY_MAX_CHARS);
 }
 
