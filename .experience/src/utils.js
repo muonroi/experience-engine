@@ -228,9 +228,18 @@ function getValidatedHitCount(data) {
   return 0;
 }
 
+// hitBoost cap: organic entries with many hits previously got unbounded boost
+// (log2(1+100)*0.08 = +0.53), letting a 0.45-cosine old entry beat a 0.85-cosine
+// fresh seed. Cap so cosine remains the primary signal, hits a tiebreaker.
+const HIT_BOOST_MAX = 0.12;
+
+function isSeedEntry(data) {
+  return typeof data?.createdFrom === 'string' && data.createdFrom.startsWith('seed-');
+}
+
 function computeEffectiveScore(point, data, queryDomain, queryProjectSlug, queryText = '') {
   const cosine = point.score || 0;
-  const hitBoost = Math.log2(1 + (data.hitCount || 0)) * 0.08;
+  const hitBoost = Math.min(HIT_BOOST_MAX, Math.log2(1 + (data.hitCount || 0)) * 0.08);
   const normalizedQuery = String(queryText || '').toLowerCase();
   const daysSinceHit = data.lastHitAt
     ? (Date.now() - new Date(data.lastHitAt).getTime()) / 86400000
@@ -254,8 +263,11 @@ function computeEffectiveScore(point, data, queryDomain, queryProjectSlug, query
     : (queryDomain && !data.domain) ? 0.05 : 0;
   // P0: Project-aware penalty — cross-project suggestions heavily penalized
   // v2: bypass penalty when scope.lang='all' (universal behavioral rules should surface everywhere)
+  // v3: bypass penalty for seed entries (createdFrom starts with 'seed-'); they originate from
+  // org docs not project files, so 'missing _projectSlug' is by design, not unknown origin.
+  // Cross-repo leak is already prevented by Qdrant pre-filter on scope_org.
   let projectPenalty = 0;
-  if (queryProjectSlug) {
+  if (queryProjectSlug && !isSeedEntry(data)) {
     const scopeLang = data.scope?.lang;
     const principleLike = !!data.principle || data.createdFrom === 'evolution-abstraction' || getValidatedHitCount(data) >= SEEDED_BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD;
     if (scopeLang === 'all') {
