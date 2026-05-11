@@ -109,7 +109,15 @@ const EDGE_COLLECTION = 'experience-edges';
 const ROUTES_COLLECTION = 'experience-routes';
 const DEDUP_THRESHOLD = 0.85;
 const QUERY_MAX_CHARS = 500;
-const MAX_SESSION_UNIQUE = 8;
+// Per-session cap on unique surfaced hints before intercept short-circuits to null.
+// Originally hardcoded 8 — too low for orgs that seeded large knowledge bases. Now
+// configurable via config.maxSessionUnique or EXPERIENCE_MAX_SESSION_UNIQUE env.
+function getMaxSessionUnique() {
+  const raw = cfgValue('maxSessionUnique', 'EXPERIENCE_MAX_SESSION_UNIQUE', 50);
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : 50;
+}
+const MAX_SESSION_UNIQUE = 8; // kept for backwards-compat imports; new code uses getMaxSessionUnique()
 const COMPACT_DIM = 768;
 
 // --- Noise constants ---
@@ -159,7 +167,7 @@ module.exports = {
   getExpUser, EXP_USER,
   getHomeExpDir, getStoreDir, getActivityLogPath,
   COLLECTIONS, SELFQA_COLLECTION, EDGE_COLLECTION, ROUTES_COLLECTION,
-  DEDUP_THRESHOLD, QUERY_MAX_CHARS, MAX_SESSION_UNIQUE, COMPACT_DIM,
+  DEDUP_THRESHOLD, QUERY_MAX_CHARS, MAX_SESSION_UNIQUE, getMaxSessionUnique, COMPACT_DIM,
   VALID_FEEDBACK_VERDICTS, VALID_NOISE_REASONS, VALID_NOISE_DISPOSITIONS, VALID_NOISE_SOURCES,
   NOISE_SUPPRESSION_THRESHOLD, RECENT_VALIDATION_WINDOW_MS,
   UNUSED_NO_TOUCH_THRESHOLD, PENDING_HINT_TTL_MS, PROMPT_STALE_RECONCILE_MS,
