@@ -173,9 +173,19 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     const CSS_FAMILY = new Set(['css', 'scss', 'less', 'sass']);
     const CS_FAMILY = new Set(['cs', 'fs']);
     function fileMatchesLang(scopeLang) {
-      if (!scopeLang || scopeLang === 'all') return true;
-      let sl = String(scopeLang).toLowerCase();
-      const ALIAS = { csharp: 'c#', 'c-sharp': 'c#', fsharp: 'f#', ts: 'typescript', js: 'javascript' };
+      if (!scopeLang) return true;
+      // Comma-joined seeds (legacy data) → match if ANY token matches.
+      const raw = String(scopeLang).toLowerCase().trim();
+      if (raw === 'all') return true;
+      const tokens = raw.split(/[,/|]/).map(t => t.trim()).filter(Boolean);
+      if (tokens.length > 1) return tokens.some(t => fileMatchesLang(t));
+      let sl = tokens[0] || raw;
+      const ALIAS = {
+        csharp: 'c#', 'c-sharp': 'c#', dotnet: 'c#', '.net': 'c#',
+        fsharp: 'f#',
+        ts: 'typescript', tsx: 'typescript',
+        js: 'javascript', jsx: 'javascript', nodejs: 'javascript', node: 'javascript',
+      };
       if (ALIAS[sl]) sl = ALIAS[sl];
       if (sl === 'c#') return CS_FAMILY.has(fileExt);
       if (sl === 'javascript' || sl === 'typescript') return JS_FAMILY.has(fileExt);
