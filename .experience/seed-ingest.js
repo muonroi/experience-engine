@@ -67,19 +67,26 @@ function parseArgs(argv) {
 
 const REQUIRED_KEYS = ['id_hint', 'tier', 'trigger_main', 'trigger_variants', 'guidance', 'why', 'source', 'evidenceClass'];
 
+const ALLOWED_EVIDENCE_CLASSES = new Set(['org-doc', 'common-doc']);
+
 function validateEntry(e, idx) {
   for (const k of REQUIRED_KEYS) {
     if (e[k] === undefined || e[k] === null) return `entry[${idx}] missing key: ${k}`;
   }
   if (!TIER_COLLECTION[e.tier]) return `entry[${idx}] invalid tier: ${e.tier}`;
-  if (e.evidenceClass !== 'org-doc') return `entry[${idx}] unexpected evidenceClass: ${e.evidenceClass}`;
+  if (!ALLOWED_EVIDENCE_CLASSES.has(e.evidenceClass)) return `entry[${idx}] unexpected evidenceClass: ${e.evidenceClass}`;
   if (typeof e.trigger_main !== 'string' || e.trigger_main.length < 8) return `entry[${idx}] trigger_main too short`;
   if (!Array.isArray(e.trigger_variants)) return `entry[${idx}] trigger_variants not array`;
   if (typeof e.guidance !== 'string' || e.guidance.length < 12) return `entry[${idx}] guidance too short`;
-  // scope.org is the cross-repo gate. Without it, applyScopeFilter cannot tell the
-  // hint apart from generic stack knowledge — and it WILL leak into non-org repos.
   if (!e.scope || typeof e.scope !== 'object') return `entry[${idx}] missing scope object`;
-  if (!e.scope.org || typeof e.scope.org !== 'string') return `entry[${idx}] scope.org required for org-doc entries`;
+  // scope.org is the cross-repo gate. REQUIRED for org-doc (otherwise it leaks
+  // into non-org repos). FORBIDDEN for common-doc (which is meant to be universal).
+  if (e.evidenceClass === 'org-doc') {
+    if (!e.scope.org || typeof e.scope.org !== 'string') return `entry[${idx}] scope.org required for org-doc entries`;
+  } else if (e.evidenceClass === 'common-doc') {
+    if (e.scope.org) return `entry[${idx}] common-doc must NOT set scope.org (would gate as org-specific)`;
+    if (!e.scope.lang) return `entry[${idx}] common-doc must set scope.lang (use "all" for language-agnostic)`;
+  }
   return null;
 }
 
@@ -100,13 +107,13 @@ function buildPayload(entry, canonicalId, batchId) {
     scope: entry.scope || {},
     failureMode: 'misapplied_pattern',         // closest fixed enum for "raw API instead of wrapper"
     judgment: 'follow',
-    evidenceClass: 'org-doc',
+    evidenceClass: entry.evidenceClass,
     tier: tierNum,
     confidence: Math.min(0.85, Math.max(0.5, entry.confidence || 0.7)),
     hitCount: 0,
     confirmedAt: [],
     createdAt: new Date().toISOString(),
-    createdFrom: 'seed-org-doc',
+    createdFrom: entry.evidenceClass === 'common-doc' ? 'seed-common-doc' : 'seed-org-doc',
     seedBatchId: batchId,
     seedSource: entry.source,
     seedCodeRefs: entry.code_refs || [],
