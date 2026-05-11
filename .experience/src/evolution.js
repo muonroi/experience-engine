@@ -634,8 +634,22 @@ async function getAllEntries(collection) {
   return points;
 }
 
+// Flatten the high-cardinality scope dimensions onto the top-level payload so
+// Qdrant can pre-filter at query time using indexed keyword fields. This is the
+// single chokepoint — every writer (seed-ingest, evolution, edge, etc.) routes
+// through here, so tagging here means no scope field can be set in `data` but
+// missed in the indexed payload.
+function buildScopeFlatFields(data) {
+  const flat = {};
+  if (data?.scope?.org) flat.scope_org = String(data.scope.org).toLowerCase();
+  if (data?.scope?.lang) flat.scope_lang = String(data.scope.lang).toLowerCase();
+  if (data?.scope?.framework) flat.scope_framework = String(data.scope.framework).toLowerCase();
+  if (data?.evidenceClass) flat.evidenceClass = String(data.evidenceClass).toLowerCase();
+  return flat;
+}
+
 async function upsertEntry(collection, id, vector, data) {
-  const payload = { json: JSON.stringify(data), user: getExpUser() };
+  const payload = { json: JSON.stringify(data), user: getExpUser(), ...buildScopeFlatFields(data) };
   if (!(await checkQdrant())) {
     fileStoreUpsert(collection, id, vector, payload);
     return;

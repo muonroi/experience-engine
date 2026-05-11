@@ -162,13 +162,26 @@ async function fetchPointById(collection, pointId) {
   } catch { return null; }
 }
 
-async function searchCollection(name, vector, topK, signal) {
+/**
+ * searchCollection: Qdrant query-time top-K with optional caller filter.
+ * extraFilter is a partial Qdrant Filter (must / must_not / should arrays) that
+ * gets merged into the user-isolation filter. Pre-filtering at the index level
+ * is REQUIRED for correctness when post-retrieval gates would otherwise drain
+ * top-K (e.g. foreign repo + org-doc-dominated brain → 0 surfaces).
+ */
+async function searchCollection(name, vector, topK, signal, extraFilter) {
   if (!(await checkQdrant())) return fileStoreSearch(name, vector, topK);
   try {
+    const filter = { must: [buildQdrantUserFilter()] };
+    if (extraFilter && typeof extraFilter === 'object') {
+      if (Array.isArray(extraFilter.must)) filter.must.push(...extraFilter.must);
+      if (Array.isArray(extraFilter.must_not)) filter.must_not = [...(filter.must_not || []), ...extraFilter.must_not];
+      if (Array.isArray(extraFilter.should)) filter.should = [...(filter.should || []), ...extraFilter.should];
+    }
     const res = await fetch(`${getQdrantBase()}/collections/${name}/points/query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
-      body: JSON.stringify({ query: vector, limit: topK, with_payload: true, filter: { must: [buildQdrantUserFilter()] } }),
+      body: JSON.stringify({ query: vector, limit: topK, with_payload: true, filter }),
       signal,
     });
     if (!res.ok) return fileStoreSearch(name, vector, topK);

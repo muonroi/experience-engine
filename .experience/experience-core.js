@@ -159,10 +159,37 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     ? _router.routeModel(query, { files: [filePath].filter(Boolean), domain: queryDomain }, runtime).catch(() => null)
     : Promise.resolve(null);
 
+  // Pre-filter at Qdrant index level so top-K isn't wasted on points the
+  // post-filter would drop. Critical for foreign-repo intercepts where the
+  // brain is org-doc-dominated — without this, top-2 principles can be 100%
+  // org-doc, all dropped, leaving zero surfaces despite common-doc existing.
+  const queryFilter = (() => {
+    const cfgExtraRepos = _config.getConfig().muonroiStackRepos;
+    const fileIsMuonroiStack = _utils.isMuonroiStackRepo(filePath, cfgExtraRepos);
+    const extra = { must: [], must_not: [], should: [] };
+    if (filePath && !fileIsMuonroiStack) {
+      extra.must_not.push({ key: 'scope_org', match: { value: 'muonroi' } });
+    }
+    const callerFw = sourceMeta && typeof sourceMeta.framework === 'string'
+      ? sourceMeta.framework.toLowerCase().trim() : null;
+    if (callerFw) {
+      // Allow points without scope_framework, points tagged 'any', or matching framework.
+      extra.must.push({
+        should: [
+          { is_empty: { key: 'scope_framework' } },
+          { key: 'scope_framework', match: { value: 'any' } },
+          { key: 'scope_framework', match: { value: callerFw } },
+        ],
+      });
+    }
+    const hasAny = extra.must.length || extra.must_not.length || extra.should.length;
+    return hasAny ? extra : undefined;
+  })();
+
   const [t0, t1, t2, routeResult] = await Promise.all([
-    _qdrant.searchCollection(COLLECTIONS[0].name, vector, COLLECTIONS[0].topK, signal),
-    _qdrant.searchCollection(COLLECTIONS[1].name, vector, COLLECTIONS[1].topK, signal),
-    _qdrant.searchCollection(COLLECTIONS[2].name, vector, COLLECTIONS[2].topK, signal),
+    _qdrant.searchCollection(COLLECTIONS[0].name, vector, COLLECTIONS[0].topK, signal, queryFilter),
+    _qdrant.searchCollection(COLLECTIONS[1].name, vector, COLLECTIONS[1].topK, signal, queryFilter),
+    _qdrant.searchCollection(COLLECTIONS[2].name, vector, COLLECTIONS[2].topK, signal, queryFilter),
     routePromise,
   ]);
 
