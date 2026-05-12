@@ -355,8 +355,19 @@ async function evolve(trigger) {
   }
 
   // Step 2: Abstract T2 clusters -> T0 (per D-05)
+  //
+  // Tuning history (260512 recon):
+  //   Cluster cosine 0.70 was too loose — heterogeneous clusters produced
+  //   vague brain summaries that failed round-trip match (8/8 rejected,
+  //   matchRate ≤ 0.5). Tightened to 0.78 so clusters are semantically
+  //   coherent, while round-trip member match relaxed 0.65 → 0.60 and
+  //   accept rate relaxed 0.60 → 0.50 to make abstraction reachable.
+  //   These constants are deliberately surfaced for future re-tuning.
+  const ABSTRACT_CLUSTER_COSINE = 0.78;
+  const ROUND_TRIP_MEMBER_COSINE = 0.60;
+  const ROUND_TRIP_ACCEPT_RATE = 0.50;
   const remainingT2 = await getAllEntries('experience-selfqa');
-  const clustered = clusterByCosine(remainingT2, 0.70);
+  const clustered = clusterByCosine(remainingT2, ABSTRACT_CLUSTER_COSINE);
   for (const cluster of clustered) {
     if (cluster.length < 2) continue;
     const summaries = cluster.map(e => {
@@ -375,10 +386,10 @@ async function evolve(trigger) {
     let matchCount = 0;
     for (const e of cluster) {
       if (!e.vector || e.vector.length !== vector.length) continue;
-      if (cosineSimilarity(vector, e.vector) >= 0.65) matchCount++;
+      if (cosineSimilarity(vector, e.vector) >= ROUND_TRIP_MEMBER_COSINE) matchCount++;
     }
-    if (matchCount / cluster.length < 0.6) {
-      activityLog({ op: 'evolve-reject', reason: 'round-trip-fail', matchRate: matchCount / cluster.length, principle: result.principle.slice(0, 80) });
+    if (matchCount / cluster.length < ROUND_TRIP_ACCEPT_RATE) {
+      activityLog({ op: 'evolve-reject', reason: 'round-trip-fail', matchRate: matchCount / cluster.length, clusterSize: cluster.length, principle: result.principle.slice(0, 80) });
       continue;
     }
 
