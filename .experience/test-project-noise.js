@@ -458,3 +458,133 @@ describe('balanced noise suppression gate', () => {
     assert.strictEqual(shouldSuppressForNoise(data, { queryDomain: 'C#' }).suppress, false);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════
+//  PART 10: caller-side language and framework detection
+// ═══════════════════════════════════════════════════════════════════
+
+describe('NOISE-10: caller-side language and framework detection', () => {
+  const enrich = require('./source-meta-enrich.js');
+
+  it('detectContext maps .ts to TypeScript', () => {
+    assert.strictEqual(enrich.detectContext('D:/Personal/Core/muonroi-cli/src/app.ts'), 'TypeScript');
+  });
+
+  it('detectContext maps .cs to C#', () => {
+    assert.strictEqual(enrich.detectContext('D:/Personal/Core/muonroi-building-block/src/Foo.cs'), 'C#');
+  });
+
+  it('detectContext returns null for paths without extensions', () => {
+    assert.strictEqual(enrich.detectContext('/no/extension/here'), null);
+  });
+
+  it('detectFrameworkFromProject returns null for non-existent path', () => {
+    assert.strictEqual(enrich.detectFrameworkFromProject('/nonexistent/x/y/z.ts'), null);
+  });
+
+  it('enrichSourceMeta extracts lang from toolInput.file_path', () => {
+    const out = enrich.enrichSourceMeta({ file_path: 'D:/Personal/Core/muonroi-cli/src/app.ts' });
+    assert.strictEqual(out.lang, 'TypeScript');
+  });
+
+  it('enrichSourceMeta returns {} for missing toolInput', () => {
+    assert.deepStrictEqual(enrich.enrichSourceMeta(null), {});
+    assert.deepStrictEqual(enrich.enrichSourceMeta(undefined), {});
+    assert.deepStrictEqual(enrich.enrichSourceMeta({}), {});
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+//  PART 11: scope_lang must clause is added when sourceMeta.lang is set
+// ═══════════════════════════════════════════════════════════════════
+
+describe('NOISE-11: scope_lang Qdrant filter contract', () => {
+  // Structural contract test — mirrors the IIFE in experience-core.js queryFilter
+  // exactly. Updating the production code without updating this stub will keep
+  // them in sync via review.
+  function buildFilterStub(sourceMeta) {
+    const extra = { must: [], must_not: [], should: [] };
+    const callerLang = sourceMeta && typeof sourceMeta.lang === 'string'
+      ? sourceMeta.lang.toLowerCase().trim() : null;
+    if (callerLang) {
+      extra.must.push({
+        should: [
+          { is_empty: { key: 'scope_lang' } },
+          { key: 'scope_lang', match: { value: 'all' } },
+          { key: 'scope_lang', match: { value: callerLang } },
+        ],
+      });
+    }
+    return extra;
+  }
+
+  it('adds scope_lang clause when lang is typescript', () => {
+    const f = buildFilterStub({ lang: 'typescript' });
+    assert.strictEqual(f.must.length, 1);
+    const should = f.must[0].should;
+    assert.strictEqual(should.length, 3);
+    assert.ok(should.some(c => c.is_empty && c.is_empty.key === 'scope_lang'),
+      'must include is_empty(scope_lang)');
+    assert.ok(should.some(c => c.match && c.match.value === 'all'),
+      'must include scope_lang=all');
+    assert.ok(should.some(c => c.match && c.match.value === 'typescript'),
+      'must include scope_lang=typescript');
+  });
+
+  it('lowercases caller lang before matching', () => {
+    const f = buildFilterStub({ lang: 'TypeScript' });
+    const values = f.must[0].should
+      .filter(c => c.key === 'scope_lang' && c.match)
+      .map(c => c.match.value);
+    assert.ok(values.includes('typescript'),
+      `expected lowercased "typescript" in values, got ${JSON.stringify(values)}`);
+    assert.ok(!values.includes('TypeScript'),
+      `expected no mixed-case "TypeScript", got ${JSON.stringify(values)}`);
+  });
+
+  it('does not add scope_lang clause when lang is absent', () => {
+    assert.strictEqual(buildFilterStub({}).must.length, 0);
+    assert.strictEqual(buildFilterStub({ lang: '' }).must.length, 0);
+    assert.strictEqual(buildFilterStub({ lang: '  ' }).must.length, 0);
+    assert.strictEqual(buildFilterStub(null).must.length, 0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+//  PART 12: Cross-stack scenario (muonroi-cli TS vs muonroi-building-block .NET)
+// ═══════════════════════════════════════════════════════════════════
+
+describe('NOISE-12: cross-stack muonroi-* prefix does not leak hints', () => {
+  // The real fix happens at Qdrant query time via scope_lang must clause
+  // (PART 11). This test confirms the in-memory rerank still demotes a
+  // .NET-tagged hint inside a TS context, as a defence in depth.
+  it('C#/.NET hint scores low in TypeScript+muonroi-cli context', () => {
+    const dotnetRule = mkPoint(0.75, {
+      _projectSlug: 'muonroi-building-block',
+      domain: 'C#',
+      scope: { lang: 'c#', framework: 'dotnet' },
+      trigger: 'Use IMLog<T> over ILogger<T>',
+      solution: 'Replace ILogger<T> with IMLog<T>',
+      hitCount: 2,
+      confidence: 0.75,
+    });
+    const ranked = rerankByQuality([dotnetRule], 'TypeScript', 'muonroi-cli');
+    assert.ok(ranked[0]._effectiveScore < 0.30,
+      `C# rule should score < 0.30 in TS context, got ${ranked[0]._effectiveScore.toFixed(3)}`);
+  });
+
+  it('a TypeScript hint inside muonroi-cli still scores well in its own context', () => {
+    const tsRule = mkPoint(0.70, {
+      _projectSlug: 'muonroi-cli',
+      domain: 'TypeScript',
+      scope: { lang: 'typescript' },
+      trigger: 'Prefer top-level await over IIFE',
+      solution: 'Use top-level await',
+      hitCount: 2,
+      confidence: 0.7,
+    });
+    const ranked = rerankByQuality([tsRule], 'TypeScript', 'muonroi-cli');
+    assert.ok(ranked[0]._effectiveScore > 0.40,
+      `Same-stack TS rule should score > 0.40, got ${ranked[0]._effectiveScore.toFixed(3)}`);
+  });
+});
