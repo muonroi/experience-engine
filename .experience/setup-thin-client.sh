@@ -277,7 +277,21 @@ if (orgName && orgName.trim()) {
   const patterns = orgPatternsRaw
     ? orgPatternsRaw.split(",").map(s => s.trim()).filter(Boolean)
     : [];
-  cfg.org = { name: orgName.trim(), repoPatterns: patterns };
+  // Preserve unknown org.* keys (frameworkPackages, globalScope, etc.) from
+  // a prior install — re-running setup should never silently drop config
+  // fields the user added manually.
+  let preserved = {};
+  if (existingOrgJson) {
+    try {
+      const prev = JSON.parse(existingOrgJson);
+      if (prev && typeof prev === "object") {
+        for (const [k, v] of Object.entries(prev)) {
+          if (k !== "name" && k !== "repoPatterns") preserved[k] = v;
+        }
+      }
+    } catch {}
+  }
+  cfg.org = Object.assign({ name: orgName.trim(), repoPatterns: patterns }, preserved);
 } else if (existingOrgJson) {
   try { cfg.org = JSON.parse(existingOrgJson); } catch {}
 }
