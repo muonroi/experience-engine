@@ -68,12 +68,26 @@ function isRemoteMode() {
   }
 }
 
-function buildSourceMeta(data) {
-  return {
+function loadEnricher() {
+  try { return require(path.join(os.homedir(), '.experience', 'source-meta-enrich.js')); }
+  catch {
+    try { return require(path.join(__dirname, 'source-meta-enrich.js')); }
+    catch { return null; }
+  }
+}
+const _enricher = loadEnricher();
+
+function buildSourceMeta(data, toolInput) {
+  const meta = {
     sourceKind: 'codex-hook',
     sourceRuntime: process.env.WSL_DISTRO_NAME ? 'codex-wsl' : 'codex-windows',
     sourceSession: data?.session_id || process.env.CODEX_SESSION_ID || null,
   };
+  if (_enricher) {
+    try { Object.assign(meta, _enricher.enrichSourceMeta(toolInput)); }
+    catch { /* swallow */ }
+  }
+  return meta;
 }
 
 /**
@@ -140,11 +154,11 @@ process.stdin.on('end', async () => {
     // Parse PostToolUse input
     let data;
     try { data = JSON.parse(input || '{}'); } catch { data = {}; }
-    const sourceMeta = buildSourceMeta(data);
 
     const toolName   = data.tool_name  || data.toolName  || '';
     const toolInput  = data.tool_input || data.input     || {};
     const toolOutput = data.tool_response || data.output || data.result || {};
+    const sourceMeta = buildSourceMeta(data, toolInput);
     let surfacedIds = [];
     if (state?.ts) {
       const ageMs = Date.now() - new Date(state.ts).getTime();

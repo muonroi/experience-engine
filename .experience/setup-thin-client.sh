@@ -161,6 +161,7 @@ THIN_CLIENT_FILES=(
   interceptor.js
   interceptor-post.js
   interceptor-prompt.js
+  source-meta-enrich.js
   stop-extractor.js
   remote-client.js
   extract-compact.js

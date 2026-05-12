@@ -50,15 +50,32 @@ function isRemoteMode() {
   }
 }
 
-function buildSourceMeta(data) {
+// Load enricher from install dir, with fallback to repo-local for tests.
+function loadEnricher() {
+  try { return require(path.join(os.homedir(), '.experience', 'source-meta-enrich.js')); }
+  catch {
+    try { return require(path.join(__dirname, 'source-meta-enrich.js')); }
+    catch { return null; }
+  }
+}
+const _enricher = loadEnricher();
+
+function buildSourceMeta(data, toolInput) {
   const runtime = process.env.WSL_DISTRO_NAME ? 'codex-wsl' : 'codex-windows';
-  return {
+  const meta = {
     sourceKind: 'codex-hook',
     sourceRuntime: runtime,
     // Codex hook payload reliably includes session_id; CODEX_SESSION_ID is
     // not guaranteed to be present in the hook subprocess environment.
     sourceSession: data.session_id || process.env.CODEX_SESSION_ID || null,
   };
+  // Caller-side language/framework enrichment. Best-effort: a missing
+  // enricher or any throw inside leaves the filter pass-through (status quo).
+  if (_enricher) {
+    try { Object.assign(meta, _enricher.enrichSourceMeta(toolInput)); }
+    catch { /* swallow */ }
+  }
+  return meta;
 }
 
 function isCodexHookInvocation(data, tool) {
@@ -179,7 +196,7 @@ process.stdin.on('end', async () => {
     const data = JSON.parse(input || '{}');
     const tool = data.tool_name || data.toolName || '';
     const toolInput = data.tool_input || data.input || {};
-    const sourceMeta = buildSourceMeta(data);
+    const sourceMeta = buildSourceMeta(data, toolInput);
     const matches = /Edit|Write|Bash|shell|replace|write_file|execute_command/i.test(tool);
     debugLog({ stage: 'parsed', tool, matches, keys: Object.keys(toolInput || {}).slice(0, 12), ...sourceMeta });
     activityLog({ stage: 'parsed', tool, matches, keys: Object.keys(toolInput || {}).slice(0, 12), query: toolInput?.command || toolInput?.cmd || null, ...sourceMeta });
