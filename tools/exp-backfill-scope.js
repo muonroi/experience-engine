@@ -103,7 +103,13 @@ function resolveEndpoints(cfg, args) {
     else if (cfg.serverBaseUrl) brainUrl = cfg.serverBaseUrl.replace(/\/$/, '') + '/api/brain';
     else brainUrl = 'http://localhost:8082/api/brain';
   }
-  return { qdrantUrl, qdrantKey, brainUrl };
+  // Server's /api/brain requires Bearer when serverAuthToken is set. Read
+  // from config (full install: server.authToken; thin-client: serverAuthToken).
+  const brainAuthToken = args.brainAuthToken
+    || cfg.serverAuthToken
+    || (cfg.server && cfg.server.authToken)
+    || null;
+  return { qdrantUrl, qdrantKey, brainUrl, brainAuthToken };
 }
 
 async function qdrantPost(qdrantUrl, qdrantKey, urlPath, body) {
@@ -131,10 +137,12 @@ async function* scrollCollection(qdrantUrl, qdrantKey, collection) {
   }
 }
 
-async function callBrainProxy(brainUrl, prompt) {
+async function callBrainProxy(brainUrl, prompt, authToken) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
   const res = await fetch(brainUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ prompt, timeoutMs: 8000 }),
     signal: AbortSignal.timeout(15000),
   });
@@ -201,7 +209,7 @@ async function main() {
   }
 
   const cfg = loadConfig();
-  const { qdrantUrl, qdrantKey, brainUrl } = resolveEndpoints(cfg, args);
+  const { qdrantUrl, qdrantKey, brainUrl, brainAuthToken } = resolveEndpoints(cfg, args);
   if (!qdrantUrl) {
     process.stderr.write('Error: qdrant URL not resolvable from config or --qdrant-url.\n');
     process.exit(1);
@@ -244,7 +252,7 @@ async function main() {
       let proposed = 'any';
       try {
         const prompt = buildClassifierPrompt(point, knownFrameworks);
-        const raw = await callBrainProxy(brainUrl, prompt);
+        const raw = await callBrainProxy(brainUrl, prompt, brainAuthToken);
         proposed = normalizeLabel(raw, knownFrameworks);
       } catch (err) {
         summary.errors++;
