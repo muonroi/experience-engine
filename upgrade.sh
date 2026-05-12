@@ -74,12 +74,14 @@ if [ -f "$CONFIG_PATH" ]; then
     exit 1
   fi
   if ! MODE=$(node -e "
+    let out = 'unknown';
     try {
       const c = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
-      if (typeof c.version !== 'string') { process.stdout.write('unknown'); return; }
-      if (c.version === 'thin-client') process.stdout.write('thin-client');
-      else process.stdout.write('full');
-    } catch { process.stdout.write('unknown'); }
+      if (typeof c.version === 'string') {
+        out = (c.version === 'thin-client') ? 'thin-client' : 'full';
+      }
+    } catch {}
+    process.stdout.write(out);
   " "$CONFIG_PATH" 2>/dev/null); then
     MODE="unknown"
   fi
