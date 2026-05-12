@@ -68,28 +68,66 @@ const PKG_DEP_FW = [
   { dep: 'electron', framework: 'electron' },
 ];
 
+// muonroi-building-block consumer detection
+const MUONROI_NPM_SCOPE = '@muonroi/';
+const MUONROI_FRAMEWORK = 'muonroi-building-block';
+const CSPROJ_READ_CAP = 64 * 1024; // 64KB cap on .csproj reads — large enough for any real project
+
+function _csprojReferencesMuonroi(filePath) {
+  try {
+    const stat = fs.statSync(filePath);
+    const size = Math.min(stat.size, CSPROJ_READ_CAP);
+    const fd = fs.openSync(filePath, 'r');
+    try {
+      const buf = Buffer.alloc(size);
+      fs.readSync(fd, buf, 0, size, 0);
+      const text = buf.toString('utf8');
+      // Match <PackageReference Include="Muonroi.*"> (any quote style, any whitespace).
+      // Also catches <ProjectReference Include="...\Muonroi.*\..."/> as a fallback.
+      return /Include\s*=\s*["'][^"']*Muonroi\./i.test(text);
+    } finally { fs.closeSync(fd); }
+  } catch { return false; }
+}
+
 function scanDirForFramework(dir) {
   let entries;
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
   catch { return null; }
 
-  const fileNames = new Set();
-  for (const e of entries) if (e.isFile()) fileNames.add(e.name);
+  const fileNames = [];
+  for (const e of entries) if (e.isFile()) fileNames.push(e.name);
+  const fileNameSet = new Set(fileNames);
 
-  for (const m of FW_MARKERS) {
-    if (m.ext) {
-      for (const n of fileNames) {
-        if (n.toLowerCase().endsWith(m.ext)) return m.framework;
-      }
-    } else if (m.file && fileNames.has(m.file)) {
-      return m.framework;
+  // .NET: detect marker file, then refine by scanning for Muonroi.* PackageReference.
+  const dotnetMarker = fileNames.find(n => {
+    const lower = n.toLowerCase();
+    return lower.endsWith('.csproj') || lower.endsWith('.fsproj') || lower.endsWith('.sln');
+  });
+  if (dotnetMarker) {
+    // Scan up to 4 marker files in this dir (covers most multi-project dirs).
+    const markers = fileNames
+      .filter(n => /\.(cs|fs)proj$|\.sln$/i.test(n))
+      .slice(0, 4);
+    for (const m of markers) {
+      if (_csprojReferencesMuonroi(`${dir}/${m}`)) return MUONROI_FRAMEWORK;
     }
+    return 'dotnet';
   }
 
-  if (fileNames.has('package.json')) {
+  for (const m of FW_MARKERS) {
+    if (m.ext) continue; // .NET ext handled above
+    if (m.file && fileNameSet.has(m.file)) return m.framework;
+  }
+
+  if (fileNameSet.has('package.json')) {
     try {
       const pkg = JSON.parse(fs.readFileSync(`${dir}/package.json`, 'utf8'));
       const deps = Object.assign({}, pkg.dependencies || {}, pkg.devDependencies || {});
+      // Muonroi consumer detection takes precedence over generic next/nest/react.
+      // A muonroi-cli that happens to use react still classifies as BB consumer.
+      for (const depName of Object.keys(deps)) {
+        if (depName.startsWith(MUONROI_NPM_SCOPE)) return MUONROI_FRAMEWORK;
+      }
       for (const { dep, framework } of PKG_DEP_FW) {
         if (deps[dep]) return framework;
       }
