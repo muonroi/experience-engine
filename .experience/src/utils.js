@@ -38,6 +38,94 @@ function detectContext(filePath) {
   return LANG_MAP[ext] || null;
 }
 
+// ============================================================
+//  Framework detection (cached per project root)
+//  Walks up from filePath looking for stack markers. Returns
+//  a lowercase framework token or null. Consumers lowercase
+//  it again before comparison (see experience-core.js).
+// ============================================================
+
+const _FRAMEWORK_CACHE = new Map();
+const _FRAMEWORK_CACHE_MAX = 256;
+
+const _FRAMEWORK_MARKERS = [
+  { ext: '.csproj', framework: 'dotnet' },
+  { ext: '.fsproj', framework: 'dotnet' },
+  { ext: '.sln', framework: 'dotnet' },
+  { file: 'Cargo.toml', framework: 'rust' },
+  { file: 'go.mod', framework: 'go' },
+  { file: 'pyproject.toml', framework: 'python' },
+  { file: 'requirements.txt', framework: 'python' },
+  { file: 'pom.xml', framework: 'java' },
+  { file: 'build.gradle', framework: 'java' },
+  { file: 'build.gradle.kts', framework: 'java' },
+  { file: 'Gemfile', framework: 'ruby' },
+];
+
+const _PKG_DEP_FRAMEWORKS = [
+  { dep: 'next', framework: 'next' },
+  { dep: '@nestjs/core', framework: 'nest' },
+  { dep: 'nuxt', framework: 'nuxt' },
+  { dep: 'react-native', framework: 'react-native' },
+  { dep: 'expo', framework: 'expo' },
+  { dep: 'react', framework: 'react' },
+  { dep: 'vue', framework: 'vue' },
+  { dep: 'svelte', framework: 'svelte' },
+  { dep: 'electron', framework: 'electron' },
+];
+
+function _scanDirForFramework(dir, fs) {
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
+  catch { return null; }
+
+  const fileNames = new Set();
+  for (const e of entries) if (e.isFile()) fileNames.add(e.name);
+
+  for (const m of _FRAMEWORK_MARKERS) {
+    if (m.ext) {
+      for (const n of fileNames) {
+        if (n.toLowerCase().endsWith(m.ext)) return m.framework;
+      }
+    } else if (m.file && fileNames.has(m.file)) {
+      return m.framework;
+    }
+  }
+
+  if (fileNames.has('package.json')) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(`${dir}/package.json`, 'utf8'));
+      const deps = Object.assign({}, pkg.dependencies || {}, pkg.devDependencies || {});
+      for (const { dep, framework } of _PKG_DEP_FRAMEWORKS) {
+        if (deps[dep]) return framework;
+      }
+      return null;
+    } catch { return null; }
+  }
+  return null;
+}
+
+function detectFrameworkFromProject(filePath) {
+  if (!filePath) return null;
+  const fs = require('fs');
+  const path = require('path');
+  let dir = path.dirname(filePath.replace(/\\/g, '/'));
+  for (let i = 0; i < 8; i++) {
+    if (!dir || dir === '/' || dir === '.' || /^[A-Za-z]:\/?$/.test(dir)) break;
+    if (_FRAMEWORK_CACHE.has(dir)) return _FRAMEWORK_CACHE.get(dir);
+    const fw = _scanDirForFramework(dir, fs);
+    if (fw) {
+      if (_FRAMEWORK_CACHE.size >= _FRAMEWORK_CACHE_MAX) _FRAMEWORK_CACHE.clear();
+      _FRAMEWORK_CACHE.set(dir, fw);
+      return fw;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
 function normalizeTechLabel(label) {
   const normalized = String(label || '').trim().toLowerCase();
   if (!normalized) return '';
@@ -567,7 +655,7 @@ function detectRuntime(toolName) {
 // ============================================================
 
 module.exports = {
-  detectContext, normalizeTechLabel, commandSuggestsDomain,
+  detectContext, normalizeTechLabel, commandSuggestsDomain, detectFrameworkFromProject,
   extractProjectPath, extractProjectSlug, extractPathFromCommand, isAbsolutePath,
   isOrgStackRepo,
   buildQuery, QUERY_MAX_CHARS,
