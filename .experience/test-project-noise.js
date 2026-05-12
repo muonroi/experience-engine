@@ -590,16 +590,31 @@ describe('NOISE-12: cross-stack muonroi-* prefix does not leak hints', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
-//  PART 13: muonroi-building-block consumer detection
-//  Fabricates temp project fixtures so tests don't depend on real
-//  workspace layout. Each test uses a fresh temp dir.
+//  PART 13: org-configured framework-package detection
+//
+//  The engine ships with ZERO hardcoded org/framework names. Tests inject
+//  example patterns via opts.frameworkPackages — matching the schema users
+//  put in ~/.experience/config.json under org.frameworkPackages.
+//
+//  Fabricated fixtures in temp dirs so the suite is independent of the
+//  real workspace layout.
 // ═══════════════════════════════════════════════════════════════════
 
-describe('NOISE-13: muonroi-building-block consumer detection', () => {
+describe('NOISE-13: org-configured framework-package detection', () => {
   const enrich = require('./source-meta-enrich.js');
   const fs = require('node:fs');
   const os = require('node:os');
   const path = require('node:path');
+
+  // Generic example patterns for tests. The engine does NOT ship these —
+  // a downstream user supplies their own via config. Names used here are
+  // arbitrary illustration.
+  const EXAMPLE_PACKAGES = {
+    'example-fw': {
+      nuget: ['Example.Framework.'],
+      npm: ['@example/'],
+    },
+  };
 
   function mkTempProject() {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'ee-fw-test-'));
@@ -609,23 +624,26 @@ describe('NOISE-13: muonroi-building-block consumer detection', () => {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   }
 
-  it('.csproj with Muonroi.* PackageReference -> muonroi-building-block', () => {
+  it('.csproj with configured nuget prefix -> mapped framework label', () => {
     const dir = mkTempProject();
     try {
       fs.writeFileSync(path.join(dir, 'Sample.csproj'), `
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
-    <PackageReference Include="Muonroi.BuildingBlock" Version="1.0.0" />
+    <PackageReference Include="Example.Framework.Core" Version="1.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
   </ItemGroup>
 </Project>
 `);
-      const fw = enrich.detectFrameworkFromProject(path.join(dir, 'src', 'Foo.cs'));
-      assert.strictEqual(fw, 'muonroi-building-block');
+      const fw = enrich.detectFrameworkFromProject(
+        path.join(dir, 'src', 'Foo.cs'),
+        { frameworkPackages: EXAMPLE_PACKAGES }
+      );
+      assert.strictEqual(fw, 'example-fw');
     } finally { cleanup(dir); }
   });
 
-  it('.csproj with no Muonroi.* reference -> generic dotnet', () => {
+  it('.csproj with no configured prefix -> generic dotnet', () => {
     const dir = mkTempProject();
     try {
       fs.writeFileSync(path.join(dir, 'PlainApi.csproj'), `
@@ -636,48 +654,97 @@ describe('NOISE-13: muonroi-building-block consumer detection', () => {
   </ItemGroup>
 </Project>
 `);
-      const fw = enrich.detectFrameworkFromProject(path.join(dir, 'src', 'Foo.cs'));
+      const fw = enrich.detectFrameworkFromProject(
+        path.join(dir, 'src', 'Foo.cs'),
+        { frameworkPackages: EXAMPLE_PACKAGES }
+      );
       assert.strictEqual(fw, 'dotnet');
     } finally { cleanup(dir); }
   });
 
-  it('.csproj with ProjectReference path containing Muonroi.* -> muonroi-building-block', () => {
+  it('.csproj ProjectReference with configured prefix in path -> mapped label', () => {
     const dir = mkTempProject();
     try {
       fs.writeFileSync(path.join(dir, 'Consumer.csproj'), `
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
-    <ProjectReference Include="..\\..\\Muonroi.AspNetCore\\Muonroi.AspNetCore.csproj" />
+    <ProjectReference Include="..\\..\\Example.Framework.AspNetCore\\Example.Framework.AspNetCore.csproj" />
   </ItemGroup>
 </Project>
 `);
-      const fw = enrich.detectFrameworkFromProject(path.join(dir, 'src', 'Foo.cs'));
-      assert.strictEqual(fw, 'muonroi-building-block');
+      const fw = enrich.detectFrameworkFromProject(
+        path.join(dir, 'src', 'Foo.cs'),
+        { frameworkPackages: EXAMPLE_PACKAGES }
+      );
+      assert.strictEqual(fw, 'example-fw');
     } finally { cleanup(dir); }
   });
 
-  it('package.json with @muonroi/* dep -> muonroi-building-block', () => {
+  it('package.json with configured npm prefix -> mapped label (beats react)', () => {
     const dir = mkTempProject();
     try {
       fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
         name: 'consumer-app',
-        dependencies: { '@muonroi/sdk': '^1.0.0', 'react': '^18.0.0' },
+        dependencies: { '@example/sdk': '^1.0.0', 'react': '^18.0.0' },
       }));
-      const fw = enrich.detectFrameworkFromProject(path.join(dir, 'src', 'app.ts'));
-      assert.strictEqual(fw, 'muonroi-building-block',
-        '@muonroi/* must take precedence over react');
+      const fw = enrich.detectFrameworkFromProject(
+        path.join(dir, 'src', 'app.ts'),
+        { frameworkPackages: EXAMPLE_PACKAGES }
+      );
+      assert.strictEqual(fw, 'example-fw',
+        'configured npm prefix must take precedence over built-in react detection');
     } finally { cleanup(dir); }
   });
 
-  it('package.json with only react dep -> react (unchanged from Phase 1)', () => {
+  it('package.json with only react dep -> react (built-in generic table)', () => {
     const dir = mkTempProject();
     try {
       fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
         name: 'plain-react',
         dependencies: { 'react': '^18.0.0', 'react-dom': '^18.0.0' },
       }));
-      const fw = enrich.detectFrameworkFromProject(path.join(dir, 'src', 'app.tsx'));
+      const fw = enrich.detectFrameworkFromProject(
+        path.join(dir, 'src', 'app.tsx'),
+        { frameworkPackages: EXAMPLE_PACKAGES }
+      );
       assert.strictEqual(fw, 'react');
+    } finally { cleanup(dir); }
+  });
+
+  it('no frameworkPackages configured -> .NET falls back to generic dotnet', () => {
+    const dir = mkTempProject();
+    try {
+      fs.writeFileSync(path.join(dir, 'Sample.csproj'), `
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Example.Framework.Core" Version="1.0.0" />
+  </ItemGroup>
+</Project>
+`);
+      // Explicit empty config -> generic detection only.
+      const fw = enrich.detectFrameworkFromProject(
+        path.join(dir, 'src', 'Foo.cs'),
+        { frameworkPackages: {} }
+      );
+      assert.strictEqual(fw, 'dotnet');
+    } finally { cleanup(dir); }
+  });
+
+  it('multiple frameworks configured -> first matching prefix wins', () => {
+    const dir = mkTempProject();
+    try {
+      fs.writeFileSync(path.join(dir, 'Sample.csproj'),
+        '<Project><ItemGroup><PackageReference Include="Acme.Lib.Core" /></ItemGroup></Project>');
+      const fw = enrich.detectFrameworkFromProject(
+        path.join(dir, 'src', 'Foo.cs'),
+        {
+          frameworkPackages: {
+            'acme-lib': { nuget: ['Acme.Lib.'] },
+            'example-fw': { nuget: ['Example.Framework.'] },
+          },
+        }
+      );
+      assert.strictEqual(fw, 'acme-lib');
     } finally { cleanup(dir); }
   });
 
@@ -685,13 +752,14 @@ describe('NOISE-13: muonroi-building-block consumer detection', () => {
     const dir = mkTempProject();
     try {
       fs.writeFileSync(path.join(dir, 'Sample.csproj'),
-        '<Project><ItemGroup><PackageReference Include="Muonroi.X"/></ItemGroup></Project>');
-      const first = enrich.detectFrameworkFromProject(path.join(dir, 'a.cs'));
+        '<Project><ItemGroup><PackageReference Include="Example.Framework.X"/></ItemGroup></Project>');
+      const opts = { frameworkPackages: EXAMPLE_PACKAGES };
+      const first = enrich.detectFrameworkFromProject(path.join(dir, 'a.cs'), opts);
       // Delete the file — cache should still return the same answer.
       fs.unlinkSync(path.join(dir, 'Sample.csproj'));
-      const second = enrich.detectFrameworkFromProject(path.join(dir, 'b.cs'));
-      assert.strictEqual(first, 'muonroi-building-block');
-      assert.strictEqual(second, 'muonroi-building-block', 'cache must serve second call');
+      const second = enrich.detectFrameworkFromProject(path.join(dir, 'b.cs'), opts);
+      assert.strictEqual(first, 'example-fw');
+      assert.strictEqual(second, 'example-fw', 'cache must serve second call');
     } finally { cleanup(dir); }
   });
 });

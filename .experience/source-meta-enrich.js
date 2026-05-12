@@ -7,11 +7,32 @@
  * extractProjectPath) so interceptors can enrich sourceMeta without pulling
  * in the full local brain code path.
  *
- * Keep this file pure: no Qdrant, no remote, no config. fs + path only.
+ * The repo contains ZERO hardcoded org/framework names by design (matches
+ * the existing `org.repoPatterns` convention in src/utils.js). Specific
+ * org frameworks are configured via ~/.experience/config.json:
+ *
+ *   {
+ *     "org": {
+ *       "name": "<orgName>",
+ *       "repoPatterns": ["..."],
+ *       "frameworkPackages": {
+ *         "<frameworkLabel>": {
+ *           "nuget": ["<prefix>", ...],
+ *           "npm":   ["<prefix>", ...]
+ *         },
+ *         ...
+ *       }
+ *     }
+ *   }
+ *
+ * When no `frameworkPackages` is configured, .NET projects detect as the
+ * generic 'dotnet' label and JS/TS projects fall back to the built-in
+ * generic PKG_DEP_FW table (next/nest/react/...).
  */
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 const LANG_MAP = {
   '.ts': 'TypeScript', '.tsx': 'TypeScript React',
@@ -68,12 +89,47 @@ const PKG_DEP_FW = [
   { dep: 'electron', framework: 'electron' },
 ];
 
-// muonroi-building-block consumer detection
-const MUONROI_NPM_SCOPE = '@muonroi/';
-const MUONROI_FRAMEWORK = 'muonroi-building-block';
-const CSPROJ_READ_CAP = 64 * 1024; // 64KB cap on .csproj reads — large enough for any real project
+const CSPROJ_READ_CAP = 64 * 1024; // bound .csproj reads to keep hot path cheap
 
-function _csprojReferencesMuonroi(filePath) {
+// Config loader (cached, fail-open). Returns {} when config absent so the
+// engine runs in generic mode without surfacing errors to the agent.
+let _configCache = null;
+function _loadConfig() {
+  if (_configCache !== null) return _configCache;
+  try {
+    const cfgPath = path.join(os.homedir(), '.experience', 'config.json');
+    _configCache = JSON.parse(fs.readFileSync(cfgPath, 'utf8')) || {};
+  } catch { _configCache = {}; }
+  return _configCache;
+}
+
+function _normalizeFrameworkPackages(input) {
+  // Accept either:
+  //   { "<framework>": { nuget: [...], npm: [...] } }
+  // and ignore malformed entries silently.
+  if (!input || typeof input !== 'object') return {};
+  const out = {};
+  for (const [name, defs] of Object.entries(input)) {
+    if (!name || typeof name !== 'string' || !defs || typeof defs !== 'object') continue;
+    const nuget = Array.isArray(defs.nuget) ? defs.nuget.filter(s => typeof s === 'string' && s.length) : [];
+    const npm = Array.isArray(defs.npm) ? defs.npm.filter(s => typeof s === 'string' && s.length) : [];
+    if (nuget.length || npm.length) out[name] = { nuget, npm };
+  }
+  return out;
+}
+
+function _matchPackageToFramework(packages, channel, pkgName) {
+  // channel: 'nuget' | 'npm'.  pkgName: the dep identifier to test.
+  for (const [framework, defs] of Object.entries(packages)) {
+    const patterns = defs[channel] || [];
+    for (const prefix of patterns) {
+      if (pkgName.startsWith(prefix)) return framework;
+    }
+  }
+  return null;
+}
+
+function _extractCsprojIncludes(filePath) {
   try {
     const stat = fs.statSync(filePath);
     const size = Math.min(stat.size, CSPROJ_READ_CAP);
@@ -82,14 +138,17 @@ function _csprojReferencesMuonroi(filePath) {
       const buf = Buffer.alloc(size);
       fs.readSync(fd, buf, 0, size, 0);
       const text = buf.toString('utf8');
-      // Match <PackageReference Include="Muonroi.*"> (any quote style, any whitespace).
-      // Also catches <ProjectReference Include="...\Muonroi.*\..."/> as a fallback.
-      return /Include\s*=\s*["'][^"']*Muonroi\./i.test(text);
+      const out = [];
+      // Match Include="..." (PackageReference, ProjectReference, Reference)
+      const re = /\bInclude\s*=\s*["']([^"']+)["']/gi;
+      let m;
+      while ((m = re.exec(text)) !== null) out.push(m[1]);
+      return out;
     } finally { fs.closeSync(fd); }
-  } catch { return false; }
+  } catch { return []; }
 }
 
-function scanDirForFramework(dir) {
+function scanDirForFramework(dir, packages) {
   let entries;
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
   catch { return null; }
@@ -98,24 +157,27 @@ function scanDirForFramework(dir) {
   for (const e of entries) if (e.isFile()) fileNames.push(e.name);
   const fileNameSet = new Set(fileNames);
 
-  // .NET: detect marker file, then refine by scanning for Muonroi.* PackageReference.
-  const dotnetMarker = fileNames.find(n => {
-    const lower = n.toLowerCase();
-    return lower.endsWith('.csproj') || lower.endsWith('.fsproj') || lower.endsWith('.sln');
-  });
-  if (dotnetMarker) {
-    // Scan up to 4 marker files in this dir (covers most multi-project dirs).
-    const markers = fileNames
-      .filter(n => /\.(cs|fs)proj$|\.sln$/i.test(n))
-      .slice(0, 4);
-    for (const m of markers) {
-      if (_csprojReferencesMuonroi(`${dir}/${m}`)) return MUONROI_FRAMEWORK;
+  // .NET: detect marker, then refine by scanning Include="..." patterns
+  // against the configured frameworkPackages.nuget list.
+  const dotnetMarkers = fileNames.filter(n => /\.(cs|fs)proj$|\.sln$/i.test(n)).slice(0, 4);
+  if (dotnetMarkers.length > 0) {
+    if (Object.keys(packages).length > 0) {
+      for (const m of dotnetMarkers) {
+        const includes = _extractCsprojIncludes(`${dir}/${m}`);
+        for (const inc of includes) {
+          // Strip leading path segments so a ProjectReference like
+          //   ..\..\Foo.Bar\Foo.Bar.csproj  is matched against "Foo.Bar"
+          const stripped = inc.replace(/^.*[\/\\]/, '');
+          const matched = _matchPackageToFramework(packages, 'nuget', stripped);
+          if (matched) return matched;
+        }
+      }
     }
     return 'dotnet';
   }
 
   for (const m of FW_MARKERS) {
-    if (m.ext) continue; // .NET ext handled above
+    if (m.ext) continue;
     if (m.file && fileNameSet.has(m.file)) return m.framework;
   }
 
@@ -123,10 +185,14 @@ function scanDirForFramework(dir) {
     try {
       const pkg = JSON.parse(fs.readFileSync(`${dir}/package.json`, 'utf8'));
       const deps = Object.assign({}, pkg.dependencies || {}, pkg.devDependencies || {});
-      // Muonroi consumer detection takes precedence over generic next/nest/react.
-      // A muonroi-cli that happens to use react still classifies as BB consumer.
-      for (const depName of Object.keys(deps)) {
-        if (depName.startsWith(MUONROI_NPM_SCOPE)) return MUONROI_FRAMEWORK;
+      // Org-configured framework packages take precedence over the built-in
+      // generic table — a consumer that happens to also use react still
+      // classifies under the org's framework label.
+      if (Object.keys(packages).length > 0) {
+        for (const depName of Object.keys(deps)) {
+          const matched = _matchPackageToFramework(packages, 'npm', depName);
+          if (matched) return matched;
+        }
       }
       for (const { dep, framework } of PKG_DEP_FW) {
         if (deps[dep]) return framework;
@@ -137,16 +203,31 @@ function scanDirForFramework(dir) {
   return null;
 }
 
-function detectFrameworkFromProject(filePath) {
+function _resolvePackages(opts) {
+  if (opts && opts.frameworkPackages !== undefined) {
+    return _normalizeFrameworkPackages(opts.frameworkPackages);
+  }
+  const cfg = _loadConfig();
+  return _normalizeFrameworkPackages(cfg && cfg.org && cfg.org.frameworkPackages);
+}
+
+function detectFrameworkFromProject(filePath, opts) {
   if (!filePath) return null;
+  const packages = _resolvePackages(opts);
+  // Cache key includes packages signature so tests injecting different
+  // patterns do not collide with each other or with the config-loaded form.
+  const sig = (opts && opts.frameworkPackages !== undefined)
+    ? JSON.stringify(packages) + '::'
+    : '';
   let dir = path.dirname(filePath.replace(/\\/g, '/'));
   for (let i = 0; i < 8; i++) {
     if (!dir || dir === '/' || dir === '.' || /^[A-Za-z]:\/?$/.test(dir)) break;
-    if (FW_CACHE.has(dir)) return FW_CACHE.get(dir);
-    const fw = scanDirForFramework(dir);
+    const key = sig + dir;
+    if (FW_CACHE.has(key)) return FW_CACHE.get(key);
+    const fw = scanDirForFramework(dir, packages);
     if (fw) {
       if (FW_CACHE.size >= FW_CACHE_MAX) FW_CACHE.clear();
-      FW_CACHE.set(dir, fw);
+      FW_CACHE.set(key, fw);
       return fw;
     }
     const parent = path.dirname(dir);
@@ -163,15 +244,21 @@ function extractFilePath(toolInput) {
   return null;
 }
 
-function enrichSourceMeta(toolInput) {
+function enrichSourceMeta(toolInput, opts) {
   const out = {};
   const filePath = extractFilePath(toolInput);
   if (!filePath) return out;
   const lang = detectContext(filePath);
-  const framework = detectFrameworkFromProject(filePath);
+  const framework = detectFrameworkFromProject(filePath, opts);
   if (lang) out.lang = lang;
   if (framework) out.framework = framework;
   return out;
 }
 
-module.exports = { enrichSourceMeta, detectContext, detectFrameworkFromProject };
+// Exposed for tests so config cache can be cleared between cases.
+function _resetCachesForTesting() {
+  FW_CACHE.clear();
+  _configCache = null;
+}
+
+module.exports = { enrichSourceMeta, detectContext, detectFrameworkFromProject, _resetCachesForTesting };
