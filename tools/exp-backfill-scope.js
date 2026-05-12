@@ -48,6 +48,7 @@ function parseArgs(argv) {
       case '--rate-ms':          args.rateMs = parseInt(next(), 10) || 250; break;
       case '--collection':       args.collection = next(); break;
       case '--known-frameworks': args.knownFrameworks = next(); break;
+      case '--include-unknown':  args.includeUnknown = true; break;
       case '--brain-url':        args.brainUrl = next(); break;
       case '--qdrant-url':       args.qdrantUrl = next(); break;
       case '--qdrant-key':       args.qdrantKey = next(); break;
@@ -73,6 +74,7 @@ Optional:
   --brain-url <url>                  brain proxy endpoint (default from config)
   --qdrant-url <url>                 Qdrant base URL (default from config)
   --qdrant-key <key>                 Qdrant API key (default from config)
+  --include-unknown                  also re-classify points whose scope.framework is neither 'any' nor in --known-frameworks (catches stale/legacy labels)
   --apply                            actually write payload updates (default: dry-run)
 
 Examples:
@@ -228,7 +230,14 @@ async function main() {
       try { data = JSON.parse(point.payload?.json || '{}'); } catch { continue; }
       const currentFw = data.scope && typeof data.scope.framework === 'string'
         ? data.scope.framework.toLowerCase().trim() : '';
-      const eligible = !currentFw || currentFw === 'any';
+      const knownLower = knownFrameworks.map(s => s.toLowerCase());
+      let eligible = !currentFw || currentFw === 'any';
+      // --include-unknown: also re-classify labels that are neither 'any' nor
+      // in the known list. These are stale labels from older extractor runs
+      // that the new Qdrant filter would silently drop.
+      if (!eligible && args.includeUnknown && !knownLower.includes(currentFw)) {
+        eligible = true;
+      }
       if (!eligible) continue;
       summary.eligible++;
 
@@ -243,7 +252,7 @@ async function main() {
         continue;
       }
 
-      const wouldChange = proposed !== 'any';
+      const wouldChange = proposed !== currentFw && !(proposed === 'any' && !currentFw);
       audit.write(JSON.stringify({
         ts: new Date().toISOString(), coll, id: point.id,
         slug: data._projectSlug || null,
