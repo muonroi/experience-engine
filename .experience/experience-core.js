@@ -183,6 +183,20 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
         ],
       });
     }
+    // Mirror scope_framework for scope_lang. Hard index-level filter eliminates
+    // most cross-language hints up-front; the post-fetch fileMatchesLang()
+    // remains the canonical alias-aware authority for legacy/comma-joined seeds.
+    const callerLang = sourceMeta && typeof sourceMeta.lang === 'string'
+      ? sourceMeta.lang.toLowerCase().trim() : null;
+    if (callerLang) {
+      extra.must.push({
+        should: [
+          { is_empty: { key: 'scope_lang' } },
+          { key: 'scope_lang', match: { value: 'all' } },
+          { key: 'scope_lang', match: { value: callerLang } },
+        ],
+      });
+    }
     const hasAny = extra.must.length || extra.must_not.length || extra.should.length;
     return hasAny ? extra : undefined;
   })();
