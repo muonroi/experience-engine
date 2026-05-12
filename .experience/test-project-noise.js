@@ -588,3 +588,110 @@ describe('NOISE-12: cross-stack muonroi-* prefix does not leak hints', () => {
       `Same-stack TS rule should score > 0.40, got ${ranked[0]._effectiveScore.toFixed(3)}`);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════
+//  PART 13: muonroi-building-block consumer detection
+//  Fabricates temp project fixtures so tests don't depend on real
+//  workspace layout. Each test uses a fresh temp dir.
+// ═══════════════════════════════════════════════════════════════════
+
+describe('NOISE-13: muonroi-building-block consumer detection', () => {
+  const enrich = require('./source-meta-enrich.js');
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+
+  function mkTempProject() {
+    return fs.mkdtempSync(path.join(os.tmpdir(), 'ee-fw-test-'));
+  }
+
+  function cleanup(dir) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
+
+  it('.csproj with Muonroi.* PackageReference -> muonroi-building-block', () => {
+    const dir = mkTempProject();
+    try {
+      fs.writeFileSync(path.join(dir, 'Sample.csproj'), `
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Muonroi.BuildingBlock" Version="1.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
+  </ItemGroup>
+</Project>
+`);
+      const fw = enrich.detectFrameworkFromProject(path.join(dir, 'src', 'Foo.cs'));
+      assert.strictEqual(fw, 'muonroi-building-block');
+    } finally { cleanup(dir); }
+  });
+
+  it('.csproj with no Muonroi.* reference -> generic dotnet', () => {
+    const dir = mkTempProject();
+    try {
+      fs.writeFileSync(path.join(dir, 'PlainApi.csproj'), `
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.0.0" />
+  </ItemGroup>
+</Project>
+`);
+      const fw = enrich.detectFrameworkFromProject(path.join(dir, 'src', 'Foo.cs'));
+      assert.strictEqual(fw, 'dotnet');
+    } finally { cleanup(dir); }
+  });
+
+  it('.csproj with ProjectReference path containing Muonroi.* -> muonroi-building-block', () => {
+    const dir = mkTempProject();
+    try {
+      fs.writeFileSync(path.join(dir, 'Consumer.csproj'), `
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\\..\\Muonroi.AspNetCore\\Muonroi.AspNetCore.csproj" />
+  </ItemGroup>
+</Project>
+`);
+      const fw = enrich.detectFrameworkFromProject(path.join(dir, 'src', 'Foo.cs'));
+      assert.strictEqual(fw, 'muonroi-building-block');
+    } finally { cleanup(dir); }
+  });
+
+  it('package.json with @muonroi/* dep -> muonroi-building-block', () => {
+    const dir = mkTempProject();
+    try {
+      fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+        name: 'consumer-app',
+        dependencies: { '@muonroi/sdk': '^1.0.0', 'react': '^18.0.0' },
+      }));
+      const fw = enrich.detectFrameworkFromProject(path.join(dir, 'src', 'app.ts'));
+      assert.strictEqual(fw, 'muonroi-building-block',
+        '@muonroi/* must take precedence over react');
+    } finally { cleanup(dir); }
+  });
+
+  it('package.json with only react dep -> react (unchanged from Phase 1)', () => {
+    const dir = mkTempProject();
+    try {
+      fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+        name: 'plain-react',
+        dependencies: { 'react': '^18.0.0', 'react-dom': '^18.0.0' },
+      }));
+      const fw = enrich.detectFrameworkFromProject(path.join(dir, 'src', 'app.tsx'));
+      assert.strictEqual(fw, 'react');
+    } finally { cleanup(dir); }
+  });
+
+  it('cache: second call against same project root returns same value O(1)', () => {
+    const dir = mkTempProject();
+    try {
+      fs.writeFileSync(path.join(dir, 'Sample.csproj'),
+        '<Project><ItemGroup><PackageReference Include="Muonroi.X"/></ItemGroup></Project>');
+      const first = enrich.detectFrameworkFromProject(path.join(dir, 'a.cs'));
+      // Delete the file — cache should still return the same answer.
+      fs.unlinkSync(path.join(dir, 'Sample.csproj'));
+      const second = enrich.detectFrameworkFromProject(path.join(dir, 'b.cs'));
+      assert.strictEqual(first, 'muonroi-building-block');
+      assert.strictEqual(second, 'muonroi-building-block', 'cache must serve second call');
+    } finally { cleanup(dir); }
+  });
+});
