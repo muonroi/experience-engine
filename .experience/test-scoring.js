@@ -49,9 +49,12 @@ describe('NOISE-01: hitCount boost', () => {
       `expected ~${expected.toFixed(4)}, got ${result.toFixed(4)}`);
   });
 
-  it('hitCount=10 boost is significant via log2(11)*0.08', () => {
+  it('hitCount=10 boost is significant but capped by HIT_BOOST_MAX=0.12', () => {
     const result = computeEffectiveScore({ score: 0.7 }, { hitCount: 10 });
-    const rawBoost = Math.log2(11) * 0.08;
+    // Cap added to prevent stale 100-hit organic entries from overtaking
+    // fresh seeds at much higher cosine. Raw log2(11)*0.08 ≈ 0.277, capped at 0.12.
+    const HIT_BOOST_MAX = 0.12;
+    const rawBoost = Math.min(HIT_BOOST_MAX, Math.log2(11) * 0.08);
     const rawScore = 0.7 + rawBoost;
     const confWeight = computeEffectiveConfidence({ hitCount: 10 });
     const expected = rawScore * (0.6 + 0.4 * confWeight);

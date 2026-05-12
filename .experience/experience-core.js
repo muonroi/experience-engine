@@ -229,13 +229,22 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     // path-pattern detection inside the hot path while still letting future callers narrow.
     const callerFramework = sourceMeta && typeof sourceMeta.framework === 'string'
       ? sourceMeta.framework.toLowerCase().trim() : null;
+    // Fail-closed default: when the local install has no org configured, but a
+    // point IS org-tagged (legacy data from a prior org-bound install), drop it
+    // unless config explicitly opts into global mode. Prevents the
+    // post-`1b184df` org-agnostic refactor from silently leaking org-doc hints
+    // (MControllerBase, IAuthenticateInfoContext, etc.) into unrelated projects
+    // that simply share the same Qdrant brain.
+    const globalScopeOptIn = orgCfg && orgCfg.globalScope === true;
     return points.filter(p => {
       try {
         const exp = JSON.parse(p.payload?.json || '{}');
+        const pointOrg = exp.scope?.org ? String(exp.scope.org).toLowerCase() : '';
+        if (pointOrg && !orgName && !globalScopeOptIn) return false;
         // Org-stack gate: org-tagged knowledge only applies inside the configured org's repos.
         // Prevents org-specific hints from leaking into unrelated projects.
         // Disabled entirely when no org configured (global mode).
-        if (orgName && exp.scope?.org && exp.scope.org.toLowerCase() === orgName && filePath && !fileIsOrgStack) return false;
+        if (orgName && pointOrg === orgName && filePath && !fileIsOrgStack) return false;
         // Framework gate (opt-in): when caller asserts a framework AND the hint is tagged
         // to a different specific framework, drop. 'any' / undefined on the hint passes.
         if (callerFramework && exp.scope?.framework) {

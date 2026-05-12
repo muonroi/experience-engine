@@ -12,18 +12,38 @@ const PROBATIONARY_T2_RAW_SCORE_THRESHOLD = 0.78;
 const PROBATIONARY_T2_SURFACE_LIMIT = 2;
 const SEEDED_BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD = 5;
 
+// hitBoost cap: organic entries with many hits previously got unbounded boost
+// (log2(1+100)*0.08 ≈ +0.53), letting a 0.45-cosine old entry beat a 0.85-cosine
+// fresh seed. Cap so cosine remains the primary signal and hits a tiebreaker.
+const HIT_BOOST_MAX = 0.12;
+
+function isSeedEntry(data) {
+  return typeof data?.createdFrom === 'string' && data.createdFrom.startsWith('seed-');
+}
+
 // --- Anti-Noise Scoring (Phase 103) ---
 
 function computeEffectiveConfidence(data) {
   const base = data.confidence || 0.5;
   const hits = data.hitCount || 0;
+  // Seeds come from authoritative org/common docs; their confidence shouldn't
+  // be discounted for lack of accumulated runtime hits. Without this bypass,
+  // a 0.7-base seed with 0 hits → 0.7 * 0.7 = 0.49 and gets filtered below
+  // minConfidence at display time, even when retrieval is otherwise perfect.
+  if (isSeedEntry(data)) return base;
   const ageFactor = Math.min(1.0, 0.7 + (hits * 0.06));
   return base * ageFactor;
 }
 
 function computeEffectiveScore(point, data, queryDomain, queryProjectSlug, queryText = '') {
   const cosine = point.score || 0;
-  const hitBoost = Math.log2(1 + (data.hitCount || 0)) * 0.08;
+  // Seeds never accumulate runtime hits, so granting them hitBoost (or letting
+  // organic boost grow unbounded) inverts the intended ordering: a stale
+  // 100-hit organic with 0.45 cosine should never edge out a 0-hit seed of
+  // 0.85 cosine. Cap organic, zero for seeds.
+  const hitBoost = isSeedEntry(data)
+    ? 0
+    : Math.min(HIT_BOOST_MAX, Math.log2(1 + (data.hitCount || 0)) * 0.08);
   const normalizedQuery = String(queryText || '').toLowerCase();
   const daysSinceHit = data.lastHitAt
     ? (Date.now() - new Date(data.lastHitAt).getTime()) / 86400000
@@ -48,7 +68,12 @@ function computeEffectiveScore(point, data, queryDomain, queryProjectSlug, query
   // P0: Project-aware penalty — cross-project suggestions heavily penalized
   // v2: bypass penalty when scope.lang='all' (universal behavioral rules should surface everywhere)
   let projectPenalty = 0;
-  if (queryProjectSlug) {
+  // Seeds originate from org docs, not project files — '_projectSlug missing'
+  // is by design, not unknown origin. Cross-repo leakage is already prevented
+  // by the Qdrant pre-filter on scope_org plus applyScopeFilter's fail-closed
+  // org gate (experience-core.js applyScopeFilter); double-charging seeds via
+  // projectPenalty filtered them out of every foreign-repo query.
+  if (queryProjectSlug && !isSeedEntry(data)) {
     const scopeLang = data.scope?.lang;
     const principleLike = !!data.principle || data.createdFrom === 'evolution-abstraction' || getValidatedHitCount(data) >= SEEDED_BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD;
     if (scopeLang === 'all') {
