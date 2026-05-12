@@ -7,7 +7,8 @@
 const crypto = require('crypto');
 const { EDGE_COLLECTION, getExpUser } = require('./config');
 const { fileStoreRead, fileStoreUpsert } = require('./qdrant');
-const { activityLog } = require('./config');
+// activityLog from ./activity (real writer); ./config exports a no-op stub.
+const { activityLog } = require('./activity');
 
 // --- Edge graph (Phase 107) ---
 

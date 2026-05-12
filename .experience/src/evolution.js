@@ -8,10 +8,15 @@
 
 const crypto = require('crypto');
 const {
-  SELFQA_COLLECTION, getExpUser, activityLog,
+  SELFQA_COLLECTION, getExpUser,
   getQdrantBase, getQdrantApiKey, getMinConfidence, COLLECTIONS,
   DEDUP_THRESHOLD,
 } = require('./config');
+// activityLog must come from ./activity (the real writer). The activityLog
+// exported by ./config is a no-op stub guarded by setActivityLog() which is
+// never invoked anywhere in the tree — relic from a half-finished modular
+// refactor. Importing from ./activity matches hittrack.js / intercept.js.
+const { activityLog } = require('./activity');
 const { getEmbedding, estimateTextUnits } = require('./embedding');
 const {
   searchCollection, fileStoreRead, fileStoreUpsert,
