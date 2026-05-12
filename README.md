@@ -1009,7 +1009,8 @@ Chained commands (`&&`, `||`, `;`) skip only if ALL parts are read-only.
 - **Recency** — recently confirmed > stale
 - **Confidence aging** — new entries start lower, climb with confirmation
 - **Ignore tracking** — suggestions ignored 3+ times get demoted
-- **Domain match** — `.ts` file → TypeScript experiences rank higher
+- **Language/Framework gate** — `.ts` file → only TypeScript / `scope.lang=all` experiences pass the Qdrant index-level filter; `.cs` file inside a `.csproj` tree → only C# / `dotnet` / `any`. Same project prefix with different stacks (e.g. `muonroi-cli` TS vs `muonroi-building-block` .NET) no longer cross-contaminate.
+- **Domain match** — within the surviving set, recently-confirmed entries matching the caller's domain rank higher
 - **Temporal decay** — no confirmation in 60+ days → penalty
 - **Superseded penalty** — replaced knowledge ranks lower
 - **Project penalty** — cross-project suggestions penalized -0.30
