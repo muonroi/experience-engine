@@ -263,7 +263,11 @@ function suppressHookOutput() {
   };
 }
 
-function buildSourceMeta(data) {
+function buildSourceMeta(data, _toolInput) {
+  // UserPromptSubmit has no toolInput — lang/framework remain undefined and
+  // downstream Qdrant filters pass through (same as before this change).
+  // Signature accepts _toolInput for API parity with the Edit/Write/Bash
+  // interceptors so callers don't need a special case.
   return {
     sourceKind: 'codex-hook',
     sourceRuntime: process.env.WSL_DISTRO_NAME ? 'codex-wsl' : 'codex-windows',
