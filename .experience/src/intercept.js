@@ -333,13 +333,17 @@ async function extractFromSession(transcript, projectPath, meta = {}) {
   let stored = 0;
   for (const mistake of mistakes.slice(0, 5)) {
     try {
-      const qa = await _brainllm.extractQA(mistake);
+      const projectSlug = _utils.extractProjectSlug(projectPath);
+      const qa = await _brainllm.extractQA(mistake, {
+        framework: meta?.framework || null,
+        lang: meta?.lang || null,
+        projectSlug,
+      });
       if (!qa) { _activity.activityLog({ op: 'extract-skip', reason: 'brain_null', type: mistake.type, project: projectPath || null }); continue; }
       if (qa.skip) { _activity.activityLog({ op: 'extract-skip', reason: qa.reason || 'brain_skip', type: mistake.type, project: projectPath || null }); continue; }
       if (meta?.sourceSession && !qa.sourceSession) qa.sourceSession = meta.sourceSession;
       const quality = _context.assessExtractedQaQuality(qa);
       if (!quality.ok) { _activity.activityLog({ op: 'extract-skip', reason: quality.reason, type: mistake.type, project: projectPath || null }); continue; }
-      const projectSlug = _utils.extractProjectSlug(projectPath);
       const result = await _evolution.storeExperience(qa, domain, projectSlug);
       if (result?.stored || result?.merged) stored++;
     } catch { /* skip */ }

@@ -149,14 +149,51 @@ async function brainRelevanceFilter(actionQuery, suggestionLines, signal, projec
   }
 }
 
-async function extractQA(mistake) {
+async function extractQA(mistake, opts = {}) {
   // Lazy require to avoid circular deps (context.js imports utils which is fine,
   // but brain-llm sits next to context and we don't want a top-level loop).
   const { summarizeMistakeExcerpt } = require('./context');
   const summary = summarizeMistakeExcerpt(mistake) || String(mistake?.excerpt || '').slice(0, 1500);
 
-  const prompt = `You are extracting ONE reusable lesson from a coding agent's failure. The summary below has already been pre-labelled.\n\n${summary}\n\nReturn JSON only (no markdown). Output a generalized PATTERN, not the literal log line.\n\nMandatory rules:\n- trigger MUST describe the failure PATTERN in the agent's own words. NEVER copy a ToolCall/ToolOutput/Bash line verbatim. NEVER start trigger with a path or filename. Bad: "ToolCall read_text_file: /mnt/d/.../config.json". Good: "config file read returns truncated content when output buffer is small".\n- question briefly names the mistake (one sentence).\n- solution is a concrete preventive action that another session would actually do — not "implement", "review", "debug" alone.\n- failureMode is the underlying class (e.g. "missing_validation", "wrong_lifetime_scope", "race_condition"), not the literal log.\n- why captures the root cause; evidence/symptoms go here, not in trigger.\n- judgment is the portable preventive judgment ("X must Y because Z"), reusable across files.\n- conditions: 2-4 short keywords for retrieval.\n- evidenceClass: one of log | test | runtime | review | user-correction | other.\n- scope.lang must be one of: C# | JavaScript | TypeScript | Python | Go | Rust | Java | Shell | all. Use "all" when the lesson is language-agnostic.\n- Skip when nothing portable can be extracted:\n  - {"skip":true,"reason":"meta_workflow"} if the excerpt is workflow/scope/lock/deploy plumbing\n  - {"skip":true,"reason":"no_reusable_lesson"} if there is no clear failure pattern\n  - {"skip":true,"reason":"raw_log_only"} if the only signal is a tool call header with no diagnosable cause\n\nReturn exactly:\n{"trigger":"...","question":"...","reasoning":["step1","step2"],"solution":"...","why":"...","failureMode":"...","judgment":"...","conditions":["k1","k2"],"evidenceClass":"log|test|runtime|review|user-correction|other","scope":{"lang":"all","repos":[],"filePattern":"*"}}`;
-  return callBrainWithFallback(prompt, { source: 'extract' });
+  // Caller-supplied project context. Drives the 3-axis taxonomy:
+  //   - scope.lang        — universal language rules
+  //   - scope.framework   — framework/library-specific rules (use 'any' if generic)
+  //   - _projectSlug      — set elsewhere from projectPath
+  const callerFw = typeof opts.framework === 'string' && opts.framework.trim()
+    ? opts.framework.trim() : null;
+  const callerLang = typeof opts.lang === 'string' && opts.lang.trim()
+    ? opts.lang.trim() : null;
+  const callerSlug = typeof opts.projectSlug === 'string' && opts.projectSlug.trim()
+    ? opts.projectSlug.trim() : null;
+
+  const ctxLines = [];
+  if (callerLang) ctxLines.push(`Caller language: ${callerLang}`);
+  if (callerFw) ctxLines.push(`Caller framework/library: ${callerFw}`);
+  if (callerSlug) ctxLines.push(`Caller project: ${callerSlug}`);
+  const ctxBlock = ctxLines.length
+    ? `\nProject context (use this to set scope.framework correctly):\n${ctxLines.map(l => '  - ' + l).join('\n')}\n`
+    : '';
+
+  const frameworkRule = callerFw
+    ? `- scope.framework must be either "any" or "${callerFw}". Use "${callerFw}" ONLY if the lesson references identifiers, types, packages, or conventions tied to that framework (e.g. types from its packages, attributes from its API). Use "any" when the lesson is a plain language rule that would apply to any project using the same language.`
+    : `- scope.framework must be "any" when the lesson is not tied to a specific framework. Set a specific framework label only if the lesson explicitly mentions framework-bound identifiers/packages.`;
+
+  const prompt = `You are extracting ONE reusable lesson from a coding agent's failure. The summary below has already been pre-labelled.\n\n${summary}\n${ctxBlock}\nReturn JSON only (no markdown). Output a generalized PATTERN, not the literal log line.\n\nMandatory rules:\n- trigger MUST describe the failure PATTERN in the agent's own words. NEVER copy a ToolCall/ToolOutput/Bash line verbatim. NEVER start trigger with a path or filename. Bad: "ToolCall read_text_file: /mnt/d/.../config.json". Good: "config file read returns truncated content when output buffer is small".\n- question briefly names the mistake (one sentence).\n- solution is a concrete preventive action that another session would actually do — not "implement", "review", "debug" alone.\n- failureMode is the underlying class (e.g. "missing_validation", "wrong_lifetime_scope", "race_condition"), not the literal log.\n- why captures the root cause; evidence/symptoms go here, not in trigger.\n- judgment is the portable preventive judgment ("X must Y because Z"), reusable across files.\n- conditions: 2-4 short keywords for retrieval.\n- evidenceClass: one of log | test | runtime | review | user-correction | other.\n- scope.lang must be one of: C# | JavaScript | TypeScript | Python | Go | Rust | Java | Shell | all. Use "all" when the lesson is language-agnostic.\n${frameworkRule}\n- Skip when nothing portable can be extracted:\n  - {"skip":true,"reason":"meta_workflow"} if the excerpt is workflow/scope/lock/deploy plumbing\n  - {"skip":true,"reason":"no_reusable_lesson"} if there is no clear failure pattern\n  - {"skip":true,"reason":"raw_log_only"} if the only signal is a tool call header with no diagnosable cause\n\nReturn exactly:\n{"trigger":"...","question":"...","reasoning":["step1","step2"],"solution":"...","why":"...","failureMode":"...","judgment":"...","conditions":["k1","k2"],"evidenceClass":"log|test|runtime|review|user-correction|other","scope":{"lang":"all","framework":"any","repos":[],"filePattern":"*"}}`;
+  const result = await callBrainWithFallback(prompt, { source: 'extract' });
+  // Post-process: if brain forgot to set framework, default to 'any'. If brain
+  // returned an unexpected framework value AND a caller hint was supplied,
+  // narrow it to {'any', callerFw} to prevent the model inventing labels.
+  if (result && !result.skip && result.scope && typeof result.scope === 'object') {
+    if (typeof result.scope.framework !== 'string' || !result.scope.framework.trim()) {
+      result.scope.framework = 'any';
+    } else if (callerFw) {
+      const fw = result.scope.framework.toLowerCase().trim();
+      if (fw !== 'any' && fw !== callerFw.toLowerCase()) {
+        result.scope.framework = 'any';
+      }
+    }
+  }
+  return result;
 }
 
 async function brainOllama(prompt, opts = {}) {
