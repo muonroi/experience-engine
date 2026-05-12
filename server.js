@@ -479,6 +479,8 @@ async function handleExtract(req, res) {
     sourceKind: body.sourceKind || 'manual-api',
     sourceRuntime: body.sourceRuntime || 'api',
     sourceSession: body.sourceSession || null,
+    framework: typeof body.framework === 'string' ? body.framework : null,
+    lang: typeof body.lang === 'string' ? body.lang : null,
   });
   json(res, { stored, success: true });
 }

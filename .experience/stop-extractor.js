@@ -364,6 +364,19 @@ async function runStopExtractor(options = {}) {
       sourceRuntime: session.runtime,
       sourceSession: session.file,
     };
+    // Enrich with caller-side framework/lang so the extractor can classify
+    // scope correctly without re-deriving from the transcript. Best-effort:
+    // failures are silently absorbed and the server falls back to its
+    // existing behavior.
+    try {
+      const enrichPath = path.join(homeDir, 'source-meta-enrich.js');
+      if (fs.existsSync(enrichPath) && projectPath) {
+        const enrich = require(enrichPath);
+        const meta = enrich.enrichSourceMeta({ file_path: projectPath });
+        if (meta && meta.lang) body.lang = meta.lang;
+        if (meta && meta.framework) body.framework = meta.framework;
+      }
+    } catch { /* swallow */ }
     try {
       const result = await remote.postJson('/api/extract', body, { homeDir, config, timeoutMs: extractTimeoutMs });
       count = result?.stored || 0;
