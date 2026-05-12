@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Fixed
+- **scope**: `applyScopeFilter` is now fail-closed for org-tagged points when
+  no org is configured. Previously, the post-`1b184df` org-agnostic refactor
+  meant legacy data tagged `scope.org=muonroi` (or any other org) leaked into
+  every project that shared the Qdrant brain. Now: a point with `scope.org`
+  is dropped unless the local install has `org.name` set OR opts in via
+  `org.globalScope=true` in `~/.experience/config.json`.
+  (`.experience/experience-core.js` applyScopeFilter)
+- **scoring**: `hitBoost` is capped at `HIT_BOOST_MAX=0.12` and bypassed
+  entirely for seed entries (`createdFrom: 'seed-…'`). Previously, an
+  unbounded organic boost let a stale 100-hit 0.45-cosine entry overtake a
+  fresh 0-hit seed at 0.85 cosine, inverting the seed-promote intent.
+  (`.experience/src/scoring.js`)
+- **scoring**: `computeEffectiveConfidence` bypasses `ageFactor` for seeds.
+  Previously a 0.7-base seed with 0 hits fell to 0.49 and was filtered
+  below `minConfidence` at display time, even when retrieval was perfect.
+- **scoring**: seeds no longer take `projectPenalty`. They originate from
+  org/common docs, not project files; `_projectSlug` is missing by design.
+  Cross-repo leakage is already prevented by the new org-stack gate.
+- **query**: `extractCodeSymbols` is bounded — hard cap at 8000 chars of
+  input and 2000 regex iterations. Prevents pathological diffs (long runs
+  of `IFooService` / similar identifiers) from blowing latency on the hot
+  intercept path. (`.experience/src/utils.js`)
+- **upgrade.sh**: requires `node` in `PATH` before invoking `node -e` for
+  mode detection; previously a missing Node silently propagated `MODE=""`
+  and hit a useless catch-all. Also rejects non-string `c.version`.
+
+### Tests
+- `.experience/test-scope-fixes.js` — seed bypass + extractCodeSymbols bound.
+- `.experience/test-scoring.js` — NOISE-01 updated for `HIT_BOOST_MAX`.
+
 ### Breaking
 
 - **Engine is now org-agnostic.** Removed all hardcoded references to a

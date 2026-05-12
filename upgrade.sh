@@ -65,13 +65,26 @@ fi
 # ── Step 2: Detect install mode from config ─────────────────────────────────
 MODE="unknown"
 if [ -f "$CONFIG_PATH" ]; then
-  MODE=$(node -e "
+  # Hard-require node before invoking it; otherwise `node -e` exit-non-zero is
+  # swallowed under set -e and MODE becomes empty, hitting the catch-all `*)`
+  # in the case statement with no useful error.
+  if ! command -v node >/dev/null 2>&1; then
+    echo "[upgrade] Node.js is required to detect install mode but was not found in PATH." >&2
+    echo "[upgrade] Install Node.js 20+ and re-run: bash upgrade.sh" >&2
+    exit 1
+  fi
+  if ! MODE=$(node -e "
     try {
       const c = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
+      if (typeof c.version !== 'string') { process.stdout.write('unknown'); return; }
       if (c.version === 'thin-client') process.stdout.write('thin-client');
       else process.stdout.write('full');
     } catch { process.stdout.write('unknown'); }
-  " "$CONFIG_PATH")
+  " "$CONFIG_PATH" 2>/dev/null); then
+    MODE="unknown"
+  fi
+  # Defensive: empty output under exotic setups should not propagate.
+  if [ -z "${MODE:-}" ]; then MODE="unknown"; fi
 else
   MODE="absent"
 fi

@@ -225,14 +225,26 @@ const _IDENT_PATTERNS = [
   /\bthrow\s+new\s+([A-Z][A-Za-z0-9_]+Exception)\b/g, // throw new XException
 ];
 
+// Guard against regex blowup on huge diffs: 5 global regexes × O(n) is O(5n),
+// and pathological inputs (long runs of capital letters / IPattern… sequences)
+// can compound. Hard-cap input size so worst-case latency stays bounded.
+// 8000 chars covers every realistic single-file edit; bigger diffs lose only
+// the augmentation, not retrieval (cosine still runs on the raw action).
+const _EXTRACT_MAX_INPUT = 8000;
+const _EXTRACT_ITER_BUDGET = 2000;
+
 function extractCodeSymbols(text) {
+  if (typeof text !== 'string' || text.length === 0) return [];
+  const scanText = text.length > _EXTRACT_MAX_INPUT ? text.slice(0, _EXTRACT_MAX_INPUT) : text;
   const seen = new Set();
   const ordered = [];
   const limit = 8;
+  let iters = 0;
   for (const re of _IDENT_PATTERNS) {
     re.lastIndex = 0;
     let m;
-    while ((m = re.exec(text)) !== null) {
+    while ((m = re.exec(scanText)) !== null) {
+      if (++iters > _EXTRACT_ITER_BUDGET) return ordered;
       const sym = m[1];
       if (!sym) continue;
       if (seen.has(sym)) continue;
