@@ -1,0 +1,15 @@
+[Unit]
+Description=Run Experience Engine evolve cycle every hour
+Requires=experience-engine.service
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=1h
+# RandomizedDelaySec spreads load across instances if multiple VPS pull the
+# same wakeup-to-the-minute trigger. Safe to remove for a single-host setup.
+RandomizedDelaySec=2min
+Persistent=true
+Unit=experience-engine-evolve.service
+
+[Install]
+WantedBy=timers.target

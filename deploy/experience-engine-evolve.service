@@ -1,0 +1,18 @@
+[Unit]
+Description=Experience Engine — periodic evolve (promote/abstract/demote)
+After=experience-engine.service
+Requires=experience-engine.service
+
+[Service]
+Type=oneshot
+# Read auth token from config and POST /api/evolve. The endpoint is idempotent
+# and rate-limited; safe to fire on a regular schedule.
+ExecStart=/bin/bash -c 'AUTH=$$(python3 -c "import json; d=json.load(open(\"%h/.experience/config.json\")); print(d.get(\"serverAuthToken\") or d.get(\"server\",{}).get(\"authToken\") or \"\")") && \
+  curl -fsS --max-time 600 -X POST "http://localhost:8082/api/evolve" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $$AUTH" \
+    -d "{\"trigger\":\"systemd-timer\"}" \
+    -o /tmp/exp-evolve-last.json && \
+  echo "evolve $$(date -Iseconds): $$(cat /tmp/exp-evolve-last.json)"'
+# Match server.handleEvolve runtime budget plus headroom for slow brain calls.
+TimeoutStartSec=900
