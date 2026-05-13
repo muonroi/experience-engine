@@ -81,4 +81,26 @@ if [ -d "$SRC_DIR/src" ]; then
   done
 fi
 
+# Stamp the current repo commit into config.json. Lets the server log stale
+# clients (via X-EE-Client-Commit header) and lets health-check.sh diff
+# install vs origin without re-running setup. Idempotent: only touches the
+# two fields below, preserves everything else.
+INSTALL_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null | head -c 12 || true)"
+INSTALL_COMMIT="${INSTALL_COMMIT:-unknown}"
+INSTALL_COMMIT_DATE="$(git -C "$ROOT_DIR" log -1 --format=%cI 2>/dev/null || true)"
+if [ -f "$TARGET_DIR/config.json" ] && [ "$INSTALL_COMMIT" != "unknown" ]; then
+  node -e '
+    const fs = require("fs");
+    const [target, commit, commitDate] = process.argv.slice(1);
+    let cfg = {};
+    try { cfg = JSON.parse(fs.readFileSync(target, "utf8")); } catch {}
+    cfg.installCommit = commit;
+    if (commitDate) cfg.installCommitDate = commitDate;
+    const tmp = target + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2));
+    fs.renameSync(tmp, target);
+  ' "$TARGET_DIR/config.json" "$INSTALL_COMMIT" "$INSTALL_COMMIT_DATE"
+  log "Stamped installCommit=$INSTALL_COMMIT"
+fi
+
 log "Runtime sync complete: $TARGET_DIR"

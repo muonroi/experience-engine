@@ -35,6 +35,48 @@ function getEvolveMarkerPath(homeDir = getHomeDir()) {
   return path.join(homeDir, '.experience', '.evolve-marker');
 }
 
+function getVersionCheckMarkerPath(homeDir = getHomeDir()) {
+  return path.join(homeDir, '.experience', '.version-check-marker');
+}
+
+// Rate-limited (1×/24h) check that emits a one-line nudge to stderr when the
+// install commit recorded in config.json differs from the server's current
+// commit. Silent on match, on network errors, or before 7 days have elapsed
+// since install. The Stop hook is the right place: it fires once per session
+// end, not on every tool call.
+async function maybeWarnIfStale(homeDir = getHomeDir(), remote, config) {
+  try {
+    const markerPath = getVersionCheckMarkerPath(homeDir);
+    let lastChecked = 0;
+    try { lastChecked = fs.statSync(markerPath).mtimeMs; } catch {}
+    const now = Date.now();
+    if (now - lastChecked < 24 * 60 * 60 * 1000) return;  // cooldown
+    const installedAt = config?.installedAt ? new Date(config.installedAt).getTime() : now;
+    if (now - installedAt < 7 * 24 * 60 * 60 * 1000) return;  // grace period
+    const baseUrl = remote.getServerBaseUrl(config);
+    if (!baseUrl) return;
+    const res = await fetch(`${baseUrl}/api/version`, {
+      signal: AbortSignal.timeout(2000),
+    }).catch(() => null);
+    if (!res || !res.ok) return;
+    const body = await res.json().catch(() => null);
+    if (!body || !body.commit) return;
+    fs.writeFileSync(markerPath, String(now), { flag: 'w' });  // update cooldown either way
+    const localCommit = String(config.installCommit || '').slice(0, 12);
+    if (!localCommit || localCommit === 'unknown') {
+      process.stderr.write(
+        '[Experience] Your install predates commit stamping. Run `bash upgrade.sh` to refresh.\n'
+      );
+      return;
+    }
+    if (localCommit === body.commit) return;
+    process.stderr.write(
+      `[Experience] Client is stale (installed: ${localCommit}, server: ${body.commit}). ` +
+      'Run `bash upgrade.sh` from your repo clone to refresh.\n'
+    );
+  } catch { /* swallow — never block the hook on diagnostics */ }
+}
+
 function safeReadJson(filePath, fallback = {}) {
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -404,6 +446,16 @@ async function runStopExtractor(options = {}) {
 
 async function main() {
   const result = await runStopExtractor();
+  // Rate-limited stale-client nudge. Runs after extraction so a slow check
+  // never delays the experience save. Fire-and-forget; we still await so the
+  // process doesn't exit before stderr flushes.
+  try {
+    const homeDir = getHomeDir();
+    const remote = getRemoteClient(homeDir);
+    if (remote && remote.isRemoteEnabled(remote.loadConfig(homeDir))) {
+      await maybeWarnIfStale(homeDir, remote, remote.loadConfig(homeDir));
+    }
+  } catch {}
   if (result.extracted > 0) {
     process.stderr.write(`Experience: +${result.extracted} lessons\n`);
   }

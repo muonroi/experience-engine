@@ -210,6 +210,61 @@ const _healthState = {
   lastEmbedError: null,
 };
 
+// --- Server commit fingerprint (computed once at startup) ---
+const _serverVersionInfo = (() => {
+  const { execSync } = require('child_process');
+  const out = { commit: 'unknown', commitDate: null, version: '3.2' };
+  try {
+    const repoDir = __dirname;
+    out.commit = execSync('git rev-parse HEAD', { cwd: repoDir, stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString().trim().slice(0, 12);
+    out.commitDate = execSync('git log -1 --format=%cI', { cwd: repoDir, stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString().trim();
+  } catch { /* not a git checkout — keep defaults */ }
+  if (process.env.EE_COMMIT) out.commit = String(process.env.EE_COMMIT).slice(0, 12);
+  return out;
+})();
+
+// Rate-limited per-client stale logging. Keys: short commit hash from the
+// X-EE-Client-Commit header. Value: last-logged epoch ms. Caps to avoid noise.
+const _staleClientLogMap = new Map();
+const STALE_LOG_COOLDOWN_MS = 6 * 60 * 60 * 1000;  // log a given stale client at most every 6h
+
+function _maybeLogStaleClient(req) {
+  // Skip introspection requests so /api/version isn't itself a noise source.
+  const url = req.url || '';
+  if (url.startsWith('/api/version') || url.startsWith('/health') || url.startsWith('/metrics')) return;
+  const headerCommit = String(req.headers['x-ee-client-commit'] || '').trim().slice(0, 12);
+  const serverCommit = _serverVersionInfo.commit;
+  if (serverCommit === 'unknown') return;  // can't compare
+  const key = headerCommit || '(none)';
+  if (key === serverCommit) return;
+  const last = _staleClientLogMap.get(key) || 0;
+  const now = Date.now();
+  if (now - last < STALE_LOG_COOLDOWN_MS) return;
+  _staleClientLogMap.set(key, now);
+  if (_staleClientLogMap.size > 64) {
+    // Evict oldest half to bound memory under header-spoof / churn.
+    const sorted = [..._staleClientLogMap.entries()].sort((a, b) => a[1] - b[1]);
+    for (const [k] of sorted.slice(0, _staleClientLogMap.size / 2)) _staleClientLogMap.delete(k);
+  }
+  console.log(JSON.stringify({
+    ts: new Date().toISOString(),
+    level: 'warn',
+    msg: 'stale_client',
+    clientCommit: key,
+    serverCommit,
+    path: url.split('?')[0],
+  }));
+}
+
+function handleVersion(req, res) {
+  json(res, {
+    ..._serverVersionInfo,
+    timestamp: new Date().toISOString(),
+  });
+}
+
 async function handleHealth(req, res) {
   let qdrant = { status: 'unknown' };
   try {
@@ -913,9 +968,13 @@ const server = http.createServer(async (req, res) => {
   const p = url.pathname.startsWith('/v1') ? url.pathname.slice(3) : url.pathname;
 
   try {
-    // Keep health open for liveness checks; protect other GET APIs when auth is configured.
+    // Stale-client observability: log header commit vs server commit (no rejection).
+    _maybeLogStaleClient(req);
+
+    // Keep health and version open for liveness/diagnostic checks.
     if (p === '/health' && req.method === 'GET') return await handleHealth(req, res);
     if (p === '/metrics' && req.method === 'GET') return handleMetrics(req, res);
+    if (p === '/api/version' && req.method === 'GET') return handleVersion(req, res);
 
     // Rate limit all non-health endpoints
     if (rateLimit(req, res)) return;

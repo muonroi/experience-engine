@@ -182,6 +182,19 @@ bash .experience/setup.sh --remote  # Connect to a remote VPS-hosted experience 
                                     # Set EXP_SERVER_BASE_URL / EXP_SERVER_AUTH_TOKEN for thin-client mode
 ```
 
+### Three commands you actually need
+
+```bash
+bash .experience/setup.sh               # one-time install (wizard picks mode)
+bash ~/.experience/health-check.sh      # one-stop sanity (version, server reach, framework detect, hooks)
+bash upgrade.sh                         # after `git pull` — refresh runtime without touching config
+```
+
+`upgrade.sh` auto-detects thin-client vs full and re-runs the right syncer.
+`health-check.sh` flags version drift between your install and the server it
+talks to — when the dashboard shows `Version: warn (Client=… server=…)`,
+that's your signal to `git pull && bash upgrade.sh`.
+
 ### Thin Client Mode
 
 When `serverBaseUrl` is configured, the local machine becomes a thin hook client instead of the
