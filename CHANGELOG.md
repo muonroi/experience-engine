@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+- **2026-05-13:** add `/api/pil-context` endpoint (PIL unified call;
+  consolidates 5-6 brain round-trips into 1; 5-min LRU cache). Spec:
+  `muonroi-cli/docs/superpowers/specs/2026-05-13-pil-unified-brain-endpoint-design.md`.
+
 ### Fixed
 - **scope**: `applyScopeFilter` is now fail-closed for org-tagged points when
   no org is configured. Previously, the post-`1b184df` org-agnostic refactor
