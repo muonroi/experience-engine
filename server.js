@@ -784,30 +784,71 @@ async function handlePilContext(req, res) {
   const startMs = Date.now();
   const core = loadExperienceCore();
 
-  // 1. Classification — single brain call returning <category>,<style>.
+  // 1. Classification — dedicated intent classifier with few-shot + JSON output.
+  // Previous version reused classifyViaBrain whose default system prompt is for
+  // tier classification (fast/balanced/premium); the conflict produced ~69% null
+  // results. We now pass our own system prompt and few-shot examples for stable
+  // structured output. See docs plan 2026-05-13-pil-classifier-prompt-fix.md.
   let taskType = null;
   let outputStyle = 'balanced';
   let intentKind = null;
   let confidence = 0;
   try {
-    const classifyPrompt =
-      `You are a multilingual prompt classifier. The prompt may be in English, Vietnamese, or a mix.\n` +
-      `Classify the prompt's INTENT (not its language). Reply with TWO lowercase words separated by a comma: <category>,<style>\n\n` +
-      `Category — pick ONE:\n` +
-      `  refactor | debug | plan | analyze | documentation | generate | none\n\n` +
-      `Style — pick ONE:\n` +
-      `  concise | balanced | detailed\n\n` +
-      `Prompt: "${body.prompt.slice(0, 500)}"`;
-    const raw = await core.classifyViaBrain(classifyPrompt, 1500);
+    const classifierSystem =
+      'You are an intent classifier for a developer CLI. ' +
+      'Given a user prompt (English, Vietnamese, or mixed), output ONLY a JSON object: ' +
+      '{"category":"<one>","style":"<one>"}. ' +
+      'category ∈ {refactor, debug, plan, analyze, documentation, generate, none}. ' +
+      'style ∈ {concise, balanced, detailed}. ' +
+      'No prose, no markdown fences, just the JSON.';
+    const fewShot = [
+      { role: 'system', content: classifierSystem },
+      { role: 'user', content: 'refactor this function to be async' },
+      { role: 'assistant', content: '{"category":"refactor","style":"concise"}' },
+      { role: 'user', content: 'tại sao test fail?' },
+      { role: 'assistant', content: '{"category":"debug","style":"concise"}' },
+      { role: 'user', content: 'thiết kế hệ thống auth cho team' },
+      { role: 'assistant', content: '{"category":"plan","style":"detailed"}' },
+      { role: 'user', content: 'phân tích lỗi memory leak' },
+      { role: 'assistant', content: '{"category":"analyze","style":"detailed"}' },
+      { role: 'user', content: 'write docs for the API endpoint' },
+      { role: 'assistant', content: '{"category":"documentation","style":"balanced"}' },
+      { role: 'user', content: 'generate a TypeScript Zod schema for User' },
+      { role: 'assistant', content: '{"category":"generate","style":"concise"}' },
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: '{"category":"none","style":"concise"}' },
+      { role: 'user', content: body.prompt.slice(0, 500) },
+    ];
+    const raw = await core.classifyViaBrain(body.prompt, 1500, {
+      messages: fewShot,
+      maxTokens: 40,
+      responseFormat: { type: 'json_object' },
+    });
     if (raw) {
-      const lower = raw.toLowerCase();
+      // Tolerate a leading prose blurb or markdown fence; extract the first {...}.
+      const jsonMatch = raw.match(/\{[\s\S]*?\}/);
+      let parsed = null;
+      if (jsonMatch) {
+        try { parsed = JSON.parse(jsonMatch[0]); } catch { /* fall through */ }
+      }
       const cats = ['refactor', 'debug', 'plan', 'analyze', 'documentation', 'generate'];
-      const matched = cats.find((c) => lower.includes(c));
-      if (matched) { taskType = matched; intentKind = 'task'; confidence = 0.7; }
-      else if (/\bnone\b/.test(lower)) { taskType = 'general'; intentKind = 'chitchat'; confidence = 0.6; outputStyle = 'concise'; }
       const styles = ['concise', 'balanced', 'detailed'];
-      const styleMatched = styles.find((s) => lower.includes(s));
-      if (styleMatched) outputStyle = styleMatched;
+      if (parsed && typeof parsed === 'object') {
+        const cat = String(parsed.category || '').toLowerCase().trim();
+        const sty = String(parsed.style || '').toLowerCase().trim();
+        if (cats.includes(cat)) { taskType = cat; intentKind = 'task'; confidence = 0.8; }
+        else if (cat === 'none') { taskType = 'general'; intentKind = 'chitchat'; confidence = 0.7; outputStyle = 'concise'; }
+        if (styles.includes(sty)) outputStyle = sty;
+      } else {
+        // Fallback for non-JSON responses — keep prior substring match so we
+        // never regress below the legacy path's hit rate.
+        const lower = raw.toLowerCase();
+        const matched = cats.find((c) => lower.includes(c));
+        if (matched) { taskType = matched; intentKind = 'task'; confidence = 0.6; }
+        else if (/\bnone\b/.test(lower)) { taskType = 'general'; intentKind = 'chitchat'; confidence = 0.5; outputStyle = 'concise'; }
+        const styleMatched = styles.find((s) => lower.includes(s));
+        if (styleMatched) outputStyle = styleMatched;
+      }
     }
   } catch (_e) { /* keep defaults */ }
 

@@ -302,6 +302,49 @@ test('POST /api/pil-context skips retrieval when classifier returns "none" (gene
   }
 });
 
+test('POST /api/pil-context parses JSON classifier output (preferred format)', async () => {
+  const token = 'test-server-token';
+  const stub = await startStub({ classifierContent: '{"category":"refactor","style":"detailed"}' });
+  const runtime = await startServer(buildConfig(stub.port, token));
+
+  try {
+    const res = await fetch(`${runtime.baseUrl}/api/pil-context`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ prompt: 'refactor this monolith into modules' }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.taskType, 'refactor');
+    assert.equal(body.outputStyle, 'detailed');
+    assert.equal(body.intentKind, 'task');
+  } finally {
+    await runtime.stop();
+    await stub.stop();
+  }
+});
+
+test('POST /api/pil-context tolerates JSON wrapped in prose (fallback parse)', async () => {
+  const token = 'test-server-token';
+  const stub = await startStub({ classifierContent: 'Here is the answer: {"category":"plan","style":"detailed"} done.' });
+  const runtime = await startServer(buildConfig(stub.port, token));
+
+  try {
+    const res = await fetch(`${runtime.baseUrl}/api/pil-context`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ prompt: 'design the auth system' }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.taskType, 'plan');
+    assert.equal(body.outputStyle, 'detailed');
+  } finally {
+    await runtime.stop();
+    await stub.stop();
+  }
+});
+
 test('POST /api/pil-context rejects missing prompt with 400', async () => {
   const token = 'test-server-token';
   const stub = await startStub();
