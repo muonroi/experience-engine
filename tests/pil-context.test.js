@@ -301,3 +301,74 @@ test('POST /api/pil-context skips retrieval when classifier returns "none" (gene
     await stub.stop();
   }
 });
+
+test('POST /api/pil-context rejects missing prompt with 400', async () => {
+  const token = 'test-server-token';
+  const stub = await startStub();
+  const runtime = await startServer(buildConfig(stub.port, token));
+
+  try {
+    const res = await fetch(`${runtime.baseUrl}/api/pil-context`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({}),
+    });
+
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.ok(body.error, 'response should include error message');
+  } finally {
+    await runtime.stop();
+    await stub.stop();
+  }
+});
+
+test('POST /api/pil-context rejects prompt > 10KB with 400', async () => {
+  const token = 'test-server-token';
+  const stub = await startStub();
+  const runtime = await startServer(buildConfig(stub.port, token));
+
+  try {
+    const huge = 'x'.repeat(11_000);
+    const res = await fetch(`${runtime.baseUrl}/api/pil-context`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ prompt: huge }),
+    });
+
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.ok(body.error, 'response should include error message');
+  } finally {
+    await runtime.stop();
+    await stub.stop();
+  }
+});
+
+test('POST /api/pil-context rejects unauthenticated request', async () => {
+  const token = 'test-server-token';
+  const stub = await startStub();
+  const runtime = await startServer(buildConfig(stub.port, token));
+
+  try {
+    const res = await fetch(`${runtime.baseUrl}/api/pil-context`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        // no Authorization header
+      },
+      body: JSON.stringify({ prompt: 'x' }),
+    });
+
+    assert.ok(res.status === 401 || res.status === 403, `expected 401/403, got ${res.status}`);
+  } finally {
+    await runtime.stop();
+    await stub.stop();
+  }
+});
