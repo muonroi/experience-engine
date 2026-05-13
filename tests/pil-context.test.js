@@ -238,6 +238,40 @@ test('POST /api/pil-context reports inference_ms > 0', async () => {
   }
 });
 
+test('POST /api/pil-context returns cache_hit=true on identical second request', async () => {
+  const token = 'test-server-token';
+  const stub = await startStub({ classifierContent: 'debug, balanced' });
+  const runtime = await startServer(buildConfig(stub.port, token));
+
+  try {
+    const doPost = () => fetch(`${runtime.baseUrl}/api/pil-context`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ prompt: 'cache me: fix the null reference in payment handler' }),
+    });
+
+    const res1 = await doPost();
+    assert.equal(res1.status, 200);
+    const b1 = await res1.json();
+    assert.equal(b1.cache_hit, false);
+
+    const res2 = await doPost();
+    assert.equal(res2.status, 200);
+    const b2 = await res2.json();
+    assert.equal(b2.cache_hit, true, 'second identical request should hit the cache');
+    assert.ok(b2.inference_ms < 100, `cached inference_ms should be <100ms, got ${b2.inference_ms}`);
+    // Cached payload preserves task classification
+    assert.equal(b2.taskType, b1.taskType);
+    assert.deepEqual(b2.t2_patterns, b1.t2_patterns);
+  } finally {
+    await runtime.stop();
+    await stub.stop();
+  }
+});
+
 test('POST /api/pil-context skips retrieval when classifier returns "none" (general/chitchat)', async () => {
   const token = 'test-server-token';
   const stub = await startStub({ classifierContent: 'none, concise' });
