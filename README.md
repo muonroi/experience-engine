@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="demo.svg" alt="Experience Engine Demo" width="860">
-</p>
-
 <h1 align="center">Experience Engine</h1>
 
 <p align="center">
