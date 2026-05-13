@@ -693,21 +693,85 @@ async function handlePilContext(req, res) {
     return error(res, 'prompt exceeds 10KB');
   }
 
-  // Stub response — Task 5 wires real classification + retrieval.
+  const startMs = Date.now();
+  const core = loadExperienceCore();
+
+  // 1. Classification — single brain call returning <category>,<style>.
+  let taskType = null;
+  let outputStyle = 'balanced';
+  let intentKind = null;
+  let confidence = 0;
+  try {
+    const classifyPrompt =
+      `You are a multilingual prompt classifier. The prompt may be in English, Vietnamese, or a mix.\n` +
+      `Classify the prompt's INTENT (not its language). Reply with TWO lowercase words separated by a comma: <category>,<style>\n\n` +
+      `Category — pick ONE:\n` +
+      `  refactor | debug | plan | analyze | documentation | generate | none\n\n` +
+      `Style — pick ONE:\n` +
+      `  concise | balanced | detailed\n\n` +
+      `Prompt: "${body.prompt.slice(0, 500)}"`;
+    const raw = await core.classifyViaBrain(classifyPrompt, 1500);
+    if (raw) {
+      const lower = raw.toLowerCase();
+      const cats = ['refactor', 'debug', 'plan', 'analyze', 'documentation', 'generate'];
+      const matched = cats.find((c) => lower.includes(c));
+      if (matched) { taskType = matched; intentKind = 'task'; confidence = 0.7; }
+      else if (/\bnone\b/.test(lower)) { taskType = 'general'; intentKind = 'chitchat'; confidence = 0.6; outputStyle = 'concise'; }
+      const styles = ['concise', 'balanced', 'detailed'];
+      const styleMatched = styles.find((s) => lower.includes(s));
+      if (styleMatched) outputStyle = styleMatched;
+    }
+  } catch (_e) { /* keep defaults */ }
+
+  // 2. Retrieval — parallel search of both collections.
+  let t0_principles = [];
+  let t2_patterns = [];
+  let retrieval_skipped_reason = null;
+  const skipRetrievalFor = new Set(['general']);
+  if (skipRetrievalFor.has(taskType)) {
+    retrieval_skipped_reason = `task_type:${taskType}`;
+  } else {
+    try {
+      const vector = await core.getEmbeddingRaw(body.prompt, AbortSignal.timeout(2000));
+      if (!vector) {
+        retrieval_skipped_reason = 'embedding_unavailable';
+      } else {
+        const [principles, behavioral] = await Promise.all([
+          core.searchCollection('experience-principles', vector, 3),
+          core.searchCollection('experience-behavioral', vector, 4),
+        ]);
+        const toScoredText = (p) => {
+          const payload = p.payload || {};
+          const j = (() => { try { return JSON.parse(payload.json || '{}'); } catch { return {}; } })();
+          return { text: payload.text || j.solution || '', score: p.score || 0 };
+        };
+        const SCORE_FLOOR = 0.55;
+        t0_principles = (principles || []).map(toScoredText).filter((p) => p.score >= 0.40 && p.text);
+        t2_patterns = (behavioral || []).map(toScoredText).filter((p) => p.score >= SCORE_FLOOR && p.text);
+      }
+    } catch (_e) { retrieval_skipped_reason = 'retrieval_error'; }
+  }
+
+  // 3. T1 rules: high-score behavioral patterns (>=0.75) treated as "proven" proxy.
+  const t1_rules = [];
+  for (const p of t2_patterns) {
+    if (p.score >= 0.75) t1_rules.push(p.text);
+  }
+
   json(res, {
-    taskType: null,
-    intentKind: null,
-    outputStyle: 'balanced',
-    confidence: 0,
+    taskType,
+    intentKind,
+    outputStyle,
+    confidence,
     domain: null,
     gsd_phase: null,
     gsd_route_source: 'none',
-    t0_principles: [],
-    t1_rules: [],
-    t2_patterns: [],
-    retrieval_skipped_reason: 'stub_not_implemented',
+    t0_principles,
+    t1_rules,
+    t2_patterns,
+    retrieval_skipped_reason,
     cache_hit: false,
-    inference_ms: 0,
+    inference_ms: Date.now() - startMs,
     schema_version: '1.0',
   });
 }

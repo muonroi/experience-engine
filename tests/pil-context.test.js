@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
+const http = require('node:http');
 const { spawn } = require('node:child_process');
 
 const REPO_ROOT = path.join(__dirname, '..');
@@ -32,6 +33,83 @@ async function waitForHealth(baseUrl, timeoutMs = 5000) {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   throw new Error(`server did not become healthy within ${timeoutMs}ms`);
+}
+
+// Stub server that handles:
+//   - Qdrant /collections (health), /collections/<name>/points/query (search)
+//   - LLM /v1/chat/completions (classifier)
+//   - OpenAI-style /v1/embeddings (embedding)
+//
+// Each route is overridable per-test via `overrides` so individual tests can
+// shape the classifier response or principle/pattern payloads.
+async function startStub(overrides = {}) {
+  const port = await getFreePort();
+  const samplePrinciple = {
+    id: 'p1',
+    score: 0.62,
+    payload: { text: 'Always validate inputs before mutating state.' },
+  };
+  const samplePattern = {
+    id: 'b1',
+    score: 0.82,
+    payload: { text: 'When stack trace shows NullReferenceException, dump locals first.' },
+  };
+  const samplePattern2 = {
+    id: 'b2',
+    score: 0.60,
+    payload: { json: JSON.stringify({ solution: 'Add a regression test that reproduces the bug.' }) },
+  };
+
+  const defaultClassifier = 'debug, balanced';
+  const classifierContent = overrides.classifierContent || defaultClassifier;
+  const principlesPoints = overrides.principlesPoints || [samplePrinciple];
+  const behavioralPoints = overrides.behavioralPoints || [samplePattern, samplePattern2];
+  const embedding = overrides.embedding || new Array(8).fill(0).map((_, i) => i / 8);
+
+  const server = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (chunk) => { raw += chunk; });
+    req.on('end', () => {
+      // Qdrant health
+      if (req.method === 'GET' && req.url === '/collections') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ result: { collections: [] } }));
+      }
+      // Qdrant search (points/query)
+      if (req.method === 'POST' && /^\/collections\/[^/]+\/points\/query$/.test(req.url)) {
+        const points = req.url.includes('experience-principles')
+          ? principlesPoints
+          : behavioralPoints;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ result: { points } }));
+      }
+      // LLM classify
+      if (req.method === 'POST' && req.url === '/v1/chat/completions') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          choices: [{ message: { content: classifierContent } }],
+        }));
+      }
+      // OpenAI-style embeddings
+      if (req.method === 'POST' && req.url === '/v1/embeddings') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          data: [{ embedding }],
+        }));
+      }
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'not found', path: req.url }));
+    });
+  });
+
+  await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
+  return {
+    port,
+    server,
+    async stop() {
+      await new Promise((resolve) => server.close(resolve));
+    },
+  };
 }
 
 function createTempHome(config) {
@@ -83,17 +161,26 @@ async function startServer(config) {
   };
 }
 
-test('POST /api/pil-context returns a v1.0 stub PilContextResponse', async () => {
-  const token = 'test-server-token';
-  const runtime = await startServer({
-    qdrantUrl: 'http://127.0.0.1:9',
+function buildConfig(stubPort, token) {
+  return {
+    qdrantUrl: `http://127.0.0.1:${stubPort}`,
     qdrantKey: 'test-key',
     brainProvider: 'custom',
-    brainEndpoint: 'http://127.0.0.1:9/v1/chat/completions',
+    brainEndpoint: `http://127.0.0.1:${stubPort}/v1/chat/completions`,
     brainKey: 'test-brain-key',
+    embedProvider: 'custom',
+    embedEndpoint: `http://127.0.0.1:${stubPort}/v1/embeddings`,
+    embedKey: 'test-embed-key',
+    embedModel: 'test-embed-model',
     server: { authToken: token },
     serverAuthToken: token,
-  });
+  };
+}
+
+test('POST /api/pil-context classifies a debug prompt and returns T2 patterns when retrieval succeeds', async () => {
+  const token = 'test-server-token';
+  const stub = await startStub({ classifierContent: 'debug, balanced' });
+  const runtime = await startServer(buildConfig(stub.port, token));
 
   try {
     const res = await fetch(`${runtime.baseUrl}/api/pil-context`, {
@@ -102,20 +189,81 @@ test('POST /api/pil-context returns a v1.0 stub PilContextResponse', async () =>
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ prompt: 'test prompt' }),
+      body: JSON.stringify({ prompt: 'fix the null reference exception in payment handler' }),
     });
 
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.schema_version, '1.0');
-    assert.equal(body.outputStyle, 'balanced');
-    assert.equal(body.gsd_route_source, 'none');
-    assert.equal(body.retrieval_skipped_reason, 'stub_not_implemented');
+    assert.equal(body.taskType, 'debug');
+    assert.equal(body.intentKind, 'task');
+    assert.ok(['concise', 'balanced', 'detailed'].includes(body.outputStyle));
+    assert.ok(body.confidence > 0, `confidence should be > 0, got ${body.confidence}`);
+    assert.ok(Array.isArray(body.t2_patterns));
+    assert.ok(body.t2_patterns.length > 0, 't2_patterns should be non-empty when retrieval succeeds');
+    // High-score pattern (0.82) should appear in t1_rules.
+    assert.ok(Array.isArray(body.t1_rules));
+    assert.ok(body.t1_rules.length > 0, 't1_rules should derive from >=0.75 patterns');
     assert.equal(body.cache_hit, false);
+    assert.equal(body.gsd_route_source, 'none');
+  } finally {
+    await runtime.stop();
+    await stub.stop();
+  }
+});
+
+test('POST /api/pil-context reports inference_ms > 0', async () => {
+  const token = 'test-server-token';
+  const stub = await startStub({ classifierContent: 'analyze, detailed' });
+  const runtime = await startServer(buildConfig(stub.port, token));
+
+  try {
+    const res = await fetch(`${runtime.baseUrl}/api/pil-context`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ prompt: 'analyze the failure modes of this circuit breaker' }),
+    });
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.inference_ms > 0, `inference_ms should be > 0, got ${body.inference_ms}`);
+    assert.equal(body.taskType, 'analyze');
+    assert.equal(body.outputStyle, 'detailed');
+  } finally {
+    await runtime.stop();
+    await stub.stop();
+  }
+});
+
+test('POST /api/pil-context skips retrieval when classifier returns "none" (general/chitchat)', async () => {
+  const token = 'test-server-token';
+  const stub = await startStub({ classifierContent: 'none, concise' });
+  const runtime = await startServer(buildConfig(stub.port, token));
+
+  try {
+    const res = await fetch(`${runtime.baseUrl}/api/pil-context`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ prompt: 'hi how are you' }),
+    });
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.taskType, 'general');
+    assert.equal(body.intentKind, 'chitchat');
+    assert.equal(body.outputStyle, 'concise');
+    assert.equal(body.retrieval_skipped_reason, 'task_type:general');
     assert.deepEqual(body.t0_principles, []);
     assert.deepEqual(body.t1_rules, []);
     assert.deepEqual(body.t2_patterns, []);
   } finally {
     await runtime.stop();
+    await stub.stop();
   }
 });
