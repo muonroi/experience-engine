@@ -824,7 +824,11 @@ async function handlePilContext(req, res) {
     // the real fix: prior versions tried to push the 14B model under tight
     // timeout, which is the wrong tool for the job.
     const classifierModel = process.env.EE_PIL_CLASSIFIER_MODEL || 'Qwen/Qwen2.5-7B-Instruct';
-    const raw = await core.classifyViaBrain(body.prompt, 2000, {
+    // Timeout from measured prod distribution: profile-classifier-latency.ts
+    // over 120 calls showed p50=1816ms p95=3027ms p99=3398ms with the 7B model
+    // + json_object response_format on siliconflow. 3500ms covers 99.2% of
+    // calls. Data-driven, not a guess.
+    const raw = await core.classifyViaBrain(body.prompt, 3500, {
       model: classifierModel,
       messages: fewShot,
       maxTokens: 40,
