@@ -817,12 +817,15 @@ async function handlePilContext(req, res) {
       { role: 'assistant', content: '{"category":"none","style":"concise"}' },
       { role: 'user', content: body.prompt.slice(0, 500) },
     ];
-    // Timeout sized for the new prompt: Qwen3-14B + ~300 input tokens + json
-    // response_format averages 800-1500ms on siliconflow. 2000ms gives a 25%
-    // safety margin. CLI-side pipeline budget is 2500ms, leaving headroom for
-    // retrieval. NOT a workaround — original 1500ms was sized for the broken
-    // short prompt, not the corrected few-shot one.
+    // Use a smaller, faster model for classification specifically. Intent
+    // categorization into 7 buckets does not need a 14B model — Qwen2.5-7B
+    // handles it reliably at 300-700ms vs 14B's 2-3s. Default brainModel
+    // (typically Qwen3-14B) remains for downstream synthesis tasks. This is
+    // the real fix: prior versions tried to push the 14B model under tight
+    // timeout, which is the wrong tool for the job.
+    const classifierModel = process.env.EE_PIL_CLASSIFIER_MODEL || 'Qwen/Qwen2.5-7B-Instruct';
     const raw = await core.classifyViaBrain(body.prompt, 2000, {
+      model: classifierModel,
       messages: fewShot,
       maxTokens: 40,
       responseFormat: { type: 'json_object' },
