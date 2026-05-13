@@ -683,6 +683,33 @@ async function handleSearch(req, res) {
   json(res, { points: mapped });
 }
 
+const PIL_CONTEXT_CACHE = new Map(); // key → { value, expiresAt }
+const PIL_CONTEXT_CACHE_TTL_MS = 5 * 60 * 1000;
+const PIL_CONTEXT_CACHE_MAX = 200;
+
+function pilCacheKey(prompt, locale) {
+  const crypto = require('node:crypto');
+  return crypto.createHash('sha256').update(`${locale || ''}\0${prompt}`).digest('hex');
+}
+
+function pilCacheGet(key) {
+  const entry = PIL_CONTEXT_CACHE.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) { PIL_CONTEXT_CACHE.delete(key); return null; }
+  // refresh LRU order
+  PIL_CONTEXT_CACHE.delete(key);
+  PIL_CONTEXT_CACHE.set(key, entry);
+  return entry.value;
+}
+
+function pilCacheSet(key, value) {
+  if (PIL_CONTEXT_CACHE.size >= PIL_CONTEXT_CACHE_MAX) {
+    const oldest = PIL_CONTEXT_CACHE.keys().next().value;
+    PIL_CONTEXT_CACHE.delete(oldest);
+  }
+  PIL_CONTEXT_CACHE.set(key, { value, expiresAt: Date.now() + PIL_CONTEXT_CACHE_TTL_MS });
+}
+
 async function handlePilContext(req, res) {
   if (!requireAuth(req, res)) return;
   const body = await readBody(req);
@@ -691,6 +718,12 @@ async function handlePilContext(req, res) {
   }
   if (body.prompt.length > 10_000) {
     return error(res, 'prompt exceeds 10KB');
+  }
+
+  const cacheKey = pilCacheKey(body.prompt, body.locale_hint);
+  const cached = pilCacheGet(cacheKey);
+  if (cached) {
+    return json(res, { ...cached, cache_hit: true, inference_ms: 0 });
   }
 
   const startMs = Date.now();
@@ -758,7 +791,7 @@ async function handlePilContext(req, res) {
     if (p.score >= 0.75) t1_rules.push(p.text);
   }
 
-  json(res, {
+  const response = {
     taskType,
     intentKind,
     outputStyle,
@@ -773,7 +806,9 @@ async function handlePilContext(req, res) {
     cache_hit: false,
     inference_ms: Date.now() - startMs,
     schema_version: '1.0',
-  });
+  };
+  pilCacheSet(cacheKey, response);
+  json(res, response);
 }
 
 const VALID_OUTCOMES = new Set(['success', 'fail', 'retry', 'cancelled']);
