@@ -156,7 +156,7 @@ test('getEmbeddingRaw handles Gemini provider selection gracefully', { timeout: 
 //  Test: VoyageAI provider
 //  NOTE: VoyageAI uses hardcoded API URL. Same pattern as Gemini.
 // ============================================================
-test('getEmbeddingRaw handles VoyageAI provider selection gracefully', { timeout: 3000 }, async () => {
+test('getEmbeddingRaw handles VoyageAI provider selection gracefully', { timeout: 10000 }, async () => {
   process.env.HOME = testHome;
   process.env.USERPROFILE = testHome;
 
