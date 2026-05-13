@@ -683,6 +683,35 @@ async function handleSearch(req, res) {
   json(res, { points: mapped });
 }
 
+async function handlePilContext(req, res) {
+  if (!requireAuth(req, res)) return;
+  const body = await readBody(req);
+  if (!body.prompt || typeof body.prompt !== 'string') {
+    return error(res, 'prompt is required');
+  }
+  if (body.prompt.length > 10_000) {
+    return error(res, 'prompt exceeds 10KB');
+  }
+
+  // Stub response — Task 5 wires real classification + retrieval.
+  json(res, {
+    taskType: null,
+    intentKind: null,
+    outputStyle: 'balanced',
+    confidence: 0,
+    domain: null,
+    gsd_phase: null,
+    gsd_route_source: 'none',
+    t0_principles: [],
+    t1_rules: [],
+    t2_patterns: [],
+    retrieval_skipped_reason: 'stub_not_implemented',
+    cache_hit: false,
+    inference_ms: 0,
+    schema_version: '1.0',
+  });
+}
+
 const VALID_OUTCOMES = new Set(['success', 'fail', 'retry', 'cancelled']);
 const KNOWN_RUNTIMES = new Set(['claude', 'gemini', 'codex', 'opencode']);
 
@@ -816,6 +845,7 @@ const server = http.createServer(async (req, res) => {
       if (p === '/api/route-feedback') return await handleRouteFeedback(req, res);
       if (p === '/api/brain') return await handleBrainProxy(req, res);
       if (p === '/api/search') return await handleSearch(req, res);
+      if (p === '/api/pil-context') return await handlePilContext(req, res);
       if (p === '/api/phase-outcome') return await handlePhaseOutcome(req, res);
     }
 
@@ -867,6 +897,7 @@ module.exports = {
   handleGraph,
   handleTimeline,
   handleSearch,
+  handlePilContext,
   handleShare,
   handleImport,
   handleFeedback,
