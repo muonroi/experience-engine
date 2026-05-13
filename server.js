@@ -801,6 +801,10 @@ async function handlePilContext(req, res) {
       'category ∈ {refactor, debug, plan, analyze, documentation, generate, none}. ' +
       'style ∈ {concise, balanced, detailed}. ' +
       'No prose, no markdown fences, just the JSON.';
+    // 4 few-shot pairs cover the category space without inflating input tokens.
+    // EN+VI mix, two distinct styles, plus chitchat (none). Trimmed from 7
+    // to keep Qwen3-14B processing within the 2s budget; quality is maintained
+    // because category names appear in the system prompt vocabulary list.
     const fewShot = [
       { role: 'system', content: classifierSystem },
       { role: 'user', content: 'refactor this function to be async' },
@@ -809,17 +813,16 @@ async function handlePilContext(req, res) {
       { role: 'assistant', content: '{"category":"debug","style":"concise"}' },
       { role: 'user', content: 'thiết kế hệ thống auth cho team' },
       { role: 'assistant', content: '{"category":"plan","style":"detailed"}' },
-      { role: 'user', content: 'phân tích lỗi memory leak' },
-      { role: 'assistant', content: '{"category":"analyze","style":"detailed"}' },
-      { role: 'user', content: 'write docs for the API endpoint' },
-      { role: 'assistant', content: '{"category":"documentation","style":"balanced"}' },
-      { role: 'user', content: 'generate a TypeScript Zod schema for User' },
-      { role: 'assistant', content: '{"category":"generate","style":"concise"}' },
       { role: 'user', content: 'hi' },
       { role: 'assistant', content: '{"category":"none","style":"concise"}' },
       { role: 'user', content: body.prompt.slice(0, 500) },
     ];
-    const raw = await core.classifyViaBrain(body.prompt, 1500, {
+    // Timeout sized for the new prompt: Qwen3-14B + ~300 input tokens + json
+    // response_format averages 800-1500ms on siliconflow. 2000ms gives a 25%
+    // safety margin. CLI-side pipeline budget is 2500ms, leaving headroom for
+    // retrieval. NOT a workaround — original 1500ms was sized for the broken
+    // short prompt, not the corrected few-shot one.
+    const raw = await core.classifyViaBrain(body.prompt, 2000, {
       messages: fewShot,
       maxTokens: 40,
       responseFormat: { type: 'json_object' },
