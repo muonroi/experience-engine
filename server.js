@@ -784,110 +784,102 @@ async function handlePilContext(req, res) {
   const startMs = Date.now();
   const core = loadExperienceCore();
 
-  // 1. Classification — dedicated intent classifier with few-shot + JSON output.
-  // Previous version reused classifyViaBrain whose default system prompt is for
-  // tier classification (fast/balanced/premium); the conflict produced ~69% null
-  // results. We now pass our own system prompt and few-shot examples for stable
-  // structured output. See docs plan 2026-05-13-pil-classifier-prompt-fix.md.
+  // 1+2. Classification AND embedding run in parallel — they have no data
+  // dependency on each other. Previously these were sequential (classify then
+  // embed+search), which stacked p95 classifier (3000ms) on top of p95 embed
+  // (~600ms). Running them concurrently caps total at max(classifier, embed)
+  // which is classifier-bound. For taskType=general we waste the embedding
+  // work, but embedding is cheap relative to classifier.
   let taskType = null;
   let outputStyle = 'balanced';
   let intentKind = null;
   let confidence = 0;
-  try {
-    const classifierSystem =
-      'You are an intent classifier for a developer CLI. ' +
-      'Given a user prompt (English, Vietnamese, or mixed), output ONLY a JSON object: ' +
-      '{"category":"<one>","style":"<one>"}. ' +
-      'category ∈ {refactor, debug, plan, analyze, documentation, generate, none}. ' +
-      'style ∈ {concise, balanced, detailed}. ' +
-      'No prose, no markdown fences, just the JSON.';
-    // 4 few-shot pairs cover the category space without inflating input tokens.
-    // EN+VI mix, two distinct styles, plus chitchat (none). Trimmed from 7
-    // to keep Qwen3-14B processing within the 2s budget; quality is maintained
-    // because category names appear in the system prompt vocabulary list.
-    const fewShot = [
-      { role: 'system', content: classifierSystem },
-      { role: 'user', content: 'refactor this function to be async' },
-      { role: 'assistant', content: '{"category":"refactor","style":"concise"}' },
-      { role: 'user', content: 'tại sao test fail?' },
-      { role: 'assistant', content: '{"category":"debug","style":"concise"}' },
-      { role: 'user', content: 'thiết kế hệ thống auth cho team' },
-      { role: 'assistant', content: '{"category":"plan","style":"detailed"}' },
-      { role: 'user', content: 'hi' },
-      { role: 'assistant', content: '{"category":"none","style":"concise"}' },
-      { role: 'user', content: body.prompt.slice(0, 500) },
-    ];
-    // Use a smaller, faster model for classification specifically. Intent
-    // categorization into 7 buckets does not need a 14B model — Qwen2.5-7B
-    // handles it reliably at 300-700ms vs 14B's 2-3s. Default brainModel
-    // (typically Qwen3-14B) remains for downstream synthesis tasks. This is
-    // the real fix: prior versions tried to push the 14B model under tight
-    // timeout, which is the wrong tool for the job.
-    const classifierModel = process.env.EE_PIL_CLASSIFIER_MODEL || 'Qwen/Qwen2.5-7B-Instruct';
-    // Timeout from measured prod distribution: profile-classifier-latency.ts
-    // over 120 calls showed p50=1816ms p95=3027ms p99=3398ms with the 7B model
-    // + json_object response_format on siliconflow. 3500ms covers 99.2% of
-    // calls. Data-driven, not a guess.
-    const raw = await core.classifyViaBrain(body.prompt, 3500, {
+  let t0_principles = [];
+  let t2_patterns = [];
+  let retrieval_skipped_reason = null;
+
+  const classifierSystem =
+    'You are an intent classifier for a developer CLI. ' +
+    'Given a user prompt (English, Vietnamese, or mixed), output ONLY a JSON object: ' +
+    '{"category":"<one>","style":"<one>"}. ' +
+    'category ∈ {refactor, debug, plan, analyze, documentation, generate, none}. ' +
+    'style ∈ {concise, balanced, detailed}. ' +
+    'No prose, no markdown fences, just the JSON.';
+  // 4 few-shot pairs cover the category space without inflating input tokens.
+  const fewShot = [
+    { role: 'system', content: classifierSystem },
+    { role: 'user', content: 'refactor this function to be async' },
+    { role: 'assistant', content: '{"category":"refactor","style":"concise"}' },
+    { role: 'user', content: 'tại sao test fail?' },
+    { role: 'assistant', content: '{"category":"debug","style":"concise"}' },
+    { role: 'user', content: 'thiết kế hệ thống auth cho team' },
+    { role: 'assistant', content: '{"category":"plan","style":"detailed"}' },
+    { role: 'user', content: 'hi' },
+    { role: 'assistant', content: '{"category":"none","style":"concise"}' },
+    { role: 'user', content: body.prompt.slice(0, 500) },
+  ];
+  const classifierModel = process.env.EE_PIL_CLASSIFIER_MODEL || 'Qwen/Qwen2.5-7B-Instruct';
+
+  // Kick off both in parallel. Use allSettled so a failed embedding does not
+  // abort the classifier and vice versa.
+  const [classifyResult, embedResult] = await Promise.allSettled([
+    core.classifyViaBrain(body.prompt, 3500, {
       model: classifierModel,
       messages: fewShot,
       maxTokens: 40,
       responseFormat: { type: 'json_object' },
-    });
-    if (raw) {
-      // Tolerate a leading prose blurb or markdown fence; extract the first {...}.
-      const jsonMatch = raw.match(/\{[\s\S]*?\}/);
-      let parsed = null;
-      if (jsonMatch) {
-        try { parsed = JSON.parse(jsonMatch[0]); } catch { /* fall through */ }
-      }
-      const cats = ['refactor', 'debug', 'plan', 'analyze', 'documentation', 'generate'];
-      const styles = ['concise', 'balanced', 'detailed'];
-      if (parsed && typeof parsed === 'object') {
-        const cat = String(parsed.category || '').toLowerCase().trim();
-        const sty = String(parsed.style || '').toLowerCase().trim();
-        if (cats.includes(cat)) { taskType = cat; intentKind = 'task'; confidence = 0.8; }
-        else if (cat === 'none') { taskType = 'general'; intentKind = 'chitchat'; confidence = 0.7; outputStyle = 'concise'; }
-        if (styles.includes(sty)) outputStyle = sty;
-      } else {
-        // Fallback for non-JSON responses — keep prior substring match so we
-        // never regress below the legacy path's hit rate.
-        const lower = raw.toLowerCase();
-        const matched = cats.find((c) => lower.includes(c));
-        if (matched) { taskType = matched; intentKind = 'task'; confidence = 0.6; }
-        else if (/\bnone\b/.test(lower)) { taskType = 'general'; intentKind = 'chitchat'; confidence = 0.5; outputStyle = 'concise'; }
-        const styleMatched = styles.find((s) => lower.includes(s));
-        if (styleMatched) outputStyle = styleMatched;
-      }
-    }
-  } catch (_e) { /* keep defaults */ }
+    }),
+    core.getEmbeddingRaw(body.prompt, AbortSignal.timeout(2000)),
+  ]);
 
-  // 2. Retrieval — parallel search of both collections.
-  let t0_principles = [];
-  let t2_patterns = [];
-  let retrieval_skipped_reason = null;
+  // Parse classifier result.
+  if (classifyResult.status === 'fulfilled' && classifyResult.value) {
+    const raw = classifyResult.value;
+    const jsonMatch = raw.match(/\{[\s\S]*?\}/);
+    let parsed = null;
+    if (jsonMatch) {
+      try { parsed = JSON.parse(jsonMatch[0]); } catch { /* fall through */ }
+    }
+    const cats = ['refactor', 'debug', 'plan', 'analyze', 'documentation', 'generate'];
+    const styles = ['concise', 'balanced', 'detailed'];
+    if (parsed && typeof parsed === 'object') {
+      const cat = String(parsed.category || '').toLowerCase().trim();
+      const sty = String(parsed.style || '').toLowerCase().trim();
+      if (cats.includes(cat)) { taskType = cat; intentKind = 'task'; confidence = 0.8; }
+      else if (cat === 'none') { taskType = 'general'; intentKind = 'chitchat'; confidence = 0.7; outputStyle = 'concise'; }
+      if (styles.includes(sty)) outputStyle = sty;
+    } else {
+      // Fallback for non-JSON responses — keep prior substring match.
+      const lower = raw.toLowerCase();
+      const matched = cats.find((c) => lower.includes(c));
+      if (matched) { taskType = matched; intentKind = 'task'; confidence = 0.6; }
+      else if (/\bnone\b/.test(lower)) { taskType = 'general'; intentKind = 'chitchat'; confidence = 0.5; outputStyle = 'concise'; }
+      const styleMatched = styles.find((s) => lower.includes(s));
+      if (styleMatched) outputStyle = styleMatched;
+    }
+  }
+
+  // Use embedding for retrieval — gated by classifier result.
   const skipRetrievalFor = new Set(['general']);
   if (skipRetrievalFor.has(taskType)) {
     retrieval_skipped_reason = `task_type:${taskType}`;
+  } else if (embedResult.status !== 'fulfilled' || !embedResult.value) {
+    retrieval_skipped_reason = 'embedding_unavailable';
   } else {
     try {
-      const vector = await core.getEmbeddingRaw(body.prompt, AbortSignal.timeout(2000));
-      if (!vector) {
-        retrieval_skipped_reason = 'embedding_unavailable';
-      } else {
-        const [principles, behavioral] = await Promise.all([
-          core.searchCollection('experience-principles', vector, 3),
-          core.searchCollection('experience-behavioral', vector, 4),
-        ]);
-        const toScoredText = (p) => {
-          const payload = p.payload || {};
-          const j = (() => { try { return JSON.parse(payload.json || '{}'); } catch { return {}; } })();
-          return { text: payload.text || j.solution || '', score: p.score || 0 };
-        };
-        const SCORE_FLOOR = 0.55;
-        t0_principles = (principles || []).map(toScoredText).filter((p) => p.score >= 0.40 && p.text);
-        t2_patterns = (behavioral || []).map(toScoredText).filter((p) => p.score >= SCORE_FLOOR && p.text);
-      }
+      const vector = embedResult.value;
+      const [principles, behavioral] = await Promise.all([
+        core.searchCollection('experience-principles', vector, 3),
+        core.searchCollection('experience-behavioral', vector, 4),
+      ]);
+      const toScoredText = (p) => {
+        const payload = p.payload || {};
+        const j = (() => { try { return JSON.parse(payload.json || '{}'); } catch { return {}; } })();
+        return { text: payload.text || j.solution || '', score: p.score || 0 };
+      };
+      const SCORE_FLOOR = 0.55;
+      t0_principles = (principles || []).map(toScoredText).filter((p) => p.score >= 0.40 && p.text);
+      t2_patterns = (behavioral || []).map(toScoredText).filter((p) => p.score >= SCORE_FLOOR && p.text);
     } catch (_e) { retrieval_skipped_reason = 'retrieval_error'; }
   }
 
