@@ -18,7 +18,10 @@ const SEEDED_BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD = 5;
 const HIT_BOOST_MAX = 0.12;
 
 function isSeedEntry(data) {
-  return typeof data?.createdFrom === 'string' && data.createdFrom.startsWith('seed-');
+  if (typeof data?.createdFrom !== 'string') return false;
+  // evolution-abstraction entries are synthesized from clustering experience —
+  // treat them as seeds so their confidence isn't discounted by lack of initial hits.
+  return data.createdFrom.startsWith('seed-') || data.createdFrom === 'evolution-abstraction';
 }
 
 // --- Anti-Noise Scoring (Phase 103) ---

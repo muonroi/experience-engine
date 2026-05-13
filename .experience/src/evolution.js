@@ -278,7 +278,9 @@ function shouldPromoteBehavioralToPrinciple(data, now = Date.now()) {
     return true;
   }
   const organicHits = getValidatedHitCount(data);
-  const isSeeded = data.createdFrom === 'bulk-seed' || data.createdFrom === 'imported';
+  const isSeeded = data.createdFrom === 'bulk-seed'
+    || data.createdFrom === 'imported'
+    || (typeof data.createdFrom === 'string' && data.createdFrom.startsWith('seed-'));
   const minHits = isSeeded ? SEEDED_BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD : BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD;
   const minConfidence = isSeeded ? SEEDED_BEHAVIORAL_TO_PRINCIPLE_MIN_CONFIDENCE : BEHAVIORAL_TO_PRINCIPLE_MIN_CONFIDENCE;
   if (organicHits < minHits) return false;
@@ -352,6 +354,30 @@ async function evolve(trigger) {
     await upsertEntry('experience-principles', entry.id, vector, data);
     await deleteEntry('experience-behavioral', entry.id);
     results.promoted++;
+  }
+
+  // Step 1c: Repair orphaned evolution-abstraction entries in selfqa.
+  // Old code (pre-260512) incorrectly wrote abstraction results to selfqa instead
+  // of behavioral. These entries have confidence below the survivable floor and
+  // can never be surfaced (isSeedEntry now covers evolution-abstraction, so the
+  // ageFactor bypass applies — but Step 3 still uses computeEffectiveConfidence
+  // which for seeds = base directly, so floor = minConfidence = 0.55).
+  const EVOLUTION_ABS_CONFIDENCE_FLOOR = 0.57; // slightly above minConfidence(0.55)
+  const orphanedAbsEntries = await getAllEntries('experience-selfqa');
+  for (const entry of orphanedAbsEntries) {
+    const data = parsePayload(entry);
+    if (!data || data.createdFrom !== 'evolution-abstraction') continue;
+    if ((data.confidence || 0) >= EVOLUTION_ABS_CONFIDENCE_FLOOR) continue;
+    data.confidence = EVOLUTION_ABS_CONFIDENCE_FLOOR;
+    data.tier = 1;
+    data.repairedAt = new Date().toISOString();
+    data.repairReason = 'orphaned-low-confidence-selfqa-abs';
+    const vector = entry.vector || await getEmbedding(buildPrincipleText(data) || `${data.trigger} ${data.solution}`);
+    if (!vector) continue;
+    await upsertEntry('experience-behavioral', entry.id, vector, data);
+    await deleteEntry('experience-selfqa', entry.id);
+    results.promoted++;
+    activityLog({ op: 'evolve-repair-abs-orphan', id: entry.id.slice(0, 8) });
   }
 
   // Step 2: Abstract T2 clusters -> T0 (per D-05)
