@@ -259,6 +259,8 @@ test('POST /api/extract forwards source metadata to core extraction', async () =
       sourceKind: 'stop-hook',
       sourceRuntime: 'codex-wsl',
       sourceSession: 'session-extract-1',
+      framework: null,
+      lang: null,
     });
     return 1;
   };
