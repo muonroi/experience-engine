@@ -258,10 +258,17 @@ fi
 # Atomic config write — preserves org block + hook timeout from prior install
 # unless explicitly overridden by flags/env.
 INSTALLED_AT="$(date -Iseconds)"
+# Capture the repo commit this install was sourced from. Lets the server log
+# stale clients and lets `bash upgrade.sh` / health-check compare against the
+# current origin. Falls back to "unknown" outside a git checkout.
+INSTALL_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null | head -c 12 || true)"
+INSTALL_COMMIT="${INSTALL_COMMIT:-unknown}"
+INSTALL_COMMIT_DATE="$(git -C "$ROOT_DIR" log -1 --format=%cI 2>/dev/null || true)"
+INSTALL_COMMIT_DATE="${INSTALL_COMMIT_DATE:-}"
 node -e '
 const fs = require("fs");
 const path = require("path");
-const [target, serverUrl, token, readToken, hookTimeoutRaw, orgName, orgPatternsRaw, existingOrgJson, installedAt] = process.argv.slice(1);
+const [target, serverUrl, token, readToken, hookTimeoutRaw, orgName, orgPatternsRaw, existingOrgJson, installedAt, installCommit, installCommitDate] = process.argv.slice(1);
 const cfg = {
   serverBaseUrl: serverUrl.replace(/\/$/, ""),
   serverAuthToken: token,
@@ -270,6 +277,8 @@ const cfg = {
   serverExtractTimeoutMs: 60000,
   version: "thin-client",
   installedAt,
+  installCommit: installCommit || "unknown",
+  ...(installCommitDate ? { installCommitDate } : {}),
 };
 const hookTimeout = parseInt(hookTimeoutRaw, 10);
 if (Number.isFinite(hookTimeout) && hookTimeout > 0) cfg.serverHookTimeoutMs = hookTimeout;
@@ -307,7 +316,9 @@ fs.renameSync(tmp, target);
   "$ORG_NAME" \
   "$ORG_PATTERNS" \
   "$EXISTING_ORG_JSON" \
-  "$INSTALLED_AT"
+  "$INSTALLED_AT" \
+  "$INSTALL_COMMIT" \
+  "$INSTALL_COMMIT_DATE"
 
 echo
 echo "Thin client installed to $INSTALL_DIR"

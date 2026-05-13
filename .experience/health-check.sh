@@ -111,6 +111,51 @@ run_checks() {
     check "experience-core.js" "ok" "Not required in thin-client mode (routes through remote-client)"
   fi
 
+  # 2a. Version drift
+  #
+  # Compare installCommit from config.json against the server's running commit.
+  # Mismatch + age > 7 days = stale install; user should `bash upgrade.sh`.
+  local install_commit; install_commit=$(read_cfg installCommit)
+  local installed_at; installed_at=$(read_cfg installedAt)
+  local version_server; version_server=$(read_cfg serverBaseUrl)
+  if [ -n "$version_server" ]; then
+    local version_resp
+    version_resp=$(curl -s -m 3 "${version_server}/api/version" 2>/dev/null)
+    local server_commit
+    server_commit=$(echo "$version_resp" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{process.stdout.write(JSON.parse(d).commit||'')}catch{}})" 2>/dev/null)
+    if [ -z "$server_commit" ]; then
+      check "Version" "warn" "Server /api/version unreachable or pre-version endpoint" "Upgrade the VPS to a build that ships /api/version, or check network"
+    elif [ -z "$install_commit" ] || [ "$install_commit" = "unknown" ]; then
+      check "Version" "warn" "Install predates commit stamping (server=$server_commit)" "Run bash upgrade.sh to refresh — your client cannot report its version to the server"
+    elif [ "$install_commit" = "$server_commit" ]; then
+      check "Version" "ok" "Installed and server both at $server_commit"
+    else
+      check "Version" "warn" "Client=$install_commit server=$server_commit (drift)" "Run bash upgrade.sh from your repo clone to sync"
+    fi
+  else
+    # Local/full mode — install commit only.
+    if [ -n "$install_commit" ] && [ "$install_commit" != "unknown" ]; then
+      check "Version" "ok" "Installed at $install_commit${installed_at:+ ($installed_at)}"
+    else
+      check "Version" "warn" "Install commit not stamped" "Re-run setup.sh or sync-install.sh to record the commit"
+    fi
+  fi
+
+  # 2c. Framework detection on cwd (diagnostic)
+  #
+  # Print what the engine would classify the current working dir as, so a dev
+  # debugging "why are these hints surfacing?" gets the answer in one place.
+  local cwd_now="$(pwd)"
+  local cwd_node="$(_to_node_path "$cwd_now")"
+  if [ -f "$EXP_DIR/source-meta-enrich.js" ]; then
+    local detect_out
+    detect_out=$(node -e "try{const m=require('$EXP_DIR/source-meta-enrich.js');const r=m.enrichSourceMeta({file_path:'$cwd_node'});process.stdout.write(JSON.stringify(r||{}))}catch(e){process.stdout.write('{}')}" 2>/dev/null)
+    local detect_lang; detect_lang=$(echo "$detect_out" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const x=JSON.parse(d);process.stdout.write((x.lang||'(none)')+' | '+(x.framework||'(none)'))}catch{process.stdout.write('(parse failed)')}})" 2>/dev/null)
+    check "Framework Detect" "ok" "cwd → $detect_lang"
+  else
+    check "Framework Detect" "warn" "source-meta-enrich.js missing" "Re-run setup-thin-client.sh or sync-install.sh"
+  fi
+
   # 2b. Mode detection
   local server_base; server_base=$(read_cfg serverBaseUrl)
   local server_auth; server_auth=$(read_cfg serverAuthToken)
@@ -393,6 +438,8 @@ print_dashboard() {
 
   printf "  ${CYAN}${BOLD}Infrastructure${NC}\n"
   print_check "Config"
+  print_check "Version"
+  print_check "Framework Detect"
   print_check "SSH Tunnel"
   print_check "Qdrant"
   print_check "Embed API"

@@ -82,6 +82,11 @@ function buildHeaders(config = loadConfig(), extraHeaders = {}) {
   const headers = { ...extraHeaders };
   const token = getServerAuthToken(config);
   if (token) headers.Authorization = `Bearer ${token}`;
+  // Install-time commit fingerprint. Server logs a stale_client warning when
+  // this differs from its own — gives admins visibility into clients that
+  // never ran `bash upgrade.sh`. Absent is also a signal (very old client).
+  const commit = typeof config.installCommit === 'string' ? config.installCommit.trim().slice(0, 12) : '';
+  if (commit) headers['X-EE-Client-Commit'] = commit;
   return headers;
 }
 
