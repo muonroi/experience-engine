@@ -81,13 +81,22 @@ const PKG_DEP_FW = [
   { dep: 'next', framework: 'next' },
   { dep: '@nestjs/core', framework: 'nest' },
   { dep: 'nuxt', framework: 'nuxt' },
+  { dep: '@angular/core', framework: 'angular' },
   { dep: 'react-native', framework: 'react-native' },
   { dep: 'expo', framework: 'expo' },
+  { dep: 'astro', framework: 'astro' },
+  { dep: 'solid-js', framework: 'solid' },
+  { dep: '@remix-run/react', framework: 'remix' },
   { dep: 'react', framework: 'react' },
   { dep: 'vue', framework: 'vue' },
   { dep: 'svelte', framework: 'svelte' },
   { dep: 'electron', framework: 'electron' },
 ];
+
+// Conventional source-root directory names. When the project root has no
+// markers, descend into one of these before walking up. Many monorepo /
+// next.js / dotnet repos put the actual project under `src/` or `apps/`.
+const _COMMON_SRC_DIRS = ['src', 'apps', 'packages', 'app', 'server', 'client', 'web'];
 
 const CSPROJ_READ_CAP = 64 * 1024; // bound .csproj reads to keep hot path cheap
 
@@ -129,7 +138,7 @@ function _matchPackageToFramework(packages, channel, pkgName) {
   return null;
 }
 
-function _extractCsprojIncludes(filePath) {
+function _readBoundedText(filePath) {
   try {
     const stat = fs.statSync(filePath);
     const size = Math.min(stat.size, CSPROJ_READ_CAP);
@@ -137,15 +146,30 @@ function _extractCsprojIncludes(filePath) {
     try {
       const buf = Buffer.alloc(size);
       fs.readSync(fd, buf, 0, size, 0);
-      const text = buf.toString('utf8');
-      const out = [];
-      // Match Include="..." (PackageReference, ProjectReference, Reference)
-      const re = /\bInclude\s*=\s*["']([^"']+)["']/gi;
-      let m;
-      while ((m = re.exec(text)) !== null) out.push(m[1]);
-      return out;
+      return buf.toString('utf8');
     } finally { fs.closeSync(fd); }
-  } catch { return []; }
+  } catch { return ''; }
+}
+
+function _extractCsprojIncludes(filePath) {
+  const text = _readBoundedText(filePath);
+  if (!text) return [];
+  const out = [];
+  // Match Include="..." (PackageReference, ProjectReference, Reference)
+  const re = /\bInclude\s*=\s*["']([^"']+)["']/gi;
+  let m;
+  while ((m = re.exec(text)) !== null) out.push(m[1]);
+  return out;
+}
+
+// Solution files (.sln) reference projects via lines like:
+//   Project("{GUID}") = "Name", "path\Name.csproj", "{GUID}"
+// _extractCsprojIncludes' Include="..." regex misses these, so a separate
+// substring scan covers .sln (also harmlessly catches any matching text in
+// .csproj if a consumer ever calls this on one).
+function _slnReferencesPrefix(filePath, prefix) {
+  const text = _readBoundedText(filePath);
+  return !!(text && text.includes(prefix));
 }
 
 function scanDirForFramework(dir, packages) {
@@ -160,16 +184,46 @@ function scanDirForFramework(dir, packages) {
   // .NET: detect marker, then refine by scanning Include="..." patterns
   // against the configured frameworkPackages.nuget list.
   const dotnetMarkers = fileNames.filter(n => /\.(cs|fs)proj$|\.sln$/i.test(n)).slice(0, 4);
+  const hasCsprojHere = dotnetMarkers.some(n => /\.(cs|fs)proj$/i.test(n));
   if (dotnetMarkers.length > 0) {
+    // Monorepo guard: when the directory has only a .sln (no .csproj/.fsproj
+    // at THIS level) alongside a package.json, defer to the npm side first.
+    // Hybrid TS+.NET workspaces (e.g. UI engines that ship a Blazor host)
+    // would otherwise always classify as .NET despite the .sln being a
+    // build-tooling artifact, not the work surface. The .sln scan still
+    // runs below if the npm side yields no match.
+    const npmFirst = !hasCsprojHere && fileNameSet.has('package.json') && Object.keys(packages).length > 0;
+    if (npmFirst) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(`${dir}/package.json`, 'utf8'));
+        const deps = Object.assign({}, pkg.dependencies || {}, pkg.devDependencies || {}, pkg.peerDependencies || {});
+        for (const depName of Object.keys(deps)) {
+          const matched = _matchPackageToFramework(packages, 'npm', depName);
+          if (matched) return matched;
+        }
+      } catch { /* fall through to .sln scan */ }
+    }
     if (Object.keys(packages).length > 0) {
       for (const m of dotnetMarkers) {
-        const includes = _extractCsprojIncludes(`${dir}/${m}`);
+        const filePath = `${dir}/${m}`;
+        // .csproj/.fsproj: structured Include="..." parsing.
+        const includes = _extractCsprojIncludes(filePath);
         for (const inc of includes) {
           // Strip leading path segments so a ProjectReference like
           //   ..\..\Foo.Bar\Foo.Bar.csproj  is matched against "Foo.Bar"
           const stripped = inc.replace(/^.*[\/\\]/, '');
           const matched = _matchPackageToFramework(packages, 'nuget', stripped);
           if (matched) return matched;
+        }
+        // .sln: fall back to substring scan against configured nuget prefixes,
+        // since Solution files reference projects via Project("{...}") = "Name",
+        // not Include="..." attributes.
+        if (/\.sln$/i.test(m)) {
+          for (const [framework, defs] of Object.entries(packages)) {
+            for (const prefix of (defs.nuget || [])) {
+              if (_slnReferencesPrefix(filePath, prefix)) return framework;
+            }
+          }
         }
       }
     }
@@ -184,7 +238,7 @@ function scanDirForFramework(dir, packages) {
   if (fileNameSet.has('package.json')) {
     try {
       const pkg = JSON.parse(fs.readFileSync(`${dir}/package.json`, 'utf8'));
-      const deps = Object.assign({}, pkg.dependencies || {}, pkg.devDependencies || {});
+      const deps = Object.assign({}, pkg.dependencies || {}, pkg.devDependencies || {}, pkg.peerDependencies || {});
       // Org-configured framework packages take precedence over the built-in
       // generic table — a consumer that happens to also use react still
       // classifies under the org's framework label.
@@ -219,12 +273,37 @@ function detectFrameworkFromProject(filePath, opts) {
   const sig = (opts && opts.frameworkPackages !== undefined)
     ? JSON.stringify(packages) + '::'
     : '';
-  let dir = path.dirname(filePath.replace(/\\/g, '/'));
+  // Accept either a file path or a directory path. stop-extractor.js passes
+  // the session's cwd (a directory) — taking path.dirname() of that walks
+  // one level above the project root and misses package.json/.csproj.
+  const normalized = filePath.replace(/\\/g, '/');
+  let dir;
+  try {
+    dir = fs.statSync(normalized).isDirectory() ? normalized : path.dirname(normalized);
+  } catch {
+    dir = path.dirname(normalized);
+  }
   for (let i = 0; i < 8; i++) {
     if (!dir || dir === '/' || dir === '.' || /^[A-Za-z]:\/?$/.test(dir)) break;
     const key = sig + dir;
     if (FW_CACHE.has(key)) return FW_CACHE.get(key);
-    const fw = scanDirForFramework(dir, packages);
+    let fw = scanDirForFramework(dir, packages);
+    // Descend one level into conventional source dirs when the current level
+    // has no markers. Real-world repos commonly hold the actual project under
+    // src/, apps/, packages/, etc.; without this fallback, a stop-hook that
+    // only knows the repo root would yield no framework hint at all.
+    if (!fw) {
+      try {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        const subdirNames = new Set();
+        for (const e of entries) if (e.isDirectory()) subdirNames.add(e.name);
+        for (const name of _COMMON_SRC_DIRS) {
+          if (!subdirNames.has(name)) continue;
+          const sub = scanDirForFramework(`${dir}/${name}`, packages);
+          if (sub) { fw = sub; break; }
+        }
+      } catch { /* ignore */ }
+    }
     if (fw) {
       if (FW_CACHE.size >= FW_CACHE_MAX) FW_CACHE.clear();
       FW_CACHE.set(key, fw);

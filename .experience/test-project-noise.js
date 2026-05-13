@@ -762,6 +762,105 @@ describe('NOISE-13: org-configured framework-package detection', () => {
       assert.strictEqual(second, 'example-fw', 'cache must serve second call');
     } finally { cleanup(dir); }
   });
+
+  // stop-extractor passes the session cwd (a directory) to enrichSourceMeta;
+  // taking path.dirname() of a directory walks one level above the project
+  // and misses the markers. The detector must accept directories directly.
+  it('directory path: detects framework when path IS the project root', () => {
+    const dir = mkTempProject();
+    try {
+      fs.writeFileSync(path.join(dir, 'Sample.csproj'),
+        '<Project><ItemGroup><PackageReference Include="Example.Framework.X"/></ItemGroup></Project>');
+      enrich._resetCachesForTesting();
+      const fw = enrich.detectFrameworkFromProject(dir, { frameworkPackages: EXAMPLE_PACKAGES });
+      assert.strictEqual(fw, 'example-fw');
+    } finally { cleanup(dir); }
+  });
+
+  // Solution files don't use Include="..."; they list projects via Project("{GUID}") = "Name".
+  // _slnReferencesPrefix scans the raw text for any configured nuget prefix.
+  it('.sln substring scan: matches configured nuget prefix in solution body', () => {
+    const dir = mkTempProject();
+    try {
+      fs.writeFileSync(path.join(dir, 'App.sln'),
+        'Microsoft Visual Studio Solution File, Format Version 12.00\n' +
+        'Project("{FAE04EC0}") = "Example.Framework.Auth", "src\\Example.Framework.Auth\\Example.Framework.Auth.csproj", "{ABC}"\n');
+      enrich._resetCachesForTesting();
+      const fw = enrich.detectFrameworkFromProject(dir, { frameworkPackages: EXAMPLE_PACKAGES });
+      assert.strictEqual(fw, 'example-fw');
+    } finally { cleanup(dir); }
+  });
+
+  // Hybrid monorepo: workspace root with both .sln (build tooling for an
+  // embedded host) and package.json. The TS side is the work surface for
+  // most hook events; npm match must win over the .sln substring fallback.
+  it('hybrid monorepo: npm @scope dep beats .sln nuget match at workspace root', () => {
+    const dir = mkTempProject();
+    try {
+      fs.writeFileSync(path.join(dir, 'App.sln'),
+        'Project("{FAE04EC0}") = "Example.Framework.Host", "host\\Example.Framework.Host.csproj"\n');
+      fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+        name: 'workspace-root',
+        devDependencies: { '@example/ui-kit': '^1.0.0' },
+      }));
+      enrich._resetCachesForTesting();
+      const fw = enrich.detectFrameworkFromProject(dir, {
+        frameworkPackages: {
+          'example-net': { nuget: ['Example.Framework.'] },
+          'example-ui':  { npm:   ['@example/'] },
+        },
+      });
+      assert.strictEqual(fw, 'example-ui',
+        'npm @scope match must take precedence over .sln substring fallback when no .csproj at this level');
+    } finally { cleanup(dir); }
+  });
+
+  // Many repos hold the actual project under src/ or apps/ while the repo
+  // root only has tooling files. A stop-hook that knows only the repo cwd
+  // would yield no framework hint without this fallback.
+  it('descend into src/: framework markers in a conventional source dir', () => {
+    const dir = mkTempProject();
+    try {
+      fs.mkdirSync(path.join(dir, 'src'));
+      fs.writeFileSync(path.join(dir, 'src', 'App.sln'),
+        'Project("{X}") = "Example.Framework.Auth", "Auth\\Example.Framework.Auth.csproj"\n');
+      enrich._resetCachesForTesting();
+      const fw = enrich.detectFrameworkFromProject(dir, { frameworkPackages: EXAMPLE_PACKAGES });
+      assert.strictEqual(fw, 'example-fw');
+    } finally { cleanup(dir); }
+  });
+
+  it('descend into apps/: skips a non-matching subdir and finds the next', () => {
+    const dir = mkTempProject();
+    try {
+      fs.mkdirSync(path.join(dir, 'apps'));
+      fs.writeFileSync(path.join(dir, 'apps', 'package.json'), JSON.stringify({
+        name: 'apps-root',
+        dependencies: { '@angular/core': '^17.0.0' },
+      }));
+      enrich._resetCachesForTesting();
+      const fw = enrich.detectFrameworkFromProject(dir, { frameworkPackages: {} });
+      assert.strictEqual(fw, 'angular', 'angular dep in apps/ subdir should be detected from repo root');
+    } finally { cleanup(dir); }
+  });
+
+  // peerDependencies is the canonical way workspace packages declare org deps
+  // (the actual @scope dep is installed at the workspace root). Detector must
+  // include peerDependencies when looking for the configured npm prefix.
+  it('package.json: peerDependencies @scope dep is honored', () => {
+    const dir = mkTempProject();
+    try {
+      fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+        name: 'workspace-pkg',
+        dependencies: { 'react': '^18.0.0' },
+        peerDependencies: { '@example/core': '>=1.0.0' },
+      }));
+      enrich._resetCachesForTesting();
+      const fw = enrich.detectFrameworkFromProject(dir, { frameworkPackages: EXAMPLE_PACKAGES });
+      assert.strictEqual(fw, 'example-fw',
+        'peerDependencies with configured @scope prefix must beat react');
+    } finally { cleanup(dir); }
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════
