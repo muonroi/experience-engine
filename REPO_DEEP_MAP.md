@@ -96,6 +96,14 @@
 
 ---
 
+## REST API
+
+| Path | Purpose |
+|------|---------|
+| `server.js:handlePilContext` | POST `/api/pil-context`, returns classification + retrieval in one call. 5-min LRU cache (200 entries). Consumed by muonroi-cli L1. |
+
+---
+
 ## What to Read First by Task
 
 | Task | Read first |
