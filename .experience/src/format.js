@@ -17,11 +17,16 @@ function buildStorePayload(id, qa, domain, projectSlug) {
   // one release as a fallback but is no longer the source of truth.
   const scope = (qa.scope && typeof qa.scope === 'object') ? { ...qa.scope } : {};
   if (projectSlug && !scope.project_slug) scope.project_slug = projectSlug;
+  // Preserve legacy contract: scope is null when no constraints were set
+  // (no qa.scope provided AND no projectSlug derivable). applyScopeFilter
+  // treats null as "no gate" so this is semantically equivalent to {}, but
+  // keeps the seed payload compact and matches existing tests.
+  const finalScope = Object.keys(scope).length === 0 ? null : scope;
   return {
     id, trigger: qa.trigger, question: qa.question,
     reasoning: qa.reasoning || [], solution: qa.solution,
     why: qa.why || null,    // v2: root cause / incident motivation
-    scope, // v2: {lang, framework, project_slug, repos, filePattern} — hard filter gate
+    scope: finalScope, // v2: {lang, framework, project_slug, repos, filePattern} — hard filter gate
     failureMode,
     judgment,
     conditions: normalizedConditions,
