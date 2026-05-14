@@ -11,11 +11,17 @@ function buildStorePayload(id, qa, domain, projectSlug) {
   const evidenceClass = normalizeEvidenceClass(qa.evidenceClass, qa);
   const failureMode = normalizeFailureMode(qa.failureMode, qa);
   const judgment = normalizeJudgment(qa.judgment, qa);
+  // P0: merge projectSlug into qa.scope so the query-time filter
+  // (experience-core#applyScopeFilter reads `scope.project_slug`) actually
+  // sees a value. The legacy root-level `_projectSlug` field is kept for
+  // one release as a fallback but is no longer the source of truth.
+  const scope = (qa.scope && typeof qa.scope === 'object') ? { ...qa.scope } : {};
+  if (projectSlug && !scope.project_slug) scope.project_slug = projectSlug;
   return {
     id, trigger: qa.trigger, question: qa.question,
     reasoning: qa.reasoning || [], solution: qa.solution,
     why: qa.why || null,    // v2: root cause / incident motivation
-    scope: qa.scope || null, // v2: {lang, repos, filePattern} — hard filter gate
+    scope, // v2: {lang, framework, project_slug, repos, filePattern} — hard filter gate
     failureMode,
     judgment,
     conditions: normalizedConditions,

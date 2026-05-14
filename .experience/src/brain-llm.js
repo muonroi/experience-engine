@@ -180,18 +180,34 @@ async function extractQA(mistake, opts = {}) {
 
   const prompt = `You are extracting ONE reusable lesson from a coding agent's failure. The summary below has already been pre-labelled.\n\n${summary}\n${ctxBlock}\nReturn JSON only (no markdown). Output a generalized PATTERN, not the literal log line.\n\nMandatory rules:\n- trigger MUST describe the failure PATTERN in the agent's own words. NEVER copy a ToolCall/ToolOutput/Bash line verbatim. NEVER start trigger with a path or filename. Bad: "ToolCall read_text_file: /mnt/d/.../config.json". Good: "config file read returns truncated content when output buffer is small".\n- question briefly names the mistake (one sentence).\n- solution is a concrete preventive action that another session would actually do — not "implement", "review", "debug" alone.\n- failureMode is the underlying class (e.g. "missing_validation", "wrong_lifetime_scope", "race_condition"), not the literal log.\n- why captures the root cause; evidence/symptoms go here, not in trigger.\n- judgment is the portable preventive judgment ("X must Y because Z"), reusable across files.\n- conditions: 2-4 short keywords for retrieval.\n- evidenceClass: one of log | test | runtime | review | user-correction | other.\n- scope.lang must be one of: C# | JavaScript | TypeScript | Python | Go | Rust | Java | Shell | all. Use "all" when the lesson is language-agnostic.\n${frameworkRule}\n- Skip when nothing portable can be extracted:\n  - {"skip":true,"reason":"meta_workflow"} if the excerpt is workflow/scope/lock/deploy plumbing\n  - {"skip":true,"reason":"no_reusable_lesson"} if there is no clear failure pattern\n  - {"skip":true,"reason":"raw_log_only"} if the only signal is a tool call header with no diagnosable cause\n\nReturn exactly:\n{"trigger":"...","question":"...","reasoning":["step1","step2"],"solution":"...","why":"...","failureMode":"...","judgment":"...","conditions":["k1","k2"],"evidenceClass":"log|test|runtime|review|user-correction|other","scope":{"lang":"all","framework":"any","repos":[],"filePattern":"*"}}`;
   const result = await callBrainWithFallback(prompt, { source: 'extract' });
-  // Post-process: if brain forgot to set framework, default to 'any'. If brain
-  // returned an unexpected framework value AND a caller hint was supplied,
-  // narrow it to {'any', callerFw} to prevent the model inventing labels.
-  if (result && !result.skip && result.scope && typeof result.scope === 'object') {
-    if (typeof result.scope.framework !== 'string' || !result.scope.framework.trim()) {
+  // Post-process: hard-set scope fields from caller context where available.
+  // The brain often defaults to "any" / forgets fields entirely, which is the
+  // root cause of cross-language hint leakage seen in production
+  // (e.g. 100% of behavioral entries tagged framework="any" were actually
+  // framework-specific). Caller-derived hints from source-meta-enrich are
+  // authoritative because they come from on-disk markers (.csproj, package.json).
+  if (result && !result.skip) {
+    if (!result.scope || typeof result.scope !== 'object') result.scope = {};
+    // Framework: prefer caller's detected framework. Only keep brain's value
+    // when caller hasn't supplied one (or brain explicitly set "any" and
+    // caller agrees by not providing a framework).
+    if (callerFw) {
+      result.scope.framework = callerFw;
+    } else if (typeof result.scope.framework !== 'string' || !result.scope.framework.trim()) {
       result.scope.framework = 'any';
-    } else if (callerFw) {
-      const fw = result.scope.framework.toLowerCase().trim();
-      if (fw !== 'any' && fw !== callerFw.toLowerCase()) {
-        result.scope.framework = 'any';
-      }
     }
+    // Lang: same logic — caller's filePath-derived lang is more reliable
+    // than the brain's freeform guess.
+    if (callerLang) {
+      result.scope.lang = callerLang;
+    } else if (typeof result.scope.lang !== 'string' || !result.scope.lang.trim()) {
+      result.scope.lang = 'all';
+    }
+    // Project slug: brain is never asked for this; inject from caller so the
+    // query-time project gate (experience-core#applyScopeFilter) has data
+    // to compare against. Without this, project_slug stays null and the gate
+    // is dead code.
+    if (callerSlug) result.scope.project_slug = callerSlug;
   }
   return result;
 }

@@ -414,7 +414,11 @@ async function runStopExtractor(options = {}) {
       const enrichPath = path.join(homeDir, 'source-meta-enrich.js');
       if (fs.existsSync(enrichPath) && projectPath) {
         const enrich = require(enrichPath);
-        const meta = enrich.enrichSourceMeta({ file_path: projectPath });
+        // projectPath is a directory — pass it as the cwd arg so the
+        // enricher runs its cwd-fallback path (tsconfig/package.json/.csproj
+        // markers). The toolInput-based path returns null lang when the
+        // input has no file extension.
+        const meta = enrich.enrichSourceMeta(null, undefined, projectPath);
         if (meta && meta.lang) body.lang = meta.lang;
         if (meta && meta.framework) body.framework = meta.framework;
       }

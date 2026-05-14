@@ -197,6 +197,20 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
         ],
       });
     }
+    // Mirror for project_slug. The flat `scope_project_slug` is written by
+    // buildScopeFlatFields for new entries + entries with legacy _projectSlug
+    // at root. Untagged points still surface (is_empty branch) until backfill
+    // populates them — gate becomes strict once project_slug coverage is high.
+    const callerProjectSlug = sourceMeta && typeof sourceMeta.project_slug === 'string'
+      ? sourceMeta.project_slug.toLowerCase().trim() : null;
+    if (callerProjectSlug) {
+      extra.must.push({
+        should: [
+          { is_empty: { key: 'scope_project_slug' } },
+          { key: 'scope_project_slug', match: { value: callerProjectSlug } },
+        ],
+      });
+    }
     const hasAny = extra.must.length || extra.must_not.length || extra.should.length;
     return hasAny ? extra : undefined;
   })();

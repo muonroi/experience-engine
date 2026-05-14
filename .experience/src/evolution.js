@@ -502,6 +502,41 @@ async function evolve(trigger) {
     }
   }
 
+  // Step 3b: Auto-supersede chronically ignored entries (any tier).
+  //
+  // The demote loop above only fires at ignoreCount>=3, which still surfaces
+  // the entry from selfqa until age-based archival 90 days later. For entries
+  // the agent has rejected en masse (e.g. ignoreRatio ≥ 0.7 over ≥ 5 fires)
+  // we hard-mark `superseded:true` so the format/scoring pipeline skips them
+  // immediately. The entry stays in Qdrant for audit + potential rollback;
+  // it just stops surfacing. computeEffectiveConfidence callers should check
+  // superseded before using the score (done elsewhere); the post-filter in
+  // experience-core also drops superseded points up front.
+  const SUPERSEDE_MIN_IGNORE = 5;
+  const SUPERSEDE_RATIO = 0.7;
+  for (const colName of ['experience-behavioral', 'experience-selfqa']) {
+    const entries = await getAllEntries(colName);
+    for (const entry of entries) {
+      const data = parsePayload(entry);
+      if (!data || data.superseded) continue;
+      const ignores = data.ignoreCount || 0;
+      const hits = data.hitCount || 0;
+      const total = ignores + hits;
+      if (ignores < SUPERSEDE_MIN_IGNORE) continue;
+      if (total === 0) continue;
+      const ratio = ignores / total;
+      if (ratio < SUPERSEDE_RATIO) continue;
+      data.superseded = true;
+      data.supersededAt = new Date().toISOString();
+      data.supersededReason = `auto-decay ignores=${ignores} ratio=${ratio.toFixed(2)}`;
+      const vector = entry.vector || await getEmbedding(`${data.trigger} ${data.solution}`);
+      if (!vector) continue;
+      await upsertEntry(colName, entry.id, vector, data);
+      results.archived++;
+      activityLog({ op: 'evolve-auto-supersede', id: String(entry.id).slice(0, 8), ignores, ratio: ratio.toFixed(2) });
+    }
+  }
+
   // Step 4: Archive stale T2 (per D-07)
   const now = Date.now();
   const NINETY_DAYS = 90 * 24 * 60 * 60 * 1000;
@@ -686,6 +721,11 @@ function buildScopeFlatFields(data) {
   if (data?.scope?.org) flat.scope_org = String(data.scope.org).toLowerCase();
   if (data?.scope?.lang) flat.scope_lang = String(data.scope.lang).toLowerCase();
   if (data?.scope?.framework) flat.scope_framework = String(data.scope.framework).toLowerCase();
+  // Flatten project_slug so Qdrant can pre-filter at query time. Read from
+  // both scope.project_slug (new) and _projectSlug (legacy root location)
+  // so existing entries surface correctly until backfill completes.
+  const slug = data?.scope?.project_slug || data?.scope?.projectSlug || data?._projectSlug;
+  if (slug) flat.scope_project_slug = String(slug).toLowerCase();
   if (data?.evidenceClass) flat.evidenceClass = String(data.evidenceClass).toLowerCase();
   return flat;
 }
