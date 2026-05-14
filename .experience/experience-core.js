@@ -217,7 +217,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   // generic — kept permissive.
   const STRICT_SCOPE_COLLECTIONS = new Set(['experience-behavioral', 'experience-selfqa']);
 
-  function applyScopeFilter(points) {
+  function applyScopeFilter(points, collectionName) {
     const callerLang = sourceMeta && typeof sourceMeta.lang === 'string'
       ? sourceMeta.lang.toLowerCase().trim() : null;
     const callerProjectSlug = sourceMeta && typeof sourceMeta.project_slug === 'string'
@@ -277,11 +277,10 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     // (MControllerBase, IAuthenticateInfoContext, etc.) into unrelated projects
     // that simply share the same Qdrant brain.
     const globalScopeOptIn = orgCfg && orgCfg.globalScope === true;
+    const isStrict = STRICT_SCOPE_COLLECTIONS.has(collectionName || '');
     return points.filter(p => {
       try {
         const exp = JSON.parse(p.payload?.json || '{}');
-        const collectionName = p._collection || '';
-        const isStrict = STRICT_SCOPE_COLLECTIONS.has(collectionName);
         const pointOrg = exp.scope?.org ? String(exp.scope.org).toLowerCase() : '';
         if (pointOrg && !orgName && !globalScopeOptIn) return false;
         // Org-stack gate: org-tagged knowledge only applies inside the configured org's repos.
@@ -317,9 +316,9 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     });
   }
 
-  let r0 = _utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t0), queryDomain, queryProjectSlug, query), COLLECTIONS[0].name);
-  let r1 = _utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t1), queryDomain, queryProjectSlug, query), COLLECTIONS[1].name);
-  let r2 = _scoring.selectProbationaryT2Points(_utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t2), queryDomain, queryProjectSlug, query), COLLECTIONS[2].name));
+  let r0 = _utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t0, COLLECTIONS[0].name), queryDomain, queryProjectSlug, query), COLLECTIONS[0].name);
+  let r1 = _utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t1, COLLECTIONS[1].name), queryDomain, queryProjectSlug, query), COLLECTIONS[1].name);
+  let r2 = _scoring.selectProbationaryT2Points(_utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t2, COLLECTIONS[2].name), queryDomain, queryProjectSlug, query), COLLECTIONS[2].name));
 
   let promptPrecisionRemoved = 0;
   if (_intercept.isPromptHookPrecisionGate(toolName, sourceMeta)) {
