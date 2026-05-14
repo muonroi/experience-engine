@@ -341,6 +341,33 @@ const _FW_DEFAULT_LANG = {
   vue: 'TypeScript', svelte: 'TypeScript', electron: 'TypeScript',
 };
 
+// Walk up from cwd to find a git repo root and return a project-identifying
+// slug — preferring the remote origin repo name (stable across clones) and
+// falling back to the directory name. Used to gate cross-repo hint leakage:
+// a hint extracted from project "muonroi-control-plane" should not surface
+// inside "muonroi-cli" even if both are same-lang.
+function detectProjectSlug(cwd) {
+  if (!cwd || typeof cwd !== 'string') return null;
+  let dir = cwd.replace(/\\/g, '/');
+  for (let i = 0; i < 8; i++) {
+    if (!dir || dir === '/' || dir === '.' || /^[A-Za-z]:\/?$/.test(dir)) break;
+    const gitConfig = path.join(dir, '.git', 'config');
+    if (fs.existsSync(gitConfig)) {
+      try {
+        const text = fs.readFileSync(gitConfig, 'utf8');
+        // Match `url = git@github.com:org/repo.git` or `url = https://github.com/org/repo`.
+        const m = text.match(/url\s*=\s*[^\n]*?[\/:]([\w.-]+?)(\.git)?\s*$/mi);
+        if (m && m[1]) return m[1].toLowerCase();
+      } catch {}
+      return path.basename(dir).toLowerCase();
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
 // Direct cwd → lang detection for the case where framework is unknown but
 // the repo has language-specific markers. tsconfig.json wins over
 // package.json so plain JS projects don't get misclassified as TS.
@@ -368,6 +395,12 @@ function enrichSourceMeta(toolInput, opts, cwd) {
     const framework = detectFrameworkFromProject(filePath, opts);
     if (lang) out.lang = lang;
     if (framework) out.framework = framework;
+    // Project slug is repo-scoped, derive from cwd (filePath alone is
+    // ambiguous — could be anywhere on disk).
+    if (cwd) {
+      const slug = detectProjectSlug(cwd);
+      if (slug) out.project_slug = slug;
+    }
     return out;
   }
   // CWD fallback: Bash/shell commands and UserPromptSubmit have no file_path.
@@ -377,8 +410,10 @@ function enrichSourceMeta(toolInput, opts, cwd) {
   if (cwd && typeof cwd === 'string') {
     const framework = detectFrameworkFromProject(cwd, opts);
     const lang = detectLangFromCwd(cwd) || (framework ? _FW_DEFAULT_LANG[framework] : null) || null;
+    const slug = detectProjectSlug(cwd);
     if (lang) out.lang = lang;
     if (framework) out.framework = framework;
+    if (slug) out.project_slug = slug;
   }
   return out;
 }
@@ -389,4 +424,4 @@ function _resetCachesForTesting() {
   _configCache = null;
 }
 
-module.exports = { enrichSourceMeta, detectContext, detectFrameworkFromProject, _resetCachesForTesting };
+module.exports = { enrichSourceMeta, detectContext, detectFrameworkFromProject, detectProjectSlug, _resetCachesForTesting };
