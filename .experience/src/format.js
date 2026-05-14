@@ -67,8 +67,12 @@ function formatPoints(points) {
     const pid = String(point.id).slice(0, 8);
     const coll = point._collection || 'experience-behavioral';
     line += `\n   [id:${pid} col:${coll}]`;
-    // v3: inline feedback — agent reports noisy/wrong hints
-    line += `\n   ↩ Wrong? POST /api/feedback {"pointId":"${pid}","collection":"${coll}","verdict":"IRRELEVANT","reason":"wrong_repo"}`;
+    // v3: inline feedback — agent reports noisy/wrong hints via the local
+    // exp-feedback helper. The helper reads serverBaseUrl + auth token from
+    // ~/.experience/config.json so the same line works on thin clients
+    // (raw `POST /api/feedback` defaulted to localhost:8082 which is unreachable
+    // when the engine runs on a remote VPS).
+    line += `\n   ↩ Wrong? node ~/.experience/exp-feedback.js noise ${pid} ${coll} wrong_repo`;
     lines.push(line);
   }
   return lines;
