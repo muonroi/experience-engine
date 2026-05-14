@@ -410,6 +410,7 @@ async function handleIntercept(req, res) {
     // into TS/React repos.
     lang: typeof body.lang === 'string' ? body.lang : null,
     framework: typeof body.framework === 'string' ? body.framework : null,
+    project_slug: typeof body.project_slug === 'string' ? body.project_slug : null,
   };
   // skipRoute=true lets latency-sensitive callers (e.g. CLI hook fast-path)
   // bypass the model-routing side-effect of intercept and only get suggestions.
@@ -464,6 +465,7 @@ async function handlePostTool(req, res) {
     cwd: body.cwd || null,
     lang: typeof body.lang === 'string' ? body.lang : null,
     framework: typeof body.framework === 'string' ? body.framework : null,
+    project_slug: typeof body.project_slug === 'string' ? body.project_slug : null,
   };
 
   let reconcile = { touched: [], pending: [], implicitUnused: [], expired: [] };

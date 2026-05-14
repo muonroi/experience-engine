@@ -208,9 +208,20 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     routePromise,
   ]);
 
+  // Collections whose seeds are language/framework-specific. For these we
+  // enforce strict scope: unscoped hints, mismatched lang, mismatched
+  // framework, or mismatched project_slug all get dropped. Without this,
+  // 92% C# behavioral seeds (1337/1442) leaked into non-C# repos because
+  // the legacy filter's `is_empty` pass let unscoped seeds + framework=any
+  // surface for any caller. `experience-principles` is intentionally
+  // generic — kept permissive.
+  const STRICT_SCOPE_COLLECTIONS = new Set(['experience-behavioral', 'experience-selfqa']);
+
   function applyScopeFilter(points) {
     const callerLang = sourceMeta && typeof sourceMeta.lang === 'string'
       ? sourceMeta.lang.toLowerCase().trim() : null;
+    const callerProjectSlug = sourceMeta && typeof sourceMeta.project_slug === 'string'
+      ? sourceMeta.project_slug.toLowerCase().trim() : null;
     // Bail entirely only when neither filePath nor callerLang is known —
     // otherwise foreign-language hints leak through for Bash/UserPromptSubmit
     // hooks (no filePath) and the Qdrant pre-filter cannot help because
@@ -269,6 +280,8 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     return points.filter(p => {
       try {
         const exp = JSON.parse(p.payload?.json || '{}');
+        const collectionName = p._collection || '';
+        const isStrict = STRICT_SCOPE_COLLECTIONS.has(collectionName);
         const pointOrg = exp.scope?.org ? String(exp.scope.org).toLowerCase() : '';
         if (pointOrg && !orgName && !globalScopeOptIn) return false;
         // Org-stack gate: org-tagged knowledge only applies inside the configured org's repos.
@@ -281,7 +294,24 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
           const hintFw = String(exp.scope.framework).toLowerCase().trim();
           if (hintFw && hintFw !== 'any' && hintFw !== callerFramework) return false;
         }
-        if (!exp.scope?.lang) return true;
+        // Project gate: when both sides carry a project_slug AND they differ,
+        // drop. Catches cross-repo leakage even when lang/framework agree
+        // (e.g., two TypeScript Muonroi repos with different patterns).
+        const pointProjectSlug = exp.scope?.project_slug || exp.scope?.projectSlug || null;
+        if (callerProjectSlug && pointProjectSlug) {
+          const hintSlug = String(pointProjectSlug).toLowerCase().trim();
+          if (hintSlug && hintSlug !== callerProjectSlug) return false;
+        }
+        // Lang gate. In STRICT collections (behavioral, selfqa) we require
+        // an explicit lang scope: unscoped seeds in those collections are
+        // legacy/cross-context bleed (1337/1442 behavioral seeds are C#,
+        // unscoped seeds are statistically near-certain wrong_repo). In
+        // permissive collections (principles) unscoped passes — they are
+        // intentional cross-cutting principles.
+        if (!exp.scope?.lang) {
+          if (isStrict && callerLang) return false;
+          return true;
+        }
         return fileMatchesLang(exp.scope.lang);
       } catch { return true; }
     });
