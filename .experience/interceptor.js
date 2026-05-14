@@ -168,7 +168,13 @@ function _markHintsDelivered(session, fingerprint, hintIds) {
 function emitPreToolUseGuidance(data, tool, additionalContext = '', extras) {
   const isGemini = !!(process.env.GEMINI_SESSION_ID || process.env.GEMINI_PROJECT_DIR)
     || /^(run_shell_command|write_file|edit_file|replace_in_file)$/.test(tool || '');
-  const isCodex = !isGemini && isCodexHookInvocation(data, tool);
+  // Claude Code sets CLAUDE_PROJECT_DIR in hook subprocess env. Detect it
+  // FIRST — previously isCodexHookInvocation() matched on hook_event_name
+  // alone, which Claude Code ALSO sets ("PreToolUse"), so every Claude hook
+  // was misrouted to the Codex `{systemMessage}` branch (which Claude does
+  // not read). That's why no hint ever reached the agent before this fix.
+  const isClaude = !isGemini && !!(process.env.CLAUDE_PROJECT_DIR || process.env.CLAUDE_CODE_SESSION_ID);
+  const isCodex = !isGemini && !isClaude && isCodexHookInvocation(data, tool);
   if (isGemini) {
     if (additionalContext) process.stdout.write(additionalContext);
     return;
