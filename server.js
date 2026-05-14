@@ -404,6 +404,12 @@ async function handleIntercept(req, res) {
     sourceRuntime: body.sourceRuntime || 'api',
     sourceSession: body.sourceSession || null,
     cwd: body.cwd || null,
+    // Forward caller-side scope hints (set by interceptor.js source-meta-enrich)
+    // so applyScopeFilter() in experience-core.js can gate cross-language/framework
+    // hints. Without these the server discards client scope and .NET seeds leak
+    // into TS/React repos.
+    lang: typeof body.lang === 'string' ? body.lang : null,
+    framework: typeof body.framework === 'string' ? body.framework : null,
   };
   // skipRoute=true lets latency-sensitive callers (e.g. CLI hook fast-path)
   // bypass the model-routing side-effect of intercept and only get suggestions.
@@ -456,6 +462,8 @@ async function handlePostTool(req, res) {
     sourceRuntime: body.sourceRuntime || 'api',
     sourceSession: body.sourceSession || null,
     cwd: body.cwd || null,
+    lang: typeof body.lang === 'string' ? body.lang : null,
+    framework: typeof body.framework === 'string' ? body.framework : null,
   };
 
   let reconcile = { touched: [], pending: [], implicitUnused: [], expired: [] };
