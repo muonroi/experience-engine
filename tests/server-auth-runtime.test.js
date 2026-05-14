@@ -261,6 +261,7 @@ test('POST /api/extract forwards source metadata to core extraction', async () =
       sourceSession: 'session-extract-1',
       framework: null,
       lang: null,
+      project_slug: null,
     });
     return 1;
   };
