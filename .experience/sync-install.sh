@@ -62,6 +62,7 @@ copy_file "$SRC_DIR/health-check.sh" "health-check.sh"
 copy_file "$SRC_DIR/interceptor-post.js" "interceptor-post.js"
 copy_file "$SRC_DIR/interceptor-prompt.js" "interceptor-prompt.js"
 copy_file "$SRC_DIR/interceptor.js" "interceptor.js"
+copy_file "$SRC_DIR/register-hooks.js" "register-hooks.js"
 copy_file "$SRC_DIR/judge-worker.js" "judge-worker.js"
 copy_file "$SRC_DIR/remote-client.js" "remote-client.js"
 copy_file "$SRC_DIR/source-meta-enrich.js" "source-meta-enrich.js"
@@ -101,6 +102,29 @@ if [ -f "$TARGET_DIR/config.json" ] && [ "$INSTALL_COMMIT" != "unknown" ]; then
     fs.renameSync(tmp, target);
   ' "$TARGET_DIR/config.json" "$INSTALL_COMMIT" "$INSTALL_COMMIT_DATE"
   log "Stamped installCommit=$INSTALL_COMMIT"
+fi
+
+# Re-apply agent hook registration in 'existing-only' mode so upgrades pick up
+# new hook entries (e.g., Claude UserPromptSubmit, needed to work around
+# anthropics/claude-code#19432) without auto-wiring agents the user never
+# opted in to during initial setup. Idempotent: skips any (matcher, command)
+# already present.
+to_fwd() {
+  echo "$1" | sed 's|\\|/|g' | sed 's|^/\([a-zA-Z]\)/|\1:/|'
+}
+INTERCEPTOR_FWD=$(to_fwd "$TARGET_DIR/interceptor.js")
+INTERCEPTOR_POST_FWD=$(to_fwd "$TARGET_DIR/interceptor-post.js")
+INTERCEPTOR_PROMPT_FWD=$(to_fwd "$TARGET_DIR/interceptor-prompt.js")
+STOP_FWD=$(to_fwd "$TARGET_DIR/stop-extractor.js")
+
+if [ -f "$TARGET_DIR/register-hooks.js" ]; then
+  log "Re-applying agent hook registration (existing-only)..."
+  EXP_INTERCEPTOR="$INTERCEPTOR_FWD" \
+    EXP_INTERCEPTOR_POST="$INTERCEPTOR_POST_FWD" \
+    EXP_INTERCEPTOR_PROMPT="$INTERCEPTOR_PROMPT_FWD" \
+    EXP_STOP="$STOP_FWD" \
+    EXP_REGISTER_MODE="existing-only" \
+    node "$TARGET_DIR/register-hooks.js" || log "  (non-fatal: register-hooks failed)"
 fi
 
 log "Runtime sync complete: $TARGET_DIR"
