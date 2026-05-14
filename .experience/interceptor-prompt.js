@@ -263,16 +263,35 @@ function suppressHookOutput() {
   };
 }
 
+// Load enricher from install dir, with fallback to repo-local for tests.
+function _loadEnricher() {
+  try { return require(path.join(os.homedir(), '.experience', 'source-meta-enrich.js')); }
+  catch {
+    try { return require(path.join(__dirname, 'source-meta-enrich.js')); }
+    catch { return null; }
+  }
+}
+const _promptEnricher = _loadEnricher();
+
 function buildSourceMeta(data, _toolInput) {
-  // UserPromptSubmit has no toolInput — lang/framework remain undefined and
-  // downstream Qdrant filters pass through (same as before this change).
-  // Signature accepts _toolInput for API parity with the Edit/Write/Bash
-  // interceptors so callers don't need a special case.
-  return {
+  // UserPromptSubmit has no toolInput. Cwd-based enrichment derives
+  // lang/framework from the session's working directory so the Qdrant scope
+  // filter has something to gate on — without this, prompt-hook intercepts
+  // are repo-agnostic and surface cross-language hints (e.g., .NET seeds
+  // inside a TS CLI repo).
+  const meta = {
     sourceKind: 'codex-hook',
     sourceRuntime: process.env.WSL_DISTRO_NAME ? 'codex-wsl' : 'codex-windows',
     sourceSession: data?.session_id || process.env.CODEX_SESSION_ID || null,
   };
+  if (_promptEnricher) {
+    try {
+      const cwd = data?.cwd || process.cwd();
+      Object.assign(meta, _promptEnricher.enrichSourceMeta({}, undefined, cwd));
+    }
+    catch { /* swallow */ }
+  }
+  return meta;
 }
 
 // Skip trivial prompts — greetings, single words, very short

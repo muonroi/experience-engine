@@ -84,7 +84,10 @@ function buildSourceMeta(data, toolInput) {
     sourceSession: data?.session_id || process.env.CODEX_SESSION_ID || null,
   };
   if (_enricher) {
-    try { Object.assign(meta, _enricher.enrichSourceMeta(toolInput)); }
+    try {
+      const cwd = data?.cwd || process.cwd();
+      Object.assign(meta, _enricher.enrichSourceMeta(toolInput, undefined, cwd));
+    }
     catch { /* swallow */ }
   }
   return meta;

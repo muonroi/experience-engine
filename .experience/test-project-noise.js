@@ -4,6 +4,9 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
 
 const {
   _computeEffectiveScore: computeEffectiveScore,
@@ -491,6 +494,50 @@ describe('NOISE-10: caller-side language and framework detection', () => {
     assert.deepStrictEqual(enrich.enrichSourceMeta(null), {});
     assert.deepStrictEqual(enrich.enrichSourceMeta(undefined), {});
     assert.deepStrictEqual(enrich.enrichSourceMeta({}), {});
+  });
+
+  it('enrichSourceMeta cwd fallback derives lang+framework when toolInput has no file_path (Bash hooks)', () => {
+    // Simulate a TS-CLI repo: tsconfig.json + package.json with a known dep.
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'enrich-cwd-'));
+    try {
+      fs.writeFileSync(path.join(tmpRoot, 'tsconfig.json'), '{}');
+      fs.writeFileSync(
+        path.join(tmpRoot, 'package.json'),
+        JSON.stringify({ dependencies: { react: '^18.0.0' } })
+      );
+      enrich._resetCachesForTesting();
+      const out = enrich.enrichSourceMeta({ command: 'git status' }, undefined, tmpRoot);
+      assert.strictEqual(out.lang, 'TypeScript');
+      assert.strictEqual(out.framework, 'react');
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('enrichSourceMeta cwd fallback derives c#+dotnet for .NET repos (Bash hooks)', () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'enrich-cwd-cs-'));
+    try {
+      fs.writeFileSync(path.join(tmpRoot, 'Foo.csproj'), '<Project></Project>');
+      enrich._resetCachesForTesting();
+      const out = enrich.enrichSourceMeta({ command: 'dotnet build' }, undefined, tmpRoot);
+      assert.strictEqual(out.lang, 'C#');
+      assert.strictEqual(out.framework, 'dotnet');
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('enrichSourceMeta toolInput.file_path takes precedence over cwd', () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'enrich-cwd-mixed-'));
+    try {
+      fs.writeFileSync(path.join(tmpRoot, 'Foo.csproj'), '<Project></Project>');
+      enrich._resetCachesForTesting();
+      // file_path is .ts inside a (different) location — file path wins.
+      const out = enrich.enrichSourceMeta({ file_path: 'D:/Personal/Core/muonroi-cli/src/app.ts' }, undefined, tmpRoot);
+      assert.strictEqual(out.lang, 'TypeScript');
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
   });
 });
 

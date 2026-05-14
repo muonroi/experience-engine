@@ -71,8 +71,14 @@ function buildSourceMeta(data, toolInput) {
   };
   // Caller-side language/framework enrichment. Best-effort: a missing
   // enricher or any throw inside leaves the filter pass-through (status quo).
+  // Pass cwd so Bash hooks (no file_path) still get scope hints from the
+  // surrounding repo manifest — otherwise the Qdrant scope filter is skipped
+  // entirely and cross-language hints bleed into the top-K.
   if (_enricher) {
-    try { Object.assign(meta, _enricher.enrichSourceMeta(toolInput)); }
+    try {
+      const cwd = data?.cwd || process.cwd();
+      Object.assign(meta, _enricher.enrichSourceMeta(toolInput, undefined, cwd));
+    }
     catch { /* swallow */ }
   }
   return meta;
