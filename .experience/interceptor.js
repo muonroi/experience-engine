@@ -96,7 +96,76 @@ function isCodexHookInvocation(data, tool) {
   return false;
 }
 
-function emitPreToolUseGuidance(data, tool, additionalContext = '') {
+// Tools that mutate state and benefit from forced hint delivery. Claude Code
+// silently drops `additionalContext` for PreToolUse (anthropics/claude-code#19432),
+// so for write tools we fall back to `permissionDecision: "deny"` whose
+// `permissionDecisionReason` IS surfaced to the agent as a tool error. Agent
+// reads, adjusts, retries; subsequent retries on the same (tool, args, hintIds)
+// pass through to avoid an infinite block.
+const MUTATING_TOOLS = /^(Edit|Write|MultiEdit|NotebookEdit|Bash|shell|execute_command|replace.*|write_file|edit_file)$/i;
+
+const DELIVERED_STATE_PATH = path.join(os.homedir(), '.experience', 'tmp', 'delivered-hints.json');
+const DELIVERED_STATE_TTL_MS = 24 * 60 * 60 * 1000; // prune entries older than 24h
+
+function _loadDelivered() {
+  try { return JSON.parse(fs.readFileSync(DELIVERED_STATE_PATH, 'utf8')) || {}; }
+  catch { return {}; }
+}
+
+function _saveDelivered(state) {
+  try {
+    fs.mkdirSync(path.dirname(DELIVERED_STATE_PATH), { recursive: true });
+    const tmp = DELIVERED_STATE_PATH + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(state));
+    fs.renameSync(tmp, DELIVERED_STATE_PATH);
+  } catch { /* best-effort */ }
+}
+
+function _pruneDelivered(state) {
+  const cutoff = Date.now() - DELIVERED_STATE_TTL_MS;
+  for (const key of Object.keys(state)) {
+    if (!state[key] || typeof state[key].ts !== 'number' || state[key].ts < cutoff) {
+      delete state[key];
+    }
+  }
+  return state;
+}
+
+function _argsFingerprint(tool, toolInput) {
+  // Stable short hash of the tool + canonical args so retry-with-same-args
+  // can be detected. Use file_path for edits, command for shells, fall back
+  // to JSON of all keys for unknown tools.
+  const crypto = require('crypto');
+  const canonical = (() => {
+    if (!toolInput || typeof toolInput !== 'object') return String(toolInput || '');
+    if (toolInput.file_path) return `file:${toolInput.file_path}`;
+    if (toolInput.path) return `path:${toolInput.path}`;
+    if (toolInput.command) return `cmd:${toolInput.command}`;
+    if (toolInput.cmd) return `cmd:${toolInput.cmd}`;
+    try { return JSON.stringify(toolInput); } catch { return ''; }
+  })();
+  return crypto.createHash('sha1').update(`${tool}\x00${canonical}`).digest('hex').slice(0, 12);
+}
+
+function _filterUndeliveredHints(session, fingerprint, hintIds) {
+  if (!hintIds || hintIds.length === 0) return [];
+  const state = _pruneDelivered(_loadDelivered());
+  const key = `${session}:${fingerprint}`;
+  const delivered = new Set((state[key] && state[key].ids) || []);
+  return hintIds.filter(id => !delivered.has(id));
+}
+
+function _markHintsDelivered(session, fingerprint, hintIds) {
+  if (!hintIds || hintIds.length === 0) return;
+  const state = _pruneDelivered(_loadDelivered());
+  const key = `${session}:${fingerprint}`;
+  const existing = new Set((state[key] && state[key].ids) || []);
+  for (const id of hintIds) existing.add(id);
+  state[key] = { ts: Date.now(), ids: [...existing] };
+  _saveDelivered(state);
+}
+
+function emitPreToolUseGuidance(data, tool, additionalContext = '', extras) {
   const isGemini = !!(process.env.GEMINI_SESSION_ID || process.env.GEMINI_PROJECT_DIR)
     || /^(run_shell_command|write_file|edit_file|replace_in_file)$/.test(tool || '');
   const isCodex = !isGemini && isCodexHookInvocation(data, tool);
@@ -113,6 +182,41 @@ function emitPreToolUseGuidance(data, tool, additionalContext = '') {
   }
 
   if (!additionalContext) return;
+
+  // Claude path. additionalContext is silently dropped for PreToolUse in
+  // Claude Code v2.1.x (issue #19432). Force-deliver for mutating tools via
+  // permissionDecision="deny" — the reason field IS surfaced to the agent.
+  const toolInput = extras?.toolInput || data?.tool_input || data?.input || {};
+  const surfacedIds = (extras?.surfacedIds || []).map(s => String(s.id || '')).filter(Boolean);
+  const forceDeliver = process.env.EXPERIENCE_FORCE_PRETOOL_HINT !== '0'
+    && MUTATING_TOOLS.test(tool || '')
+    && surfacedIds.length > 0;
+
+  if (forceDeliver) {
+    const session = data?.session_id || data?.tool_use_id || data?.turn_id || 'default';
+    const fingerprint = _argsFingerprint(tool, toolInput);
+    const undelivered = _filterUndeliveredHints(session, fingerprint, surfacedIds);
+    if (undelivered.length > 0) {
+      _markHintsDelivered(session, fingerprint, undelivered);
+      const reason =
+        '⚠️ Past-experience guidance for this tool call (forced via PreToolUse — ' +
+        'Claude Code v2.1.x drops `additionalContext`, so this is delivered as a ' +
+        'deny reason instead). Read, decide whether it applies, then retry the tool ' +
+        'call. The same hints will NOT block this same operation again in this session.\n\n' +
+        additionalContext;
+      process.stdout.write(JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: reason,
+        }
+      }));
+      return;
+    }
+    // All hints already delivered this session for this exact tool+args —
+    // fall through to passive allow so retry proceeds.
+  }
+
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
@@ -340,7 +444,7 @@ process.stdin.on('end', async () => {
       outputText = outputText ? outputText + '\n---\n' + routeLine : routeLine;
     }
 
-    emitPreToolUseGuidance(data, tool, outputText);
+    emitPreToolUseGuidance(data, tool, outputText, { toolInput, surfacedIds });
   } catch (error) {
     try {
       if (typeof mute?.restore === 'function') mute.restore();

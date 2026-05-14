@@ -209,11 +209,24 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   ]);
 
   function applyScopeFilter(points) {
-    if (!filePath) return points;
-    const fileExt = filePath.replace(/\\/g, '/').split('.').pop()?.toLowerCase() || '';
+    const callerLang = sourceMeta && typeof sourceMeta.lang === 'string'
+      ? sourceMeta.lang.toLowerCase().trim() : null;
+    // Bail entirely only when neither filePath nor callerLang is known —
+    // otherwise foreign-language hints leak through for Bash/UserPromptSubmit
+    // hooks (no filePath) and the Qdrant pre-filter cannot help because
+    // scope_lang is stored nested inside payload.json, not as a flat key.
+    if (!filePath && !callerLang) return points;
+    const fileExt = filePath ? (filePath.replace(/\\/g, '/').split('.').pop()?.toLowerCase() || '') : '';
     const JS_FAMILY = new Set(['ts', 'tsx', 'js', 'jsx']);
     const CSS_FAMILY = new Set(['css', 'scss', 'less', 'sass']);
     const CS_FAMILY = new Set(['cs', 'fs']);
+    const LANG_ALIAS = {
+      csharp: 'c#', 'c-sharp': 'c#', dotnet: 'c#', '.net': 'c#',
+      fsharp: 'f#',
+      ts: 'typescript', tsx: 'typescript',
+      js: 'javascript', jsx: 'javascript', nodejs: 'javascript', node: 'javascript',
+    };
+    const callerLangNorm = callerLang ? (LANG_ALIAS[callerLang] || callerLang) : null;
     function fileMatchesLang(scopeLang) {
       if (!scopeLang) return true;
       // Comma-joined seeds (legacy data) → match if ANY token matches.
@@ -222,18 +235,21 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
       const tokens = raw.split(/[,/|]/).map(t => t.trim()).filter(Boolean);
       if (tokens.length > 1) return tokens.some(t => fileMatchesLang(t));
       let sl = tokens[0] || raw;
-      const ALIAS = {
-        csharp: 'c#', 'c-sharp': 'c#', dotnet: 'c#', '.net': 'c#',
-        fsharp: 'f#',
-        ts: 'typescript', tsx: 'typescript',
-        js: 'javascript', jsx: 'javascript', nodejs: 'javascript', node: 'javascript',
-      };
-      if (ALIAS[sl]) sl = ALIAS[sl];
+      if (LANG_ALIAS[sl]) sl = LANG_ALIAS[sl];
+      // Caller-supplied lang takes precedence when no file extension is
+      // available (Bash/UserPromptSubmit hooks). Direct string compare —
+      // both sides already aliased.
+      if (!filePath && callerLangNorm) {
+        return sl === callerLangNorm;
+      }
       if (sl === 'c#') return CS_FAMILY.has(fileExt);
       if (sl === 'javascript' || sl === 'typescript') return JS_FAMILY.has(fileExt);
       if (sl === 'css') return CSS_FAMILY.has(fileExt);
-      const detected = (_utils.detectContext(filePath) || '').toLowerCase();
-      return detected === sl || detected.startsWith(sl);
+      if (filePath) {
+        const detected = (_utils.detectContext(filePath) || '').toLowerCase();
+        return detected === sl || detected.startsWith(sl);
+      }
+      return true;
     }
     const orgCfg = _config.getConfig().org;
     const orgName = orgCfg && typeof orgCfg.name === 'string' ? orgCfg.name.trim().toLowerCase() : '';
