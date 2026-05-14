@@ -341,6 +341,63 @@ const _FW_DEFAULT_LANG = {
   vue: 'TypeScript', svelte: 'TypeScript', electron: 'TypeScript',
 };
 
+// Lang compatibility groups. A framework's "expected family" must include
+// the caller's lang for the framework tag to be trusted. Otherwise we drop
+// the framework label so the post-filter and pre-filter fall back to
+// pass-through (is_empty/any), avoiding the failure mode where a TS file in
+// a hybrid TS+.NET monorepo gets tagged with a dotnet framework and the
+// query filter then drops all TS-specific hints.
+const _LANG_FAMILY_DOTNET = new Set(['c#', 'f#', 'csharp', 'fsharp', 'dotnet', '.net']);
+const _LANG_FAMILY_JS = new Set(['typescript', 'javascript', 'ts', 'tsx', 'js', 'jsx', 'nodejs', 'node']);
+
+// Infer which lang family a framework belongs to. Resolution order:
+//   1. Built-in _FW_DEFAULT_LANG → use mapped lang directly.
+//   2. Org config: if framework appears in config.org.frameworkPackages,
+//      check which channel (nuget vs npm) it uses; nuget → dotnet, npm → js.
+//   3. Unknown → return null (caller treats as "compatible with anything"
+//      and keeps the framework tag, preserving current behavior for labels
+//      we have no data on).
+function _inferFrameworkFamily(framework) {
+  if (!framework) return null;
+  const fw = String(framework).toLowerCase().trim();
+  if (_FW_DEFAULT_LANG[fw]) {
+    const lang = _FW_DEFAULT_LANG[fw].toLowerCase();
+    if (_LANG_FAMILY_DOTNET.has(lang)) return 'dotnet';
+    if (_LANG_FAMILY_JS.has(lang)) return 'js';
+  }
+  const cfg = _loadConfig();
+  const packages = _normalizeFrameworkPackages(cfg && cfg.org && cfg.org.frameworkPackages);
+  const entry = packages[fw] || packages[framework];
+  if (entry) {
+    if (Array.isArray(entry.nuget) && entry.nuget.length) return 'dotnet';
+    if (Array.isArray(entry.npm) && entry.npm.length) return 'js';
+  }
+  return null;
+}
+
+function _langInFamily(lang, family) {
+  if (!lang || !family) return true; // unknown → don't gate
+  const l = String(lang).toLowerCase().trim();
+  if (family === 'dotnet') return _LANG_FAMILY_DOTNET.has(l);
+  if (family === 'js') return _LANG_FAMILY_JS.has(l);
+  return true;
+}
+
+// Drop framework when it disagrees with caller lang. Common case: editing a
+// .ts file inside a dir that also has a .csproj — scanDirForFramework hits
+// the .csproj path first and returns a dotnet-family framework, but the
+// actual code is TypeScript. Without this guard the query-time pre-filter
+// would gate to dotnet-only hints and lose TS-specific guidance.
+function _reconcileLangFramework(out) {
+  if (!out || !out.lang || !out.framework) return out;
+  const family = _inferFrameworkFamily(out.framework);
+  if (!family) return out; // unknown framework → trust the original tag
+  if (!_langInFamily(out.lang, family)) {
+    delete out.framework;
+  }
+  return out;
+}
+
 // Walk up from cwd to find a git repo root and return a project-identifying
 // slug — preferring the remote origin repo name (stable across clones) and
 // falling back to the directory name. Used to gate cross-repo hint leakage:
@@ -401,7 +458,7 @@ function enrichSourceMeta(toolInput, opts, cwd) {
       const slug = detectProjectSlug(cwd);
       if (slug) out.project_slug = slug;
     }
-    return out;
+    return _reconcileLangFramework(out);
   }
   // CWD fallback: Bash/shell commands and UserPromptSubmit have no file_path.
   // Without scope hints the Qdrant pre-filter and post-filter are both
@@ -415,7 +472,7 @@ function enrichSourceMeta(toolInput, opts, cwd) {
     if (framework) out.framework = framework;
     if (slug) out.project_slug = slug;
   }
-  return out;
+  return _reconcileLangFramework(out);
 }
 
 // Exposed for tests so config cache can be cleared between cases.
