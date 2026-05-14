@@ -1119,6 +1119,10 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/graph' && req.method === 'GET') return await handleGraph(req, res, url);
     if (p === '/api/timeline' && req.method === 'GET') return await handleTimeline(req, res, url);
     if (p === '/api/user' && req.method === 'GET') return handleUser(req, res);
+    if (p === '/api/hint-stats' && req.method === 'GET') {
+      if (!requireAuth(req, res)) return;
+      return await handleHintStats(req, res, url);
+    }
 
     // POST endpoints — require Bearer token when server.authToken is configured
     if (req.method === 'POST') {
@@ -1128,7 +1132,6 @@ const server = http.createServer(async (req, res) => {
       if (p === '/api/prompt-stale') return await handlePromptStale(req, res);
       if (p === '/api/extract') return await handleExtract(req, res);
       if (p === '/api/evolve') return await handleEvolve(req, res);
-      if (p === '/api/hint-stats') return await handleHintStats(req, res, url);
       if (p === '/api/principles/share') return await handleShare(req, res);
       if (p === '/api/principles/import') return await handleImport(req, res);
       if (p === '/api/feedback') return await handleFeedback(req, res);
