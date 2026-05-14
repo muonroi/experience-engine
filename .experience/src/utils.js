@@ -499,6 +499,12 @@ function formatPoints(points) {
     const effConf = computeEffectiveConfidence(exp);
     if (effConf < getMinConfidence() && !point._probationaryT2) continue;
     const displayScore = point._effectiveScore ?? point.score ?? 0;
+    // Suppress anti-recommendations (negative or sub-threshold effective score).
+    if (!point._probationaryT2 && displayScore < getMinConfidence()) continue;
+    // Probationary still gets floored at score=0 — mirror of format.js.
+    if (point._probationaryT2 && displayScore < 0) continue;
+    // Instant noise suppression (mirror of format.js).
+    if ((exp.irrelevantCount || 0) >= 3) continue;
     let line;
     if (point._probationaryT2) {
       line = `💡 [Probationary Suggestion (${displayScore.toFixed(2)})]: ${exp.solution}`;

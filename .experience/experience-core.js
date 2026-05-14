@@ -321,6 +321,17 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
           const hintSlug = String(pointProjectSlug).toLowerCase().trim();
           if (hintSlug && hintSlug !== callerProjectSlug) return false;
         }
+        // Learned exclusion gates (populated by evolve Step 3d scope narrowing
+        // from noiseContextHistory). Drop when caller lang/project appears in
+        // the entry's exclusion list.
+        if (Array.isArray(exp.scope?.lang_exclude) && callerLang) {
+          const excludes = exp.scope.lang_exclude.map((x) => String(x).toLowerCase().trim());
+          if (excludes.includes(callerLang) || excludes.includes(callerLangNorm)) return false;
+        }
+        if (Array.isArray(exp.scope?.project_exclude) && callerProjectSlug) {
+          const excludes = exp.scope.project_exclude.map((x) => String(x).toLowerCase().trim());
+          if (excludes.includes(callerProjectSlug)) return false;
+        }
         // Lang gate. In STRICT collections (behavioral, selfqa) we require
         // an explicit lang scope: unscoped seeds in those collections are
         // legacy/cross-context bleed (1337/1442 behavioral seeds are C#,

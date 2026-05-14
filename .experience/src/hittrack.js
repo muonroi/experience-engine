@@ -164,11 +164,34 @@ async function recordFeedback(collection, pointId, verdictOrFollowed, reason = n
 
   const normalizedReason = verdict === 'IRRELEVANT' ? normalizeNoiseReason(reason) : null;
   const source = options.source === 'judge' ? 'judge' : 'manual';
-  const updateFn = verdict === 'FOLLOWED'
+  const callerContext = options.callerContext || null;
+  const baseUpdateFn = verdict === 'FOLLOWED'
     ? applyNoiseDispositionData('followed', source, null)
     : verdict === 'IGNORED'
       ? applyNoiseDispositionData('ignored', source, null)
       : applyNoiseDispositionData('irrelevant', source, normalizedReason);
+
+  // Wrap to also append caller context to noiseContextHistory (capped at 50
+  // entries to avoid unbounded growth). Future evolve step consumes this to
+  // narrow scope (exclude specific lang/project) instead of full supersede.
+  const updateFn = (data) => {
+    baseUpdateFn(data);
+    if (callerContext && (verdict === 'IGNORED' || verdict === 'IRRELEVANT')) {
+      if (!Array.isArray(data.noiseContextHistory)) data.noiseContextHistory = [];
+      data.noiseContextHistory.push({
+        ts: new Date().toISOString(),
+        verdict,
+        reason: normalizedReason,
+        lang: callerContext.lang || null,
+        framework: callerContext.framework || null,
+        project_slug: callerContext.project_slug || null,
+      });
+      if (data.noiseContextHistory.length > 50) {
+        data.noiseContextHistory = data.noiseContextHistory.slice(-50);
+      }
+    }
+    return data;
+  };
 
   await updatePointPayload(collection, pointId, updateFn);
   activityLog({
