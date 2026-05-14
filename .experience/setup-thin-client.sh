@@ -173,6 +173,7 @@ THIN_CLIENT_FILES=(
   exp-health-last
   exp-shell-init.sh
   sync-install.sh
+  register-hooks.js
 )
 
 for f in "${THIN_CLIENT_FILES[@]}"; do
@@ -193,7 +194,8 @@ chmod +x \
   "$INSTALL_DIR/exp-bootstrap.sh" \
   "$INSTALL_DIR/exp-health-last" \
   "$INSTALL_DIR/exp-shell-init.sh" \
-  "$INSTALL_DIR/sync-install.sh"
+  "$INSTALL_DIR/sync-install.sh" \
+  "$INSTALL_DIR/register-hooks.js"
 
 # ── Prune local-only artefacts ─────────────────────────────────────────────
 #
@@ -319,6 +321,22 @@ fs.renameSync(tmp, target);
   "$INSTALLED_AT" \
   "$INSTALL_COMMIT" \
   "$INSTALL_COMMIT_DATE"
+
+# Re-apply agent hook registration in 'existing-only' mode so upgrades pick up
+# new hook entries (e.g., Claude UserPromptSubmit, needed to work around
+# anthropics/claude-code#19432) without auto-wiring agents the user never
+# opted in to. Idempotent: skips any (matcher, command) already present.
+to_fwd_path() {
+  echo "$1" | sed 's|\\|/|g' | sed 's|^/\([a-zA-Z]\)/|\1:/|'
+}
+if [ -f "$INSTALL_DIR/register-hooks.js" ]; then
+  EXP_INTERCEPTOR="$(to_fwd_path "$INSTALL_DIR/interceptor.js")" \
+    EXP_INTERCEPTOR_POST="$(to_fwd_path "$INSTALL_DIR/interceptor-post.js")" \
+    EXP_INTERCEPTOR_PROMPT="$(to_fwd_path "$INSTALL_DIR/interceptor-prompt.js")" \
+    EXP_STOP="$(to_fwd_path "$INSTALL_DIR/stop-extractor.js")" \
+    EXP_REGISTER_MODE="existing-only" \
+    node "$INSTALL_DIR/register-hooks.js" || echo "(non-fatal: register-hooks failed)"
+fi
 
 echo
 echo "Thin client installed to $INSTALL_DIR"
