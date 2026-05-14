@@ -59,6 +59,22 @@ function formatPoints(points) {
     const effConf = computeEffectiveConfidence(exp);
     if (effConf < getMinConfidence() && !point._probationaryT2) continue;
     const displayScore = point._effectiveScore ?? point.score ?? 0;
+    // Suppress anti-recommendations: when query-time effective score (which
+    // factors in ignore/hit ratio + scope mismatch penalties) falls below
+    // the min threshold, surfacing it as 💡 [Suggestion] tells the agent the
+    // opposite of what the score actually says.
+    if (!point._probationaryT2 && displayScore < getMinConfidence()) continue;
+    // Probationary entries are intentionally low-confidence (new, untested),
+    // but never surface if score is clearly negative — that's a stronger
+    // signal than "untested": penalties exceeded similarity, meaning the
+    // candidate is actively misaligned with the query.
+    if (point._probationaryT2 && displayScore < 0) continue;
+    // Instant noise suppression: if the entry has been explicitly marked
+    // IRRELEVANT ≥3 times, stop surfacing it immediately — don't wait for
+    // the hourly evolve cycle to mark it superseded. This closes the loop
+    // where an agent reports the same hint as noise repeatedly because the
+    // feedback signal hasn't yet decayed into the score.
+    if ((exp.irrelevantCount || 0) >= 3) continue;
     let line;
     if (point._probationaryT2) {
       line = `💡 [Probationary Suggestion (${displayScore.toFixed(2)})]: ${exp.solution}`;

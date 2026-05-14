@@ -347,8 +347,14 @@ const _FW_DEFAULT_LANG = {
 // pass-through (is_empty/any), avoiding the failure mode where a TS file in
 // a hybrid TS+.NET monorepo gets tagged with a dotnet framework and the
 // query filter then drops all TS-specific hints.
-const _LANG_FAMILY_DOTNET = new Set(['c#', 'f#', 'csharp', 'fsharp', 'dotnet', '.net']);
+const _LANG_FAMILY_DOTNET = new Set(['c#', 'f#', 'csharp', 'fsharp', 'dotnet', '.net', 'vb.net']);
 const _LANG_FAMILY_JS = new Set(['typescript', 'javascript', 'ts', 'tsx', 'js', 'jsx', 'nodejs', 'node']);
+const _LANG_FAMILY_JVM = new Set(['java', 'kotlin', 'scala', 'groovy', 'jvm']);
+const _LANG_FAMILY_PYTHON = new Set(['python', 'py', 'cython']);
+const _LANG_FAMILY_RUST = new Set(['rust', 'rs']);
+const _LANG_FAMILY_GO = new Set(['go', 'golang']);
+const _LANG_FAMILY_RUBY = new Set(['ruby', 'rb']);
+const _LANG_FAMILY_PHP = new Set(['php']);
 
 // Infer which lang family a framework belongs to. Resolution order:
 //   1. Built-in _FW_DEFAULT_LANG → use mapped lang directly.
@@ -364,6 +370,12 @@ function _inferFrameworkFamily(framework) {
     const lang = _FW_DEFAULT_LANG[fw].toLowerCase();
     if (_LANG_FAMILY_DOTNET.has(lang)) return 'dotnet';
     if (_LANG_FAMILY_JS.has(lang)) return 'js';
+    if (_LANG_FAMILY_JVM.has(lang)) return 'jvm';
+    if (_LANG_FAMILY_PYTHON.has(lang)) return 'python';
+    if (_LANG_FAMILY_RUST.has(lang)) return 'rust';
+    if (_LANG_FAMILY_GO.has(lang)) return 'go';
+    if (_LANG_FAMILY_RUBY.has(lang)) return 'ruby';
+    if (_LANG_FAMILY_PHP.has(lang)) return 'php';
   }
   const cfg = _loadConfig();
   const packages = _normalizeFrameworkPackages(cfg && cfg.org && cfg.org.frameworkPackages);
@@ -371,6 +383,13 @@ function _inferFrameworkFamily(framework) {
   if (entry) {
     if (Array.isArray(entry.nuget) && entry.nuget.length) return 'dotnet';
     if (Array.isArray(entry.npm) && entry.npm.length) return 'js';
+    if (Array.isArray(entry.maven) && entry.maven.length) return 'jvm';
+    if (Array.isArray(entry.gradle) && entry.gradle.length) return 'jvm';
+    if (Array.isArray(entry.pip) && entry.pip.length) return 'python';
+    if (Array.isArray(entry.cargo) && entry.cargo.length) return 'rust';
+    if (Array.isArray(entry.gomod) && entry.gomod.length) return 'go';
+    if (Array.isArray(entry.gem) && entry.gem.length) return 'ruby';
+    if (Array.isArray(entry.composer) && entry.composer.length) return 'php';
   }
   return null;
 }
@@ -380,6 +399,12 @@ function _langInFamily(lang, family) {
   const l = String(lang).toLowerCase().trim();
   if (family === 'dotnet') return _LANG_FAMILY_DOTNET.has(l);
   if (family === 'js') return _LANG_FAMILY_JS.has(l);
+  if (family === 'jvm') return _LANG_FAMILY_JVM.has(l);
+  if (family === 'python') return _LANG_FAMILY_PYTHON.has(l);
+  if (family === 'rust') return _LANG_FAMILY_RUST.has(l);
+  if (family === 'go') return _LANG_FAMILY_GO.has(l);
+  if (family === 'ruby') return _LANG_FAMILY_RUBY.has(l);
+  if (family === 'php') return _LANG_FAMILY_PHP.has(l);
   return true;
 }
 

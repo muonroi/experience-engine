@@ -517,9 +517,15 @@ async function evolve(trigger) {
   // it just stops surfacing. computeEffectiveConfidence callers should check
   // superseded before using the score (done elsewhere); the post-filter in
   // experience-core also drops superseded points up front.
+  // Tier-based threshold: high-volume entries (≥10 ignores) get aggressive
+  // 0.5 cutoff because we have enough signal to be confident; low-volume
+  // (5-9 ignores) keep conservative 0.7 to avoid false-positive removal of
+  // context-sensitive entries that happen to fire wrong stack a few times.
   const SUPERSEDE_MIN_IGNORE = 5;
-  const SUPERSEDE_RATIO = 0.7;
-  for (const colName of ['experience-behavioral', 'experience-selfqa']) {
+  const SUPERSEDE_RATIO_LOW = 0.7;
+  const SUPERSEDE_RATIO_HIGH = 0.5;
+  const SUPERSEDE_HIGH_VOLUME = 10;
+  for (const colName of ['experience-behavioral', 'experience-selfqa', 'experience-principles']) {
     const entries = await getAllEntries(colName);
     for (const entry of entries) {
       const data = parsePayload(entry);
@@ -530,15 +536,122 @@ async function evolve(trigger) {
       if (ignores < SUPERSEDE_MIN_IGNORE) continue;
       if (total === 0) continue;
       const ratio = ignores / total;
-      if (ratio < SUPERSEDE_RATIO) continue;
+      const threshold = ignores >= SUPERSEDE_HIGH_VOLUME ? SUPERSEDE_RATIO_HIGH : SUPERSEDE_RATIO_LOW;
+      if (ratio < threshold) continue;
       data.superseded = true;
       data.supersededAt = new Date().toISOString();
-      data.supersededReason = `auto-decay ignores=${ignores} ratio=${ratio.toFixed(2)}`;
+      data.supersededReason = `auto-decay ignores=${ignores} ratio=${ratio.toFixed(2)} threshold=${threshold}`;
       const vector = entry.vector || await getEmbedding(`${data.trigger} ${data.solution}`);
       if (!vector) continue;
       await upsertEntry(colName, entry.id, vector, data);
       results.archived++;
       activityLog({ op: 'evolve-auto-supersede', id: String(entry.id).slice(0, 8), ignores, ratio: ratio.toFixed(2) });
+    }
+  }
+
+  // Step 3c: Reason-driven supersede.
+  //
+  // IRRELEVANT verdicts (vs plain IGNORED) are a stronger noise signal —
+  // the agent explicitly classified the hint as wrong (wrong_repo/
+  // wrong_language/wrong_task/stale_rule), not just "didn't apply it".
+  // When a single reason concentrates ≥ REASON_THRESHOLD votes for an
+  // entry, we supersede with that reason as the documented cause. This
+  // catches noise entries faster than the ratio-based path (Step 3b) when
+  // feedback is concentrated.
+  //
+  // Future improvement: capture caller meta (lang/project_slug) at
+  // /api/feedback time so we can NARROW scope (e.g. exclude TypeScript)
+  // instead of full supersede. That needs noiseContextHistory tracking
+  // which is a separate diff.
+  const REASON_THRESHOLD = 5;
+  const TARGET_REASONS = ['wrong_language', 'wrong_repo', 'wrong_task', 'stale_rule'];
+  for (const colName of ['experience-behavioral', 'experience-selfqa', 'experience-principles']) {
+    const entries = await getAllEntries(colName);
+    for (const entry of entries) {
+      const data = parsePayload(entry);
+      if (!data || data.superseded) continue;
+      const reasonCounts = data.noiseReasonCounts || {};
+      let trippedReason = null;
+      let trippedCount = 0;
+      for (const r of TARGET_REASONS) {
+        const c = Number(reasonCounts[r] || 0);
+        if (c >= REASON_THRESHOLD && c > trippedCount) {
+          trippedReason = r;
+          trippedCount = c;
+        }
+      }
+      if (!trippedReason) continue;
+      data.superseded = true;
+      data.supersededAt = new Date().toISOString();
+      data.supersededReason = `reason-decay reason=${trippedReason} count=${trippedCount}`;
+      const vector = entry.vector || await getEmbedding(`${data.trigger} ${data.solution}`);
+      if (!vector) continue;
+      await upsertEntry(colName, entry.id, vector, data);
+      results.archived++;
+      activityLog({ op: 'evolve-reason-supersede', id: String(entry.id).slice(0, 8), reason: trippedReason, count: trippedCount });
+    }
+  }
+
+  // Step 3d: Scope narrowing from noise context history.
+  //
+  // If an entry has wrong_language IRRELEVANT votes concentrated from one
+  // lang (e.g. 4 of 5 wrong_language votes came from TypeScript queries),
+  // narrow its scope to exclude that lang instead of full supersede. Keeps
+  // the entry alive for contexts where it might still apply.
+  const NARROW_MIN_VOTES = 3;
+  const NARROW_DOMINANCE = 0.7; // 70% of single-reason votes from same value
+  for (const colName of ['experience-behavioral', 'experience-selfqa', 'experience-principles']) {
+    const entries = await getAllEntries(colName);
+    for (const entry of entries) {
+      const data = parsePayload(entry);
+      if (!data || data.superseded) continue;
+      const history = Array.isArray(data.noiseContextHistory) ? data.noiseContextHistory : [];
+      if (history.length < NARROW_MIN_VOTES) continue;
+      const langVotes = {};
+      const projectVotes = {};
+      let langWrongTotal = 0;
+      let projectWrongTotal = 0;
+      for (const h of history) {
+        if (h.reason === 'wrong_language' && h.lang) {
+          langVotes[h.lang] = (langVotes[h.lang] || 0) + 1;
+          langWrongTotal++;
+        }
+        if (h.reason === 'wrong_repo' && h.project_slug) {
+          projectVotes[h.project_slug] = (projectVotes[h.project_slug] || 0) + 1;
+          projectWrongTotal++;
+        }
+      }
+      let narrowed = false;
+      if (langWrongTotal >= NARROW_MIN_VOTES) {
+        for (const [lang, count] of Object.entries(langVotes)) {
+          if (count / langWrongTotal >= NARROW_DOMINANCE) {
+            if (!data.scope || typeof data.scope !== 'object') data.scope = {};
+            if (!Array.isArray(data.scope.lang_exclude)) data.scope.lang_exclude = [];
+            if (!data.scope.lang_exclude.includes(lang)) {
+              data.scope.lang_exclude.push(lang);
+              narrowed = true;
+              activityLog({ op: 'evolve-scope-narrow', id: String(entry.id).slice(0, 8), excluded_lang: lang, votes: count });
+            }
+          }
+        }
+      }
+      if (projectWrongTotal >= NARROW_MIN_VOTES) {
+        for (const [proj, count] of Object.entries(projectVotes)) {
+          if (count / projectWrongTotal >= NARROW_DOMINANCE) {
+            if (!data.scope || typeof data.scope !== 'object') data.scope = {};
+            if (!Array.isArray(data.scope.project_exclude)) data.scope.project_exclude = [];
+            if (!data.scope.project_exclude.includes(proj)) {
+              data.scope.project_exclude.push(proj);
+              narrowed = true;
+              activityLog({ op: 'evolve-scope-narrow', id: String(entry.id).slice(0, 8), excluded_project: proj, votes: count });
+            }
+          }
+        }
+      }
+      if (!narrowed) continue;
+      const vector = entry.vector || await getEmbedding(`${data.trigger} ${data.solution}`);
+      if (!vector) continue;
+      await upsertEntry(colName, entry.id, vector, data);
     }
   }
 

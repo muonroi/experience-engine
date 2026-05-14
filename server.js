@@ -131,6 +131,34 @@ function loadExperienceCore({ fresh = false } = {}) {
   return require(RUNTIME_CORE_PATH);
 }
 
+// Derive caller scope (lang/framework/project_slug) for clients that don't
+// pre-flatten them at the top level. Claude Code's hook script runs
+// source-meta-enrich.js client-side and spreads ...sourceMeta into the body;
+// muonroi-cli and other native clients post InterceptRequest without flat
+// fields, so the server has to derive from toolInput.file_path + cwd or the
+// scope filter falls back to permissive and cross-stack hints leak.
+function deriveCallerMeta(body) {
+  const flat = {
+    lang: typeof body?.lang === 'string' ? body.lang : null,
+    framework: typeof body?.framework === 'string' ? body.framework : null,
+    project_slug: typeof body?.project_slug === 'string' ? body.project_slug : null,
+  };
+  if (flat.lang && flat.framework && flat.project_slug) return flat;
+  try {
+    const enricher = require(path.join(RUNTIME_DIR, 'source-meta-enrich.js'));
+    if (typeof enricher.enrichSourceMeta !== 'function') return flat;
+    const cwd = body?.cwd || null;
+    const derived = enricher.enrichSourceMeta(body?.toolInput || body?.tool_input || null, undefined, cwd) || {};
+    return {
+      lang: flat.lang || (typeof derived.lang === 'string' ? derived.lang : null),
+      framework: flat.framework || (typeof derived.framework === 'string' ? derived.framework : null),
+      project_slug: flat.project_slug || (typeof derived.project_slug === 'string' ? derived.project_slug : null),
+    };
+  } catch {
+    return flat;
+  }
+}
+
 function isProtectedGetPath(pathname) {
   return pathname !== '/health';
 }
@@ -399,18 +427,19 @@ async function handleIntercept(req, res) {
   const body = await readBody(req);
   const v = validateBody(body, { toolName: { type: 'string', required: true } });
   if (!v.ok) return error(res, v.error);
+  const derived = deriveCallerMeta(body);
   const meta = {
     sourceKind: body.sourceKind || 'manual-api',
     sourceRuntime: body.sourceRuntime || 'api',
     sourceSession: body.sourceSession || null,
     cwd: body.cwd || null,
-    // Forward caller-side scope hints (set by interceptor.js source-meta-enrich)
-    // so applyScopeFilter() in experience-core.js can gate cross-language/framework
-    // hints. Without these the server discards client scope and .NET seeds leak
-    // into TS/React repos.
-    lang: typeof body.lang === 'string' ? body.lang : null,
-    framework: typeof body.framework === 'string' ? body.framework : null,
-    project_slug: typeof body.project_slug === 'string' ? body.project_slug : null,
+    // Forward caller-side scope hints so applyScopeFilter() in experience-core.js
+    // can gate cross-language/framework hints. For clients that pre-flatten
+    // (Claude Code hook), top-level body.lang/framework wins; for native
+    // clients (muonroi-cli) we derive from toolInput.file_path + cwd.
+    lang: derived.lang,
+    framework: derived.framework,
+    project_slug: derived.project_slug,
   };
   // skipRoute=true lets latency-sensitive callers (e.g. CLI hook fast-path)
   // bypass the model-routing side-effect of intercept and only get suggestions.
@@ -429,6 +458,56 @@ async function handleIntercept(req, res) {
     hasSuggestions: result !== null,
     surfacedIds: resultMeta?.surfacedIds || [],
     route: resultMeta?.route || null,
+  });
+}
+
+// Aggregate batch of parallel tool calls into a single reflection-style hint.
+// Fires from PostToolBatch Claude Code hook AFTER the batch resolves, BEFORE
+// the next model call — so the hint can shape the next assistant turn.
+//
+// Strategy: concatenate tool commands/files/outputs into one query string,
+// route through the standard intercept pipeline to surface scope-filtered
+// hints, return the first non-null suggestion as `hint`. Per-tool feedback
+// stays handled by /api/posttool — this endpoint is purely additive.
+async function handlePostToolBatch(req, res) {
+  const body = await readBody(req);
+  if (!body || typeof body !== 'object') return error(res, 'request body must be a JSON object');
+  if (!Array.isArray(body.tools)) return error(res, 'tools is required and must be an array');
+  const tools = body.tools;
+  if (tools.length === 0) return json(res, { hint: null });
+
+  const aggregatedCommand = tools
+    .map((t) => {
+      const ti = t?.tool_input || {};
+      if (ti.command) return `${t.tool_name}: ${String(ti.command).slice(0, 200)}`;
+      if (ti.file_path) return `${t.tool_name}: ${ti.file_path}`;
+      return t.tool_name || '';
+    })
+    .filter(Boolean)
+    .join(' | ');
+
+  const reprToolInput = {
+    command: aggregatedCommand,
+    file_path: body.representativeFilePath || null,
+    batchSize: tools.length,
+  };
+  const derived = deriveCallerMeta({ ...body, toolInput: reprToolInput });
+  const meta = {
+    sourceKind: body.sourceKind || 'hook-batch',
+    sourceRuntime: body.sourceRuntime || 'claude-code',
+    sourceSession: body.sessionId || null,
+    cwd: body.cwd || null,
+    lang: derived.lang,
+    framework: derived.framework,
+    project_slug: derived.project_slug,
+  };
+  const { interceptWithMeta } = loadExperienceCore();
+  if (typeof interceptWithMeta !== 'function') return json(res, { hint: null });
+  const resultMeta = await interceptWithMeta('PostToolBatch', reprToolInput, undefined, meta, { skipRoute: true });
+  json(res, {
+    hint: resultMeta?.suggestions ?? null,
+    surfacedIds: resultMeta?.surfacedIds || [],
+    batchSize: tools.length,
   });
 }
 
@@ -540,12 +619,14 @@ async function handleExtract(req, res) {
   const v = validateBody(body, { transcript: { type: 'string', required: true } });
   if (!v.ok) return error(res, v.error);
   const { extractFromSession } = loadExperienceCore();
+  const derived = deriveCallerMeta(body);
   const stored = await extractFromSession(body.transcript, body.projectPath || null, {
     sourceKind: body.sourceKind || 'manual-api',
     sourceRuntime: body.sourceRuntime || 'api',
     sourceSession: body.sourceSession || null,
-    framework: typeof body.framework === 'string' ? body.framework : null,
-    lang: typeof body.lang === 'string' ? body.lang : null,
+    framework: derived.framework,
+    lang: derived.lang,
+    project_slug: derived.project_slug,
   });
   json(res, { stored, success: true });
 }
@@ -737,7 +818,12 @@ async function handleFeedback(req, res) {
     }
   }
   const { recordFeedback } = loadExperienceCore();
-  await recordFeedback(body.collection, pointId, resolvedVerdict, normalizedReason);
+  // Capture caller context (lang/framework/project_slug) so future evolve
+  // cycles can do scope narrowing instead of full supersede — e.g. entry
+  // marked wrong_language 3 times all from TypeScript queries → exclude
+  // TypeScript instead of killing the entry (it may still be valid in C#).
+  const callerCtx = deriveCallerMeta(body);
+  await recordFeedback(body.collection, pointId, resolvedVerdict, normalizedReason, { callerContext: callerCtx });
   json(res, { ok: true, resolvedId: pointId, verdict: resolvedVerdict, ...(normalizedReason ? { reason: normalizedReason } : {}) });
 }
 
@@ -1130,6 +1216,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST') {
       if (!requireAuth(req, res)) return;
       if (p === '/api/intercept') return await handleIntercept(req, res);
+      if (p === '/api/posttool-batch') return await handlePostToolBatch(req, res);
       if (p === '/api/posttool') return await handlePostTool(req, res);
       if (p === '/api/prompt-stale') return await handlePromptStale(req, res);
       if (p === '/api/extract') return await handleExtract(req, res);
