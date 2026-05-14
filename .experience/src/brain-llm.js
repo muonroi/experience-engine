@@ -178,38 +178,68 @@ async function extractQA(mistake, opts = {}) {
     ? `- scope.framework must be either "any" or "${callerFw}". Use "${callerFw}" ONLY if the lesson references identifiers, types, packages, or conventions tied to that framework (e.g. types from its packages, attributes from its API). Use "any" when the lesson is a plain language rule that would apply to any project using the same language.`
     : `- scope.framework must be "any" when the lesson is not tied to a specific framework. Set a specific framework label only if the lesson explicitly mentions framework-bound identifiers/packages.`;
 
-  const prompt = `You are extracting ONE reusable lesson from a coding agent's failure. The summary below has already been pre-labelled.\n\n${summary}\n${ctxBlock}\nReturn JSON only (no markdown). Output a generalized PATTERN, not the literal log line.\n\nMandatory rules:\n- trigger MUST describe the failure PATTERN in the agent's own words. NEVER copy a ToolCall/ToolOutput/Bash line verbatim. NEVER start trigger with a path or filename. Bad: "ToolCall read_text_file: /mnt/d/.../config.json". Good: "config file read returns truncated content when output buffer is small".\n- question briefly names the mistake (one sentence).\n- solution is a concrete preventive action that another session would actually do — not "implement", "review", "debug" alone.\n- failureMode is the underlying class (e.g. "missing_validation", "wrong_lifetime_scope", "race_condition"), not the literal log.\n- why captures the root cause; evidence/symptoms go here, not in trigger.\n- judgment is the portable preventive judgment ("X must Y because Z"), reusable across files.\n- conditions: 2-4 short keywords for retrieval.\n- evidenceClass: one of log | test | runtime | review | user-correction | other.\n- scope.lang must be one of: C# | JavaScript | TypeScript | Python | Go | Rust | Java | Shell | all. Use "all" when the lesson is language-agnostic.\n${frameworkRule}\n- Skip when nothing portable can be extracted:\n  - {"skip":true,"reason":"meta_workflow"} if the excerpt is workflow/scope/lock/deploy plumbing\n  - {"skip":true,"reason":"no_reusable_lesson"} if there is no clear failure pattern\n  - {"skip":true,"reason":"raw_log_only"} if the only signal is a tool call header with no diagnosable cause\n\nReturn exactly:\n{"trigger":"...","question":"...","reasoning":["step1","step2"],"solution":"...","why":"...","failureMode":"...","judgment":"...","conditions":["k1","k2"],"evidenceClass":"log|test|runtime|review|user-correction|other","scope":{"lang":"all","framework":"any","repos":[],"filePattern":"*"}}`;
+  const prompt = `You are extracting ONE reusable lesson from a coding agent's failure. The summary below has already been pre-labelled.\n\n${summary}\n${ctxBlock}\nReturn JSON only (no markdown). Output a generalized PATTERN, not the literal log line.\n\nMandatory rules:\n- trigger MUST describe the failure PATTERN in the agent's own words. NEVER copy a ToolCall/ToolOutput/Bash line verbatim. NEVER start trigger with a path or filename. Bad: "ToolCall read_text_file: /mnt/d/.../config.json". Good: "config file read returns truncated content when output buffer is small".\n- question briefly names the mistake (one sentence).\n- solution is a concrete preventive action that another session would actually do — not "implement", "review", "debug" alone.\n- failureMode is the underlying class (e.g. "missing_validation", "wrong_lifetime_scope", "race_condition"), not the literal log.\n- why captures the root cause; evidence/symptoms go here, not in trigger.\n- judgment is the portable preventive judgment ("X must Y because Z"), reusable across files.\n- conditions: 2-4 short keywords for retrieval.\n- evidenceClass: one of log | test | runtime | review | user-correction | other.\n- category: one of "code" | "git" | "deploy" | "infra" | "security" | "review-meta" | "testing-meta" | "shell-meta". "code" means the lesson is tied to a specific language/framework. The rest are cross-stack and will be tagged with wildcard scope (lang:all, framework:any) regardless of caller context. Examples: git (force-push lost commits, bad rebase, missed hook), deploy (kubectl/docker/CI pipeline failure, env leak), infra (terraform/helm), security (secret in code, missing auth, SQL injection), review-meta (code-review process), testing-meta (TDD, fixture design — language-agnostic), shell-meta (POSIX vs bashism, quoting).\n- scope.lang must be one of: C# | JavaScript | TypeScript | Python | Go | Rust | Java | Shell | all. Use "all" when the lesson is language-agnostic.\n${frameworkRule}\n- Skip when nothing portable can be extracted:\n  - {"skip":true,"reason":"meta_workflow"} if the excerpt is workflow/scope/lock plumbing\n  - {"skip":true,"reason":"no_reusable_lesson"} if there is no clear failure pattern\n  - {"skip":true,"reason":"raw_log_only"} if the only signal is a tool call header with no diagnosable cause\n\nReturn exactly:\n{"trigger":"...","question":"...","reasoning":["step1","step2"],"solution":"...","why":"...","failureMode":"...","judgment":"...","conditions":["k1","k2"],"evidenceClass":"log|test|runtime|review|user-correction|other","category":"code|git|deploy|infra|security|review-meta|testing-meta|shell-meta","scope":{"lang":"all","framework":"any","repos":[],"filePattern":"*"}}`;
   const result = await callBrainWithFallback(prompt, { source: 'extract' });
   // Post-process: hard-set scope fields from caller context where available.
-  // The brain often defaults to "any" / forgets fields entirely, which is the
-  // root cause of cross-language hint leakage seen in production
-  // (e.g. 100% of behavioral entries tagged framework="any" were actually
-  // framework-specific). Caller-derived hints from source-meta-enrich are
-  // authoritative because they come from on-disk markers (.csproj, package.json).
+  // For "code" category, caller-derived hints (from on-disk markers) are
+  // authoritative. For cross-stack categories (git/deploy/infra/security/
+  // review-meta/testing-meta/shell-meta) we OVERRIDE to wildcard scope so
+  // a git mistake recorded while editing TS files still surfaces when the
+  // user later does git work from a C# project.
   if (result && !result.skip) {
     if (!result.scope || typeof result.scope !== 'object') result.scope = {};
-    // Framework: prefer caller's detected framework. Only keep brain's value
-    // when caller hasn't supplied one (or brain explicitly set "any" and
-    // caller agrees by not providing a framework).
-    if (callerFw) {
-      result.scope.framework = callerFw;
-    } else if (typeof result.scope.framework !== 'string' || !result.scope.framework.trim()) {
-      result.scope.framework = 'any';
+
+    // Category detection: brain first, regex fallback when brain omits.
+    // Regex is intentionally narrow — only catches signatures the brain
+    // tends to miss (mistake summarized as a code change but the underlying
+    // pattern is git/deploy/security).
+    const CROSS_STACK_CATS = new Set(['git', 'deploy', 'infra', 'security', 'review-meta', 'testing-meta', 'shell-meta']);
+    let category = typeof result.category === 'string' ? result.category.toLowerCase().trim() : '';
+    if (!CROSS_STACK_CATS.has(category) && category !== 'code') {
+      category = _inferCrossStackCategory(result) || 'code';
     }
-    // Lang: same logic — caller's filePath-derived lang is more reliable
-    // than the brain's freeform guess.
-    if (callerLang) {
-      result.scope.lang = callerLang;
-    } else if (typeof result.scope.lang !== 'string' || !result.scope.lang.trim()) {
+    result.category = category;
+    const isCrossStack = CROSS_STACK_CATS.has(category);
+
+    if (isCrossStack) {
+      // Cross-stack lesson — lock to wildcards regardless of caller stack.
       result.scope.lang = 'all';
+      result.scope.framework = 'any';
+      if (callerSlug) result.scope.project_slug = callerSlug;
+    } else {
+      // Code mistake — caller meta authoritative.
+      if (callerFw) {
+        result.scope.framework = callerFw;
+      } else if (typeof result.scope.framework !== 'string' || !result.scope.framework.trim()) {
+        result.scope.framework = 'any';
+      }
+      if (callerLang) {
+        result.scope.lang = callerLang;
+      } else if (typeof result.scope.lang !== 'string' || !result.scope.lang.trim()) {
+        result.scope.lang = 'all';
+      }
+      if (callerSlug) result.scope.project_slug = callerSlug;
     }
-    // Project slug: brain is never asked for this; inject from caller so the
-    // query-time project gate (experience-core#applyScopeFilter) has data
-    // to compare against. Without this, project_slug stays null and the gate
-    // is dead code.
-    if (callerSlug) result.scope.project_slug = callerSlug;
   }
   return result;
+}
+
+// Regex fallback for cross-stack category inference. Only fires when the
+// brain didn't return a valid category. Narrow patterns by design — we want
+// false negatives (default to "code") over false positives that lock
+// legitimate code lessons to wildcard scope.
+function _inferCrossStackCategory(qa) {
+  const text = `${qa?.trigger || ''} ${qa?.solution || ''} ${qa?.why || ''} ${qa?.failureMode || ''}`.toLowerCase();
+  if (!text.trim()) return null;
+  if (/\bgit\s+(push|pull|reset|rebase|merge|stash|cherry-pick|reflog|commit|branch|checkout|revert|tag)\b/.test(text)) return 'git';
+  if (/\b(force[- ]push|force push|lost commits|detached head|merge conflict)\b/.test(text)) return 'git';
+  if (/\b(kubectl|kubernetes|k8s|helm chart|docker build|dockerfile|docker[- ]compose|rollout|canary release|blue[- ]green|ci\/cd|pipeline yaml|github actions|gitlab ci|jenkins pipeline)\b/.test(text)) return 'deploy';
+  if (/\b(terraform|cloudformation|pulumi|ansible|nginx config)\b/.test(text)) return 'infra';
+  if (/\b(hardcoded secret|secret in code|env(ironment)? var leak|sql injection|xss|csrf|missing auth|unsanitized input|cors misconfiguration)\b/.test(text)) return 'security';
+  if (/\b(test pyramid|tdd discipline|fixture lifecycle|test isolation|flaky test pattern|mocking strategy)\b/.test(text)) return 'testing-meta';
+  if (/\b(posix vs bash|bashism|word splitting|unquoted variable|set[ -]e pitfall)\b/.test(text)) return 'shell-meta';
+  if (/\b(code review process|pr review checklist|review approval)\b/.test(text)) return 'review-meta';
+  return null;
 }
 
 async function brainOllama(prompt, opts = {}) {

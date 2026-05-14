@@ -420,8 +420,13 @@ async function evolve(trigger) {
     }
 
     const id = crypto.randomUUID();
+    // Inherit scope from cluster members so abstractions don't land
+    // scope-less (strict post-filter would otherwise drop them for any
+    // caller with a known lang).
+    const inheritedScope = _inheritClusterScope(cluster);
     await upsertEntry('experience-behavioral', id, vector, {
       id, principle: result.principle, solution: result.principle,
+      scope: inheritedScope,
       failureMode: normalizeFailureMode(result.failureMode, { question: summaries[0], why: result.principle }),
       judgment: normalizeJudgment(result.judgment, { solution: result.principle }),
       conditions: Array.isArray(result.conditions) ? result.conditions.slice(0, 4) : [],
@@ -716,6 +721,46 @@ async function getAllEntries(collection) {
 // single chokepoint — every writer (seed-ingest, evolution, edge, etc.) routes
 // through here, so tagging here means no scope field can be set in `data` but
 // missed in the indexed payload.
+// Compute the scope a Step-2 abstraction should inherit from its cluster
+// members. Rule: if >=60% of members agree on a value (lang/framework/
+// project_slug), propagate it; otherwise fall back to wildcards
+// (lang:"all"/framework:"any"/null slug). Threshold is conservative to
+// avoid one outlier flipping the scope of a coherent cluster.
+function _inheritClusterScope(cluster) {
+  const out = {};
+  if (!Array.isArray(cluster) || cluster.length === 0) {
+    return { lang: 'all', framework: 'any' };
+  }
+  const counts = { lang: new Map(), framework: new Map(), project_slug: new Map() };
+  let total = 0;
+  for (const entry of cluster) {
+    let data;
+    try { data = JSON.parse(entry.payload?.json || '{}'); } catch { continue; }
+    if (!data || !data.scope || typeof data.scope !== 'object') continue;
+    total++;
+    for (const key of ['lang', 'framework', 'project_slug']) {
+      const v = data.scope[key];
+      if (typeof v !== 'string' || !v.trim()) continue;
+      const k = v.toLowerCase().trim();
+      counts[key].set(k, (counts[key].get(k) || 0) + 1);
+    }
+  }
+  if (total === 0) return { lang: 'all', framework: 'any' };
+  const threshold = Math.ceil(total * 0.6);
+  function majority(map, fallback) {
+    let best = null, bestN = 0;
+    for (const [k, n] of map.entries()) {
+      if (n > bestN) { best = k; bestN = n; }
+    }
+    return (best && bestN >= threshold) ? best : fallback;
+  }
+  out.lang = majority(counts.lang, 'all');
+  out.framework = majority(counts.framework, 'any');
+  const slug = majority(counts.project_slug, null);
+  if (slug) out.project_slug = slug;
+  return out;
+}
+
 function buildScopeFlatFields(data) {
   const flat = {};
   if (data?.scope?.org) flat.scope_org = String(data.scope.org).toLowerCase();
