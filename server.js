@@ -555,6 +555,88 @@ async function handleEvolve(req, res) {
   json(res, { ...results, success: true });
 }
 
+// Hint quality stats — aggregates Qdrant points to surface noise patterns
+// (cross-language seeds, high-ignore points, unscoped legacy seeds). Used by
+// the `exp-hint-stats` CLI tool and by manual triage during noise reviews.
+async function handleHintStats(req, res, url) {
+  const minIgnoreCount = Number(url.searchParams.get('minIgnoreCount') || 2);
+  const noiseRatio = Number(url.searchParams.get('noiseRatio') || 0.4);
+  const topN = Math.min(Number(url.searchParams.get('topN') || 20), 100);
+  const cols = (url.searchParams.get('collections') || 'experience-behavioral,experience-principles,experience-selfqa').split(',');
+
+  const qdrantBase = _cfg.qdrant?.url || 'http://localhost:6333';
+  const stats = {};
+
+  for (const col of cols) {
+    let offset = null;
+    let total = 0;
+    const byLang = { 'c#': 0, typescript: 0, javascript: 0, unscoped: 0, other: 0 };
+    const byFramework = {};
+    const noisy = [];
+    const unscopedHigh = [];
+
+    while (true) {
+      const r = await fetch(`${qdrantBase}/collections/${col}/points/scroll`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: 200, offset, with_payload: true }),
+      }).catch(() => null);
+      if (!r || !r.ok) break;
+      const j = await r.json();
+      const pts = j.result?.points || [];
+      for (const p of pts) {
+        total++;
+        let exp = {};
+        try { exp = JSON.parse(p.payload?.json || '{}'); } catch {}
+        const lang = exp.scope?.lang ? String(exp.scope.lang).toLowerCase() : null;
+        const fw = exp.scope?.framework ? String(exp.scope.framework).toLowerCase() : null;
+        if (!lang) byLang.unscoped++;
+        else if (/c#|csharp|dotnet/.test(lang)) byLang['c#']++;
+        else if (/typescript/.test(lang)) byLang.typescript++;
+        else if (/javascript/.test(lang)) byLang.javascript++;
+        else byLang.other++;
+        if (fw) byFramework[fw] = (byFramework[fw] || 0) + 1;
+        const hits = Number(exp.hitCount || 0);
+        const ignores = Number(exp.ignoreCount || 0);
+        const totalFires = hits + ignores;
+        if (ignores >= minIgnoreCount && totalFires > 0 && ignores / totalFires >= noiseRatio) {
+          noisy.push({
+            id: String(p.id || '').slice(0, 8),
+            fullId: String(p.id || ''),
+            hits, ignores,
+            ignoreRatio: Number((ignores / totalFires).toFixed(2)),
+            lang, framework: fw, org: exp.scope?.org || null,
+            solution: String(exp.solution || '').slice(0, 100),
+          });
+        }
+        if (!lang && (hits + ignores) >= 3) {
+          unscopedHigh.push({
+            id: String(p.id || '').slice(0, 8),
+            fullId: String(p.id || ''),
+            hits, ignores,
+            solution: String(exp.solution || '').slice(0, 100),
+          });
+        }
+      }
+      offset = j.result?.next_page_offset;
+      if (!offset) break;
+    }
+    noisy.sort((a, b) => b.ignores - a.ignores);
+    unscopedHigh.sort((a, b) => (b.hits + b.ignores) - (a.hits + a.ignores));
+    stats[col] = {
+      total,
+      byLang,
+      byFramework,
+      noisyCount: noisy.length,
+      unscopedHighCount: unscopedHigh.length,
+      noisy: noisy.slice(0, topN),
+      unscopedHigh: unscopedHigh.slice(0, topN),
+    };
+  }
+
+  json(res, { generatedAt: new Date().toISOString(), thresholds: { minIgnoreCount, noiseRatio }, stats });
+}
+
 async function handleStats(req, res, url) {
   const logDir = path.join(os.homedir(), '.experience');
   const storeDir = path.join(logDir, 'store');
@@ -1046,6 +1128,7 @@ const server = http.createServer(async (req, res) => {
       if (p === '/api/prompt-stale') return await handlePromptStale(req, res);
       if (p === '/api/extract') return await handleExtract(req, res);
       if (p === '/api/evolve') return await handleEvolve(req, res);
+      if (p === '/api/hint-stats') return await handleHintStats(req, res, url);
       if (p === '/api/principles/share') return await handleShare(req, res);
       if (p === '/api/principles/import') return await handleImport(req, res);
       if (p === '/api/feedback') return await handleFeedback(req, res);
