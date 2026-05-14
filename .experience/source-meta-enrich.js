@@ -323,14 +323,63 @@ function extractFilePath(toolInput) {
   return null;
 }
 
-function enrichSourceMeta(toolInput, opts) {
+// Map framework label → default language. Used by the cwd fallback path when
+// no concrete file ext is available (Bash hooks, UserPromptSubmit). The lang
+// is a best-effort default per ecosystem; the scope filter remains opt-in on
+// the caller side so a wrong guess still passes through `is_empty`/`any`.
+const _FW_DEFAULT_LANG = {
+  dotnet: 'C#',
+  rust: 'Rust',
+  go: 'Go',
+  python: 'Python',
+  java: 'Java',
+  ruby: 'Ruby',
+  next: 'TypeScript', nest: 'TypeScript', nuxt: 'TypeScript',
+  angular: 'TypeScript', react: 'TypeScript',
+  'react-native': 'TypeScript', expo: 'TypeScript',
+  astro: 'TypeScript', solid: 'TypeScript', remix: 'TypeScript',
+  vue: 'TypeScript', svelte: 'TypeScript', electron: 'TypeScript',
+};
+
+// Direct cwd → lang detection for the case where framework is unknown but
+// the repo has language-specific markers. tsconfig.json wins over
+// package.json so plain JS projects don't get misclassified as TS.
+function detectLangFromCwd(cwd) {
+  if (!cwd || typeof cwd !== 'string') return null;
+  try {
+    if (fs.existsSync(path.join(cwd, 'tsconfig.json'))) return 'TypeScript';
+    if (fs.existsSync(path.join(cwd, 'package.json'))) return 'JavaScript';
+    for (const m of FW_MARKERS) {
+      if (m.file && fs.existsSync(path.join(cwd, m.file))) {
+        return _FW_DEFAULT_LANG[m.framework] || null;
+      }
+    }
+    const entries = fs.readdirSync(cwd);
+    if (entries.some(n => /\.(cs|fs)proj$|\.sln$/i.test(n))) return 'C#';
+  } catch { /* swallow — fail-open */ }
+  return null;
+}
+
+function enrichSourceMeta(toolInput, opts, cwd) {
   const out = {};
   const filePath = extractFilePath(toolInput);
-  if (!filePath) return out;
-  const lang = detectContext(filePath);
-  const framework = detectFrameworkFromProject(filePath, opts);
-  if (lang) out.lang = lang;
-  if (framework) out.framework = framework;
+  if (filePath) {
+    const lang = detectContext(filePath);
+    const framework = detectFrameworkFromProject(filePath, opts);
+    if (lang) out.lang = lang;
+    if (framework) out.framework = framework;
+    return out;
+  }
+  // CWD fallback: Bash/shell commands and UserPromptSubmit have no file_path.
+  // Without scope hints the Qdrant pre-filter and post-filter are both
+  // bypassed (experience-core.js#applyScopeFilter returns points unchanged
+  // when filePath is null) — cross-language hints then bleed into the top-K.
+  if (cwd && typeof cwd === 'string') {
+    const framework = detectFrameworkFromProject(cwd, opts);
+    const lang = detectLangFromCwd(cwd) || (framework ? _FW_DEFAULT_LANG[framework] : null) || null;
+    if (lang) out.lang = lang;
+    if (framework) out.framework = framework;
+  }
   return out;
 }
 
