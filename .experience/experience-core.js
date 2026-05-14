@@ -226,7 +226,13 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     // otherwise foreign-language hints leak through for Bash/UserPromptSubmit
     // hooks (no filePath) and the Qdrant pre-filter cannot help because
     // scope_lang is stored nested inside payload.json, not as a flat key.
-    if (!filePath && !callerLang) return points;
+    // For STRICT collections (behavioral/selfqa), zero caller context is
+    // worst case: every cross-language seed surfaces. Drop the entire
+    // strict-collection batch and keep only the permissive principles
+    // collection visible until the caller provides scope.
+    if (!filePath && !callerLang) {
+      return STRICT_SCOPE_COLLECTIONS.has(collectionName || '') ? [] : points;
+    }
     const fileExt = filePath ? (filePath.replace(/\\/g, '/').split('.').pop()?.toLowerCase() || '') : '';
     const JS_FAMILY = new Set(['ts', 'tsx', 'js', 'jsx']);
     const CSS_FAMILY = new Set(['css', 'scss', 'less', 'sass']);
