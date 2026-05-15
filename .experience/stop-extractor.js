@@ -167,10 +167,128 @@ function findLatestCodexSession(homeDir = getHomeDir(), now = Date.now()) {
   };
 }
 
+function resolveGeminiProjectPath(dirName, homeDir) {
+  try {
+    const projectsFile = path.join(homeDir, '.gemini', 'projects.json');
+    const data = safeReadJson(projectsFile, {});
+    const projects = data.projects || {};
+    // Build reverse map: slug → absolute path
+    for (const [absPath, slug] of Object.entries(projects)) {
+      if (slug === dirName) return absPath;
+    }
+  } catch {}
+  return null;
+}
+
+function findLatestGeminiSession(homeDir = getHomeDir(), now = Date.now()) {
+  const tmpDir = path.join(homeDir, '.gemini', 'tmp');
+  if (!fs.existsSync(tmpDir)) return null;
+
+  let latestFile = null;
+  let latestMtime = 0;
+  let latestProjectPath = null;
+
+  let topEntries;
+  try {
+    topEntries = fs.readdirSync(tmpDir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+
+  for (const topEntry of topEntries) {
+    if (!topEntry.isDirectory()) continue;
+    const chatsDir = path.join(tmpDir, topEntry.name, 'chats');
+    let chatEntries;
+    try {
+      chatEntries = fs.readdirSync(chatsDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    // Determine if this dir is a named project (not a sha256 hash)
+    const isHash = /^[0-9a-f]{60,}$/.test(topEntry.name);
+    const projectPath = isHash ? null : resolveGeminiProjectPath(topEntry.name, homeDir);
+
+    for (const chatEntry of chatEntries) {
+      if (!chatEntry.isFile()) continue;
+      if (!/^session-.*\.(json|jsonl)$/.test(chatEntry.name)) continue;
+      const filePath = path.join(chatsDir, chatEntry.name);
+      let stat;
+      try {
+        stat = fs.statSync(filePath);
+      } catch {
+        continue;
+      }
+      if (stat.mtimeMs > latestMtime) {
+        latestMtime = stat.mtimeMs;
+        latestFile = filePath;
+        latestProjectPath = projectPath;
+      }
+    }
+  }
+
+  if (!latestFile) return null;
+  if ((now - latestMtime) > SESSION_MAX_AGE_MS) return null;
+  return {
+    runtime: 'gemini',
+    file: latestFile,
+    mtimeMs: latestMtime,
+    projectPath: latestProjectPath,
+  };
+}
+
+function buildGeminiSessionData(logPath) {
+  const transcriptLines = [];
+  let messages = [];
+
+  if (logPath.endsWith('.jsonl')) {
+    // New format: each line is a JSON object (message)
+    const lines = readJsonlLines(logPath);
+    for (const line of lines) {
+      try { messages.push(JSON.parse(line)); } catch {}
+    }
+  } else {
+    // Old format: single JSON file with messages array
+    const data = safeReadJson(logPath, {});
+    messages = Array.isArray(data.messages) ? data.messages : [];
+  }
+
+  for (const msg of messages) {
+    if (!msg || !msg.type) continue;
+
+    if (msg.type === 'user') {
+      const text = trimText(msg.content || '', 600);
+      if (text) transcriptLines.push(`User: ${text}`);
+      continue;
+    }
+
+    if (msg.type === 'gemini') {
+      const text = trimText(msg.content || '', 600);
+      if (text) transcriptLines.push(`Assistant: ${text}`);
+
+      if (Array.isArray(msg.toolCalls)) {
+        for (const tc of msg.toolCalls) {
+          if (!tc || !tc.name) continue;
+          transcriptLines.push(formatToolCall(tc.name, tc.args || {}));
+          const output = tc.result?.[0]?.functionResponse?.response?.output;
+          const normalized = normalizeToolOutput(output || '');
+          if (normalized) transcriptLines.push(`ToolOutput: ${normalized}`);
+        }
+      }
+    }
+  }
+
+  return {
+    transcript: transcriptLines.join('\n'),
+    totalLines: messages.length,
+    projectPath: null, // resolved by findLatestGeminiSession
+  };
+}
+
 function findCurrentSession(homeDir = getHomeDir(), now = Date.now()) {
   const candidates = [
     findLatestClaudeSession(homeDir, now),
     findLatestCodexSession(homeDir, now),
+    findLatestGeminiSession(homeDir, now),
   ].filter(Boolean);
   if (candidates.length === 0) return null;
   candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
@@ -202,9 +320,12 @@ function parseJsonString(input) {
 function normalizeToolName(name) {
   const tool = String(name || '').trim().toLowerCase();
   if (!tool) return 'Tool';
-  if (tool === 'exec_command' || tool === 'write_stdin') return 'Bash';
+  if (tool === 'exec_command' || tool === 'write_stdin' || tool === 'run_shell_command') return 'Bash';
   if (tool === 'apply_patch' || tool === 'edit' || tool === 'replace_in_file') return 'Edit';
   if (tool === 'write_file' || tool === 'create_file') return 'Write';
+  if (tool === 'list_directory' || tool === 'glob') return 'Glob';
+  if (tool === 'grep') return 'Grep';
+  if (tool === 'read_file') return 'Read';
   return name;
 }
 
@@ -368,6 +489,11 @@ function buildCodexSessionData(logPath, startLine) {
 function buildSessionData(session, startLine) {
   if (!session) return { transcript: '', totalLines: 0, projectPath: null };
   if (session.runtime === 'codex') return buildCodexSessionData(session.file, startLine);
+  if (session.runtime === 'gemini') {
+    const data = buildGeminiSessionData(session.file);
+    data.projectPath = session.projectPath || null;
+    return data;
+  }
   return buildClaudeSessionData(session.file, startLine);
 }
 
@@ -517,9 +643,11 @@ module.exports = {
   extractProjectSlug,
   findLatestClaudeSession,
   findLatestCodexSession,
+  findLatestGeminiSession,
   findCurrentSession,
   buildClaudeSessionData,
   buildCodexSessionData,
+  buildGeminiSessionData,
   buildSessionData,
   countImportantSignals,
   runStopExtractor,

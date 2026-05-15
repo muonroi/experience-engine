@@ -11,6 +11,8 @@ const {
   findCurrentSession,
   runStopExtractor,
   buildCodexSessionData,
+  buildGeminiSessionData,
+  findLatestGeminiSession,
   countImportantSignals,
 } = require('./stop-extractor');
 const { compactTranscript, MAX_TRANSCRIPT_CHARS } = require('./extract-compact');
@@ -159,6 +161,76 @@ test('compactTranscript preserves important ToolOutput lines and nearby context'
   assert.match(compacted, /ToolCall Bash: npm test -- auth/);
   assert.match(compacted, /ToolOutput: FAIL auth\.spec\.ts/);
   assert.match(compacted, /Assistant: I will patch the auth middleware next\./);
+});
+
+function writeGeminiSession(homeDir, projectSlug, mtimeMs = Date.now()) {
+  const chatsDir = path.join(homeDir, '.gemini', 'tmp', projectSlug, 'chats');
+  const filePath = path.join(chatsDir, 'session-abc123.jsonl');
+  const messages = [
+    { type: 'user', content: 'fix the failing auth test' },
+    {
+      type: 'gemini',
+      content: 'I will run the tests first.',
+      toolCalls: [
+        {
+          id: 'run_shell_command-1',
+          name: 'run_shell_command',
+          args: { command: 'npm test -- auth', description: 'run auth tests' },
+          result: [{ functionResponse: { response: { output: 'Command: npm test -- auth\nOutput:\nFAIL auth.spec.ts' } } }],
+        },
+        {
+          id: 'replace_in_file-1',
+          name: 'replace_in_file',
+          args: { file_path: 'src/auth.ts', old_string: 'bad', new_string: 'good' },
+          result: [{ functionResponse: { response: { output: 'File updated.' } } }],
+        },
+      ],
+    },
+    { type: 'user', content: 'looks good now' },
+  ];
+  fs.mkdirSync(chatsDir, { recursive: true });
+  fs.writeFileSync(filePath, messages.map((m) => JSON.stringify(m)).join('\n'));
+  fs.utimesSync(filePath, mtimeMs / 1000, mtimeMs / 1000);
+  return filePath;
+}
+
+test('buildGeminiSessionData parses messages and tool calls correctly', () => {
+  const homeDir = makeTempHome();
+  const filePath = writeGeminiSession(homeDir, 'my-project');
+
+  const result = buildGeminiSessionData(filePath);
+  assert.match(result.transcript, /User: fix the failing auth test/);
+  assert.match(result.transcript, /Assistant: I will run the tests first\./);
+  assert.match(result.transcript, /ToolCall Bash: npm test -- auth/);
+  assert.match(result.transcript, /ToolOutput: FAIL auth\.spec\.ts/);
+  assert.match(result.transcript, /ToolCall Edit: src\/auth\.ts/);
+  assert.match(result.transcript, /User: looks good now/);
+});
+
+test('findLatestGeminiSession resolves projectPath from projects.json for named dirs', () => {
+  const homeDir = makeTempHome();
+  const now = Date.now();
+  const projectsFile = path.join(homeDir, '.gemini', 'projects.json');
+  fs.mkdirSync(path.dirname(projectsFile), { recursive: true });
+  fs.writeFileSync(projectsFile, JSON.stringify({ projects: { 'd:\\sources\\core\\my-project': 'my-project' } }));
+  writeGeminiSession(homeDir, 'my-project', now - 1_000);
+
+  const session = findLatestGeminiSession(homeDir, now);
+  assert.ok(session);
+  assert.equal(session.runtime, 'gemini');
+  assert.equal(session.projectPath, 'd:\\sources\\core\\my-project');
+});
+
+test('findCurrentSession prefers Gemini session when newest', () => {
+  const homeDir = makeTempHome();
+  writeCoreStub(homeDir);
+  const now = Date.now();
+  writeClaudeSession(homeDir, path.join('sample-project', 'session.jsonl'), now - 10_000);
+  writeGeminiSession(homeDir, 'my-project', now - 1_000);
+
+  const session = findCurrentSession(homeDir, now);
+  assert.ok(session);
+  assert.equal(session.runtime, 'gemini');
 });
 
 test('runStopExtractor accepts shorter but signal-dense Codex sessions', async () => {
