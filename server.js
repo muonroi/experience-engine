@@ -909,10 +909,11 @@ const KNOWN_COLLECTIONS = new Set([
 ]);
 
 // ensureCollections — creates bb-* Qdrant collections at server startup if absent.
-// Vector dims match experience-behavioral (1536 for OpenAI text-embedding-3-small).
+// Vector dims must match experience-behavioral (1024 — verified empirically against
+// the live Qdrant instance; this is the embedding model used for principles/behavioral).
 async function ensureCollections() {
   const BB_COLLECTIONS = ['bb-behavioral', 'bb-recipes'];
-  const VECTOR_SIZE = 1536;
+  const VECTOR_SIZE = 1024;
   for (const col of BB_COLLECTIONS) {
     try {
       const check = await fetch(`${QDRANT_BASE}/collections/${col}`, {
