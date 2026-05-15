@@ -649,6 +649,49 @@ async function handleEvolve(req, res) {
   json(res, { ...results, success: true });
 }
 
+// Direct structured-point ingestion — used by backfill scripts (e.g. ingest-bb-to-ee.mts)
+// that have curated content + payload to upsert without going through the extraction
+// pipeline. Embeds the text via experience-core and upserts to Qdrant directly.
+// KNOWN_COLLECTIONS still gates which collections are writable.
+async function handleIngestPoint(req, res) {
+  const body = await readBody(req);
+  const v = validateBody(body, {
+    id: { type: 'string', required: true },
+    text: { type: 'string', required: true },
+    collection: { type: 'string', required: true },
+  });
+  if (!v.ok) return error(res, v.error);
+  if (!KNOWN_COLLECTIONS.has(body.collection)) {
+    return error(res, `unknown collection: ${body.collection}`);
+  }
+  try {
+    const { getEmbeddingRaw } = loadExperienceCore();
+    const vector = await getEmbeddingRaw(body.text);
+    if (!Array.isArray(vector) || vector.length === 0) {
+      return error(res, 'embedding_failed');
+    }
+    const point = {
+      id: body.id,
+      vector,
+      payload: { ...(body.payload || {}), text: body.text },
+    };
+    const qdrantBase = _cfg.qdrant?.url || 'http://localhost:6333';
+    const upsert = await fetch(`${qdrantBase}/collections/${body.collection}/points?wait=true`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ points: [point] }),
+    });
+    if (!upsert.ok) {
+      const errBody = await upsert.text();
+      return error(res, `qdrant_upsert_failed: ${upsert.status} ${errBody.slice(0, 200)}`);
+    }
+    json(res, { id: body.id, collection: body.collection, success: true });
+  } catch (err) {
+    slog('error', 'ingest_point_error', { error: String(err) });
+    return error(res, String(err));
+  }
+}
+
 // Hint quality stats — aggregates Qdrant points to surface noise patterns
 // (cross-language seeds, high-ignore points, unscoped legacy seeds). Used by
 // the `exp-hint-stats` CLI tool and by manual triage during noise reviews.
@@ -1280,6 +1323,7 @@ const server = http.createServer(async (req, res) => {
       if (p === '/api/posttool') return await handlePostTool(req, res);
       if (p === '/api/prompt-stale') return await handlePromptStale(req, res);
       if (p === '/api/extract') return await handleExtract(req, res);
+      if (p === '/api/ingest-point') return await handleIngestPoint(req, res);
       if (p === '/api/evolve') return await handleEvolve(req, res);
       if (p === '/api/principles/share') return await handleShare(req, res);
       if (p === '/api/principles/import') return await handleImport(req, res);
