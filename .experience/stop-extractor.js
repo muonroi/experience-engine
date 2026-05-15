@@ -257,16 +257,45 @@ function formatExecCommandEnd(payload) {
 
 function buildClaudeSessionData(logPath, startLine) {
   const lines = readJsonlLines(logPath);
-  const transcript = lines.slice(startLine).map((line) => {
-    try {
-      const entry = JSON.parse(line);
-      return contentBlocksToText(entry.message?.content);
-    } catch {
-      return '';
+  const transcriptLines = [];
+
+  for (const line of lines.slice(startLine)) {
+    let entry;
+    try { entry = JSON.parse(line); } catch { continue; }
+
+    const content = entry.message?.content;
+    const role = entry.message?.role;
+    if (!content) continue;
+
+    const blocks = Array.isArray(content) ? content : [{ type: 'text', text: String(content) }];
+    for (const block of blocks) {
+      if (!block) continue;
+      // text block — assistant narration or user message
+      if (block.type === 'text' || typeof block.text === 'string') {
+        const text = trimText(block.text || block.content || '', 600);
+        if (!text) continue;
+        const label = role === 'user' ? 'User' : 'Assistant';
+        transcriptLines.push(`${label}: ${text}`);
+        continue;
+      }
+      // tool_use block — e.g. Edit, Write, Bash calls
+      if (block.type === 'tool_use' && block.name) {
+        transcriptLines.push(formatToolCall(block.name, block.input));
+        continue;
+      }
+      // tool_result block — tool output / error
+      if (block.type === 'tool_result') {
+        const resultContent = Array.isArray(block.content)
+          ? block.content.map(c => c.text || '').filter(Boolean).join(' ')
+          : String(block.content || '');
+        const normalized = normalizeToolOutput(resultContent);
+        if (normalized) transcriptLines.push(`ToolOutput: ${normalized}`);
+      }
     }
-  }).filter(Boolean).join('\n');
+  }
+
   return {
-    transcript,
+    transcript: transcriptLines.join('\n'),
     totalLines: lines.length,
     projectPath: extractProjectSlug(logPath),
   };
