@@ -39,6 +39,7 @@ const os = require('node:os');
 const { parseSince, loadEvents, filterEvents, computeStats, loadTop5 } = require('./tools/exp-stats');
 const { checkGates } = require('./tools/exp-gates');
 const { validateBody } = require('./.experience/src/validate');
+const { canonicalizeProjectSlug } = require('./lib/path-canonical');
 
 // --- Structured logger (zero-dep) ---
 function slog(level, msg, meta = {}) {
@@ -149,13 +150,23 @@ function deriveCallerMeta(body) {
     if (typeof enricher.enrichSourceMeta !== 'function') return flat;
     const cwd = body?.cwd || null;
     const derived = enricher.enrichSourceMeta(body?.toolInput || body?.tool_input || null, undefined, cwd) || {};
+    const mergedSlug = flat.project_slug || (typeof derived.project_slug === 'string' ? derived.project_slug : null);
+    // Phase 1: if still no slug, canonicalize from file_path or cwd.
+    const rawPathForCanon = body?.toolInput?.file_path || body?.tool_input?.file_path || body?.cwd || null;
+    const canonSlug = (!mergedSlug && rawPathForCanon) ? canonicalizeProjectSlug(rawPathForCanon) : null;
     return {
       lang: flat.lang || (typeof derived.lang === 'string' ? derived.lang : null),
       framework: flat.framework || (typeof derived.framework === 'string' ? derived.framework : null),
-      project_slug: flat.project_slug || (typeof derived.project_slug === 'string' ? derived.project_slug : null),
+      project_slug: mergedSlug || canonSlug,
     };
   } catch {
-    return flat;
+    // Fallback when enricher throws: try path canon from raw fields.
+    const rawFallbackPath = body?.toolInput?.file_path || body?.tool_input?.file_path || body?.cwd || null;
+    return {
+      lang: flat.lang,
+      framework: flat.framework,
+      project_slug: flat.project_slug || (rawFallbackPath ? canonicalizeProjectSlug(rawFallbackPath) : null),
+    };
   }
 }
 
@@ -737,7 +748,16 @@ async function handleStats(req, res, url) {
   const stats = computeStats(events);
   const top5 = loadTop5(storeDir);
 
-  json(res, { since: allTime ? 'all' : (sinceParam || '7d'), ...stats, top5 });
+  // Phase 1: build bySlug bucket from events that carry project_slug or project.
+  const bySlug = {};
+  for (const ev of events) {
+    const slug = (typeof ev.project_slug === 'string' && ev.project_slug)
+      ? ev.project_slug
+      : (typeof ev.project === 'string' && ev.project ? ev.project : null);
+    if (slug) bySlug[slug] = (bySlug[slug] || 0) + 1;
+  }
+
+  json(res, { since: allTime ? 'all' : (sinceParam || '7d'), ...stats, top5, bySlug });
 }
 
 async function handleGates(req, res) {
@@ -880,7 +900,46 @@ async function handleTimeline(req, res, url) {
   json(res, { topic, timeline, count: timeline.length });
 }
 
-const KNOWN_COLLECTIONS = new Set(['experience-behavioral', 'experience-principles']);
+const KNOWN_COLLECTIONS = new Set([
+  'experience-behavioral',
+  'experience-principles',
+  // Phase 2: BB-specific collections
+  'bb-behavioral',
+  'bb-recipes',
+]);
+
+// ensureCollections — creates bb-* Qdrant collections at server startup if absent.
+// Vector dims match experience-behavioral (1536 for OpenAI text-embedding-3-small).
+async function ensureCollections() {
+  const BB_COLLECTIONS = ['bb-behavioral', 'bb-recipes'];
+  const VECTOR_SIZE = 1536;
+  for (const col of BB_COLLECTIONS) {
+    try {
+      const check = await fetch(`${QDRANT_BASE}/collections/${col}`, {
+        headers: { 'Content-Type': 'application/json', ...(QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {}) },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (check.status === 200) {
+        slog('info', 'collection_exists', { collection: col });
+        continue;
+      }
+      const create = await fetch(`${QDRANT_BASE}/collections/${col}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...(QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {}) },
+        body: JSON.stringify({ vectors: { size: VECTOR_SIZE, distance: 'Cosine' } }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (create.ok) {
+        slog('info', 'collection_created', { collection: col });
+      } else {
+        const errBody = await create.text();
+        slog('error', 'collection_create_failed', { collection: col, status: create.status, body: errBody });
+      }
+    } catch (err) {
+      slog('error', 'collection_ensure_error', { collection: col, error: String(err) });
+    }
+  }
+}
 
 async function handleSearch(req, res) {
   if (!requireAuth(req, res)) return;
@@ -1265,6 +1324,8 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 if (require.main === module) {
   server.listen(PORT, () => {
     slog('info', 'server_started', { port: PORT, health: `http://localhost:${PORT}/health` });
+    // Phase 2: ensure bb-behavioral and bb-recipes collections exist in Qdrant.
+    ensureCollections().catch((err) => slog('error', 'ensure_collections_failed', { error: String(err) }));
   });
 }
 
@@ -1281,6 +1342,7 @@ module.exports = {
   handleGraph,
   handleTimeline,
   handleSearch,
+  ensureCollections,
   handlePilContext,
   handleShare,
   handleImport,
