@@ -86,10 +86,12 @@ async function* scrollCollection(collection, batchSize) {
 }
 
 /**
- * Patch payload fields on a list of points (PATCH /points/payload).
+ * Set payload fields on a list of points (Qdrant set-payload API).
+ * The set-payload endpoint preserves keys not in the payload object —
+ * we are not overwriting the whole payload, only adding `project_slug`.
  */
 async function patchPayloads(collection, updates) {
-  // Qdrant PATCH /points/payload requires a single payload + list of point IDs.
+  // Qdrant set-payload requires a single payload object + list of point IDs.
   // Group by slug to minimize requests.
   const bySlug = {};
   for (const { id, slug } of updates) {
