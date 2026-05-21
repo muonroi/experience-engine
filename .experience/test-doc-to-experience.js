@@ -18,7 +18,7 @@ test('buildPrompt includes pattern fields and demands concrete failureMode', () 
   const prompt = buildPrompt(seedDoc);
   assert.match(prompt, /LoggingHook<TContext>/);
   assert.match(prompt, /Lang\/Framework: C# \/ rule-engine/);
-  assert.match(prompt, /NOT "misapplied_pattern"/);
+  assert.match(prompt, /NEVER "misapplied_pattern"/);
   assert.match(prompt, /missing_validation/);
 });
 
