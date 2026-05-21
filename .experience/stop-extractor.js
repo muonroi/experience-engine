@@ -712,23 +712,44 @@ async function runBackfillExtractor(options = {}) {
 
   const marker = readMarker(homeDir);
   const sessions = findAllRecentSessions(homeDir, now, maxAgeMs);
-  const candidates = sessions.slice(0, maxSessions);
+  // Prioritise untracked sessions so the historical backlog (e.g. 380 Claude
+  // files left behind by X-close on the terminal) actually drains. Without
+  // this, the 5 newest active files keep consuming the entire batch budget
+  // forever and older sessions never get a turn.
+  const untracked = sessions.filter((s) => !marker.files[s.file]);
+  const tracked = sessions.filter((s) => marker.files[s.file]);
+  const candidates = [...untracked, ...tracked].slice(0, maxSessions);
 
   const result = { mode: 'backfill', processed: 0, skipped: 0, errors: 0, extracted: 0, sessions: [] };
+  const stamp = () => new Date().toISOString();
   for (const session of candidates) {
     const startLine = marker.files[session.file]?.line || 0;
     let sessionData;
     try { sessionData = buildSessionData(session, startLine); } catch (e) {
+      // Mark unparseable files so the same broken file doesn't reblock the
+      // next backfill batch.
+      marker.files[session.file] = { line: startLine, extractedAt: stamp(), error: true };
       result.errors++; continue;
     }
-    if (sessionData.totalLines <= startLine) { result.skipped++; continue; }
+    if (sessionData.totalLines <= startLine) {
+      marker.files[session.file] = { line: sessionData.totalLines, extractedAt: stamp() };
+      result.skipped++; continue;
+    }
     const { ok, newLines } = shouldExtractDelta(sessionData, startLine, minNewLines);
-    if (!ok) { result.skipped++; continue; }
+    if (!ok) {
+      // Session is too short to be worth an extraction call. Advance the
+      // marker so we don't reconsider it every backfill run (otherwise short
+      // files stick at the top of the queue forever and starve longer ones).
+      marker.files[session.file] = { line: sessionData.totalLines, extractedAt: stamp() };
+      result.skipped++; continue;
+    }
 
     try {
       const { count, transcript } = await extractAndStore(homeDir, session, sessionData, 'session-start-backfill');
+      // Always advance the marker — even when transcript is empty or count
+      // is 0 — so a non-yielding session does not block the queue.
+      marker.files[session.file] = { line: sessionData.totalLines, extractedAt: stamp() };
       if (!transcript) { result.skipped++; continue; }
-      marker.files[session.file] = { line: sessionData.totalLines, extractedAt: new Date().toISOString() };
       result.processed++;
       result.extracted += count;
       result.sessions.push({ runtime: session.runtime, file: session.file, newLines, extracted: count });
