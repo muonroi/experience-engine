@@ -55,8 +55,11 @@ const BATCH_DIR = path.join(__dirname, 'doc-to-exp-batches');
 const SOURCE_FROM = 'seed-org-doc';
 const TARGET_FROM = 'doc-to-experience';
 
-// Conservative defaults so a full 1360-entry run stays survivable.
-const DEFAULT_CONCURRENCY = 3;
+// Concurrency 8 is the sweet spot for SiliconFlow Qwen3-14B at ~5s/call —
+// stays under typical rate limits while cutting a 1360-entry run from
+// ~38 min (concurrency 3) to ~14 min. Bump higher only after watching
+// for HTTP 429s in stderr.
+const DEFAULT_CONCURRENCY = 8;
 const RETRY_PER_ENTRY = 1;
 const VALID_LANGS = new Set([
   'C#', 'JavaScript', 'TypeScript', 'Python', 'Go', 'Rust', 'Java', 'Shell', 'all',
@@ -150,29 +153,28 @@ function buildPrompt(doc) {
   const lang = doc.scope?.lang || 'all';
   const framework = doc.scope?.framework || 'any';
 
-  return `You are converting a documented coding pattern into a concrete experience entry — a lesson rooted in the specific bug or incident the pattern prevents. Treat the input as if a previous session got bitten by violating the pattern, and you are recording that lesson so a future session can avoid the same mistake.
+  return `Convert this doc-pattern into a failure-rooted experience entry (the bug it prevents, not the pattern itself).
 
-Documented pattern (input):
-- Trigger context: ${trigger}
-- Recommended approach: ${guidance}
-- Stated rationale: ${why}
-- Anti-patterns to avoid: ${alts.length ? alts.join(' | ') : '(none stated)'}
-- Language: ${lang}
-- Framework: ${framework}
+Input:
+- Context: ${trigger}
+- Pattern: ${guidance}
+- Rationale: ${why}
+- Anti: ${alts.length ? alts.join(' | ') : '(none)'}
+- Lang/Framework: ${lang} / ${framework}
 
-Task:
-1. Identify the CONCRETE failure mode the pattern prevents. NOT "misapplied_pattern" (generic). Use one of: missing_validation, wrong_lifetime_scope, race_condition, leaked_resource, silent_swallow, incorrect_error_handling, unsafe_deserialization, blocking_io_in_handler, double_dispatch, missing_idempotency, stale_cache, security_misconfig, n_plus_one, premature_optimization, missing_observability, or invent a specific snake_case name if none fit.
-2. Restate trigger as a session-form pattern ("when X happens in Y context"), NOT a copy of the doc trigger.
-3. Make solution a single concrete preventive action.
-4. Make judgment a portable rule ("X must Y because Z") that another session can apply.
-5. Output 2-4 short condition keywords for retrieval (lowercase, no spaces inside each).
-6. Set evidenceClass = "review" (this is a curated lesson, not a runtime log).
-7. Set category from: code | git | deploy | infra | security | review-meta | testing-meta | shell-meta.
-8. Preserve scope.lang and scope.framework from input.
-9. If the pattern is too vague to produce a concrete failure mode, output {"skip":true,"reason":"too_abstract"}.
+Rules:
+- failureMode: snake_case, SPECIFIC (e.g. missing_validation, wrong_lifetime_scope, race_condition, silent_swallow, missing_observability, n_plus_one, stale_cache, security_misconfig, blocking_io_in_handler, missing_idempotency). NEVER "misapplied_pattern".
+- trigger: session-form ("when X in Y context"), not a copy of input.
+- solution: one concrete preventive action.
+- judgment: portable rule ("X must Y because Z").
+- conditions: 2-4 lowercase keywords.
+- evidenceClass: "review".
+- category: code | git | deploy | infra | security | review-meta | testing-meta | shell-meta.
+- Preserve scope.lang="${lang}" and scope.framework="${framework}".
+- If too vague for a concrete failureMode → {"skip":true,"reason":"too_abstract"}.
 
-Output JSON only, no markdown:
-{"trigger":"...","question":"...","reasoning":["step1","step2"],"solution":"...","why":"...","failureMode":"snake_case_specific","judgment":"...","conditions":["k1","k2"],"evidenceClass":"review","category":"code","scope":{"lang":"${lang}","framework":"${framework}"},"alternativesToAvoid":["concrete antipattern"]}`;
+Output JSON only:
+{"trigger":"...","question":"...","solution":"...","why":"...","failureMode":"snake_case_specific","judgment":"...","conditions":["k1","k2"],"evidenceClass":"review","category":"code","scope":{"lang":"${lang}","framework":"${framework}"},"alternativesToAvoid":["concrete antipattern"]}`;
 }
 
 // ---------- LLM result parsing ----------
