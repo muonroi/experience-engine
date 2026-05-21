@@ -207,6 +207,47 @@ test('buildGeminiSessionData parses messages and tool calls correctly', () => {
   assert.match(result.transcript, /User: looks good now/);
 });
 
+test('buildGeminiSessionData handles real-world Gemini shapes (array content + grep_search/replace tool names)', () => {
+  const homeDir = makeTempHome();
+  const chatsDir = path.join(homeDir, '.gemini', 'tmp', 'real-project', 'chats');
+  const filePath = path.join(chatsDir, 'session-real.json');
+  const data = {
+    messages: [
+      { type: 'user', content: [{ text: 'find usages of flowcore_story' }] },
+      {
+        type: 'gemini',
+        content: 'I will grep the repo.',
+        toolCalls: [
+          {
+            name: 'grep_search',
+            args: { pattern: 'flowcore_story' },
+            result: [{ functionResponse: { response: { output: 'No matches found.' } } }],
+          },
+          {
+            name: 'search_file_content',
+            args: { query: 'flowcore' },
+            result: [{ functionResponse: { response: { output: 'No matches.' } } }],
+          },
+          {
+            name: 'replace',
+            args: { file_path: 'src/x.ts', old_string: 'a', new_string: 'b' },
+            result: [{ functionResponse: { response: { output: 'ok' } } }],
+          },
+        ],
+      },
+    ],
+  };
+  fs.mkdirSync(chatsDir, { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(data));
+
+  const result = buildGeminiSessionData(filePath);
+  assert.match(result.transcript, /User: find usages of flowcore_story/);
+  assert.doesNotMatch(result.transcript, /\[object Object\]/);
+  assert.match(result.transcript, /ToolCall Grep: .*flowcore_story/);
+  assert.match(result.transcript, /ToolCall Grep: .*flowcore/);
+  assert.match(result.transcript, /ToolCall Edit: src\/x\.ts/);
+});
+
 test('findLatestGeminiSession resolves projectPath from projects.json for named dirs', () => {
   const homeDir = makeTempHome();
   const now = Date.now();
