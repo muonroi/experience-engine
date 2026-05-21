@@ -14,6 +14,10 @@ const {
   buildGeminiSessionData,
   findLatestGeminiSession,
   countImportantSignals,
+  runBackfillExtractor,
+  findAllRecentSessions,
+  readMarker,
+  writeMarker,
 } = require('./stop-extractor');
 const { compactTranscript, MAX_TRANSCRIPT_CHARS } = require('./extract-compact');
 
@@ -294,4 +298,79 @@ test('runStopExtractor accepts shorter but signal-dense Codex sessions', async (
   assert.equal(result.extracted, 2);
   const captured = JSON.parse(fs.readFileSync(path.join(homeDir, '.experience', 'captured.json'), 'utf8'));
   assert.match(captured.transcript, /FAIL auth timeout while validating jwt refresh/);
+});
+
+test('readMarker migrates legacy {file, line} marker into per-file shape', () => {
+  const homeDir = makeTempHome();
+  const markerPath = path.join(homeDir, '.experience', '.stop-marker.json');
+  fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+  fs.writeFileSync(markerPath, JSON.stringify({ file: '/old/session.jsonl', line: 42 }));
+
+  const marker = readMarker(homeDir);
+  assert.equal(marker.files['/old/session.jsonl'].line, 42);
+});
+
+test('writeMarker preserves legacy file/line fields for backward compat', () => {
+  const homeDir = makeTempHome();
+  fs.mkdirSync(path.join(homeDir, '.experience'), { recursive: true });
+  writeMarker(homeDir, {
+    files: {
+      '/a.jsonl': { line: 10, extractedAt: '2026-05-20T10:00:00.000Z' },
+      '/b.jsonl': { line: 20, extractedAt: '2026-05-21T10:00:00.000Z' },
+    },
+  });
+  const raw = JSON.parse(fs.readFileSync(path.join(homeDir, '.experience', '.stop-marker.json'), 'utf8'));
+  assert.equal(raw.files['/a.jsonl'].line, 10);
+  assert.equal(raw.files['/b.jsonl'].line, 20);
+  assert.equal(raw.file, '/b.jsonl');
+  assert.equal(raw.line, 20);
+});
+
+test('findAllRecentSessions enumerates Claude + Codex + Gemini sorted newest-first', () => {
+  const homeDir = makeTempHome();
+  const now = Date.now();
+  writeClaudeSession(homeDir, path.join('proj-a', 'session.jsonl'), now - 60_000);
+  writeCodexSession(homeDir, 'rollout-old.jsonl', now - 120_000);
+  writeGeminiSession(homeDir, 'gem-proj', now - 30_000);
+
+  const sessions = findAllRecentSessions(homeDir, now);
+  assert.equal(sessions.length, 3);
+  assert.equal(sessions[0].runtime, 'gemini');
+  assert.equal(sessions[1].runtime, 'claude');
+  assert.equal(sessions[2].runtime, 'codex');
+});
+
+test('runBackfillExtractor processes every unprocessed session in the window', async () => {
+  const homeDir = makeTempHome();
+  writeCoreStub(homeDir);
+  const now = Date.now();
+  writeClaudeSession(homeDir, path.join('proj-x', 'session.jsonl'), now - 3 * 60 * 60 * 1000);
+  writeCodexSession(homeDir, 'rollout-x.jsonl', now - 2 * 60 * 60 * 1000);
+  writeGeminiSession(homeDir, 'gem-x', now - 1 * 60 * 60 * 1000);
+
+  const result = await runBackfillExtractor({ homeDir, now });
+  assert.equal(result.mode, 'backfill');
+  assert.equal(result.processed, 3);
+  assert.ok(result.extracted >= 3);
+  assert.equal(result.sessions[0].runtime, 'gemini');
+
+  const marker = readMarker(homeDir);
+  assert.equal(Object.keys(marker.files).length, 3);
+
+  const again = await runBackfillExtractor({ homeDir, now });
+  assert.equal(again.processed, 0);
+  assert.equal(again.skipped, 3);
+});
+
+test('runBackfillExtractor caps at maxSessions (newest first)', async () => {
+  const homeDir = makeTempHome();
+  writeCoreStub(homeDir);
+  const now = Date.now();
+  for (let i = 0; i < 8; i++) {
+    writeClaudeSession(homeDir, path.join(`proj-${i}`, 'session.jsonl'), now - (i + 1) * 60_000);
+  }
+
+  const result = await runBackfillExtractor({ homeDir, now, maxSessions: 3 });
+  assert.equal(result.processed, 3);
+  assert.equal(result.sessions.length, 3);
 });
