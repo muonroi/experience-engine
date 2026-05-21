@@ -10,6 +10,11 @@ const MIN_NEW_LINES = 5;
 const SESSION_MAX_AGE_MS = 30 * 60 * 1000;
 const MIN_IMPORTANT_SIGNALS = 4;
 const MIN_SIGNAL_TRANSCRIPT_CHARS = 180;
+// Backfill: cover sessions a STOP hook may have missed (user closes the
+// terminal with the window's X button instead of letting the agent exit
+// cleanly, /clear, /compact, ...). Bounded so SessionStart stays fast.
+const BACKFILL_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const BACKFILL_MAX_SESSIONS = 5;
 
 function getHomeDir() {
   return process.env.HOME || os.homedir();
@@ -141,6 +146,26 @@ function walkLatestJsonl(rootDir, matcher, now = Date.now()) {
   if (!latest) return null;
   if ((now - latestMtime) > SESSION_MAX_AGE_MS) return null;
   return { file: latest, mtimeMs: latestMtime };
+}
+
+function walkAllJsonl(rootDir, matcher, now = Date.now(), maxAgeMs = BACKFILL_MAX_AGE_MS) {
+  if (!fs.existsSync(rootDir)) return [];
+  const found = [];
+  const visit = (dir) => {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const filePath = path.join(dir, entry.name);
+      if (entry.isDirectory()) { visit(filePath); continue; }
+      if (!entry.isFile() || !matcher(filePath, entry.name)) continue;
+      let stat;
+      try { stat = fs.statSync(filePath); } catch { continue; }
+      if ((now - stat.mtimeMs) > maxAgeMs) continue;
+      found.push({ file: filePath, mtimeMs: stat.mtimeMs });
+    }
+  };
+  visit(rootDir);
+  return found;
 }
 
 function findLatestClaudeSession(homeDir = getHomeDir(), now = Date.now()) {
@@ -293,6 +318,73 @@ function findCurrentSession(homeDir = getHomeDir(), now = Date.now()) {
   if (candidates.length === 0) return null;
   candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
   return candidates[0];
+}
+
+// Enumerate every session file (Claude + Codex + Gemini) modified within
+// maxAgeMs, sorted newest-first. Used by backfill mode so a SessionStart
+// hook can re-scan sessions that a STOP hook missed (terminal closed with
+// X button, /clear, /compact, OS crash, ...).
+function findAllRecentSessions(homeDir = getHomeDir(), now = Date.now(), maxAgeMs = BACKFILL_MAX_AGE_MS) {
+  const sessions = [];
+
+  const claudeRoot = path.join(homeDir, '.claude', 'projects');
+  for (const f of walkAllJsonl(claudeRoot, (_p, name) => name.endsWith('.jsonl'), now, maxAgeMs)) {
+    sessions.push({ runtime: 'claude', file: f.file, mtimeMs: f.mtimeMs, projectPath: extractProjectSlug(f.file) });
+  }
+
+  const codexRoot = path.join(homeDir, '.codex', 'sessions');
+  for (const f of walkAllJsonl(codexRoot, (_p, name) => /^rollout-.*\.jsonl$/i.test(name), now, maxAgeMs)) {
+    sessions.push({ runtime: 'codex', file: f.file, mtimeMs: f.mtimeMs, projectPath: null });
+  }
+
+  const geminiTmp = path.join(homeDir, '.gemini', 'tmp');
+  if (fs.existsSync(geminiTmp)) {
+    let topEntries;
+    try { topEntries = fs.readdirSync(geminiTmp, { withFileTypes: true }); } catch { topEntries = []; }
+    for (const topEntry of topEntries) {
+      if (!topEntry.isDirectory()) continue;
+      const chatsDir = path.join(geminiTmp, topEntry.name, 'chats');
+      const isHash = /^[0-9a-f]{60,}$/.test(topEntry.name);
+      const projectPath = isHash ? null : resolveGeminiProjectPath(topEntry.name, homeDir);
+      for (const f of walkAllJsonl(chatsDir, (_p, name) => /^session-.*\.(json|jsonl)$/.test(name), now, maxAgeMs)) {
+        sessions.push({ runtime: 'gemini', file: f.file, mtimeMs: f.mtimeMs, projectPath });
+      }
+    }
+  }
+
+  sessions.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return sessions;
+}
+
+// Per-file marker: tracks last processed line for each session file
+// independently. Migrates the old single-file shape ({file, line}) so an
+// existing marker on disk keeps its progress on the previously-extracted
+// session. The legacy single-file fields are kept on write for any old
+// reader still in flight.
+function readMarker(homeDir = getHomeDir()) {
+  const markerPath = getMarkerPath(homeDir);
+  const raw = safeReadJson(markerPath, {});
+  if (raw && raw.files && typeof raw.files === 'object') {
+    return { files: { ...raw.files } };
+  }
+  if (raw && typeof raw.file === 'string' && typeof raw.line === 'number') {
+    return { files: { [raw.file]: { line: raw.line } } };
+  }
+  return { files: {} };
+}
+
+function writeMarker(homeDir = getHomeDir(), marker) {
+  const markerPath = getMarkerPath(homeDir);
+  // Pick the most-recently-extracted file for legacy {file, line} fields so
+  // any older code path that still reads the v1 shape sees a coherent value.
+  let latestFile = null, latestTs = 0, latestLine = 0;
+  for (const [file, info] of Object.entries(marker.files || {})) {
+    const ts = info?.extractedAt ? Date.parse(info.extractedAt) : 0;
+    if (ts >= latestTs) { latestTs = ts; latestFile = file; latestLine = info?.line || 0; }
+  }
+  const payload = { files: marker.files || {} };
+  if (latestFile) { payload.file = latestFile; payload.line = latestLine; }
+  fs.writeFileSync(markerPath, JSON.stringify(payload));
 }
 
 function contentBlocksToText(content) {
@@ -519,35 +611,18 @@ async function maybeEvolve(homeDir = getHomeDir()) {
   }
 }
 
-async function runStopExtractor(options = {}) {
-  const homeDir = options.homeDir || getHomeDir();
-  const now = options.now || Date.now();
-  const minNewLines = options.minNewLines || MIN_NEW_LINES;
-  const markerPath = getMarkerPath(homeDir);
-  const session = findCurrentSession(homeDir, now);
-  if (!session) {
-    return { session: null, extracted: 0, skipped: 'no-session' };
-  }
-
-  const marker = safeReadJson(markerPath, {});
-  const startLine = marker.file === session.file ? (marker.line || 0) : 0;
-  const sessionData = buildSessionData(session, startLine);
-  const newLines = sessionData.totalLines - startLine;
-  const importantSignals = countImportantSignals(sessionData.transcript);
-  const hasDenseSignal = importantSignals >= MIN_IMPORTANT_SIGNALS
-    && String(sessionData.transcript || '').length >= MIN_SIGNAL_TRANSCRIPT_CHARS;
-  if (newLines < minNewLines && !hasDenseSignal) {
-    return { session, extracted: 0, skipped: 'not-enough-new-lines', newLines };
-  }
-
+// Inner helper used by both runStopExtractor (latest session) and
+// runBackfillExtractor (every session newer than marker). Returns the
+// number of lessons stored. Does NOT write the marker — callers do that
+// so a backfill loop can update many entries atomically at the end.
+async function extractAndStore(homeDir, session, sessionData, sourceKind) {
   const transcript = compactTranscript(sessionData.transcript);
-  if (!transcript) {
-    return { session, extracted: 0, skipped: 'empty-transcript', newLines };
-  }
+  if (!transcript) return { count: 0, transcript: '' };
 
   const remote = getRemoteClient(homeDir);
   const projectPath = sessionData.projectPath || session.projectPath || null;
   let count = 0;
+
   if (remote && remote.isRemoteEnabled(remote.loadConfig(homeDir))) {
     const config = remote.loadConfig(homeDir);
     const extractTimeoutMs = typeof remote.getExtractTimeoutMs === 'function'
@@ -557,27 +632,19 @@ async function runStopExtractor(options = {}) {
     const body = {
       transcript,
       projectPath,
-      sourceKind: 'stop-hook',
+      sourceKind: sourceKind || 'stop-hook',
       sourceRuntime: session.runtime,
       sourceSession: session.file,
     };
-    // Enrich with caller-side framework/lang so the extractor can classify
-    // scope correctly without re-deriving from the transcript. Best-effort:
-    // failures are silently absorbed and the server falls back to its
-    // existing behavior.
     try {
       const enrichPath = path.join(homeDir, 'source-meta-enrich.js');
       if (fs.existsSync(enrichPath) && projectPath) {
         const enrich = require(enrichPath);
-        // projectPath is a directory — pass it as the cwd arg so the
-        // enricher runs its cwd-fallback path (tsconfig/package.json/.csproj
-        // markers). The toolInput-based path returns null lang when the
-        // input has no file extension.
         const meta = enrich.enrichSourceMeta(null, undefined, projectPath);
         if (meta && meta.lang) body.lang = meta.lang;
         if (meta && meta.framework) body.framework = meta.framework;
       }
-    } catch { /* swallow */ }
+    } catch {}
     try {
       const result = await remote.postJson('/api/extract', body, { homeDir, config, timeoutMs: extractTimeoutMs });
       count = result?.stored || 0;
@@ -589,25 +656,101 @@ async function runStopExtractor(options = {}) {
     const { extractFromSession } = getCore(homeDir);
     count = await extractFromSession(transcript, projectPath);
   }
-  fs.writeFileSync(markerPath, JSON.stringify({ file: session.file, line: sessionData.totalLines }));
 
+  return { count, transcript, projectPath };
+}
+
+function shouldExtractDelta(sessionData, startLine, minNewLines) {
+  const newLines = sessionData.totalLines - startLine;
+  const importantSignals = countImportantSignals(sessionData.transcript);
+  const hasDenseSignal = importantSignals >= MIN_IMPORTANT_SIGNALS
+    && String(sessionData.transcript || '').length >= MIN_SIGNAL_TRANSCRIPT_CHARS;
+  return { ok: newLines >= minNewLines || hasDenseSignal, newLines };
+}
+
+async function runStopExtractor(options = {}) {
+  const homeDir = options.homeDir || getHomeDir();
+  const now = options.now || Date.now();
+  const minNewLines = options.minNewLines || MIN_NEW_LINES;
+  const session = findCurrentSession(homeDir, now);
+  if (!session) {
+    return { session: null, extracted: 0, skipped: 'no-session' };
+  }
+
+  const marker = readMarker(homeDir);
+  const startLine = marker.files[session.file]?.line || 0;
+  const sessionData = buildSessionData(session, startLine);
+  const { ok, newLines } = shouldExtractDelta(sessionData, startLine, minNewLines);
+  if (!ok) {
+    return { session, extracted: 0, skipped: 'not-enough-new-lines', newLines };
+  }
+
+  const { count, transcript, projectPath } = await extractAndStore(homeDir, session, sessionData, 'stop-hook');
+  if (!transcript) {
+    return { session, extracted: 0, skipped: 'empty-transcript', newLines };
+  }
+  marker.files[session.file] = { line: sessionData.totalLines, extractedAt: new Date().toISOString() };
+  writeMarker(homeDir, marker);
+
+  const remote = getRemoteClient(homeDir);
   const evolveResult = (remote && remote.isRemoteEnabled(remote.loadConfig(homeDir)))
     ? null
     : await maybeEvolve(homeDir);
-  return {
-    session,
-    extracted: count,
-    transcript,
-    projectPath,
-    evolveResult,
-  };
+  return { session, extracted: count, transcript, projectPath, evolveResult };
+}
+
+// Backfill mode — process every session newer than its marker entry, up to
+// BACKFILL_MAX_SESSIONS files (newest first). Wired into SessionStart hooks
+// so sessions a STOP hook missed (X-close, /clear, /compact, crash) are
+// still extracted on the next agent boot.
+async function runBackfillExtractor(options = {}) {
+  const homeDir = options.homeDir || getHomeDir();
+  const now = options.now || Date.now();
+  const maxAgeMs = options.maxAgeMs || BACKFILL_MAX_AGE_MS;
+  const maxSessions = options.maxSessions || BACKFILL_MAX_SESSIONS;
+  const minNewLines = options.minNewLines || MIN_NEW_LINES;
+
+  const marker = readMarker(homeDir);
+  const sessions = findAllRecentSessions(homeDir, now, maxAgeMs);
+  const candidates = sessions.slice(0, maxSessions);
+
+  const result = { mode: 'backfill', processed: 0, skipped: 0, errors: 0, extracted: 0, sessions: [] };
+  for (const session of candidates) {
+    const startLine = marker.files[session.file]?.line || 0;
+    let sessionData;
+    try { sessionData = buildSessionData(session, startLine); } catch (e) {
+      result.errors++; continue;
+    }
+    if (sessionData.totalLines <= startLine) { result.skipped++; continue; }
+    const { ok, newLines } = shouldExtractDelta(sessionData, startLine, minNewLines);
+    if (!ok) { result.skipped++; continue; }
+
+    try {
+      const { count, transcript } = await extractAndStore(homeDir, session, sessionData, 'session-start-backfill');
+      if (!transcript) { result.skipped++; continue; }
+      marker.files[session.file] = { line: sessionData.totalLines, extractedAt: new Date().toISOString() };
+      result.processed++;
+      result.extracted += count;
+      result.sessions.push({ runtime: session.runtime, file: session.file, newLines, extracted: count });
+    } catch (e) {
+      result.errors++;
+    }
+  }
+  writeMarker(homeDir, marker);
+
+  // Evolve once at the end of the loop, not per session.
+  const remote = getRemoteClient(homeDir);
+  if (result.processed > 0 && !(remote && remote.isRemoteEnabled(remote.loadConfig(homeDir)))) {
+    result.evolveResult = await maybeEvolve(homeDir);
+  }
+  return result;
 }
 
 async function main() {
-  const result = await runStopExtractor();
-  // Rate-limited stale-client nudge. Runs after extraction so a slow check
-  // never delays the experience save. Fire-and-forget; we still await so the
-  // process doesn't exit before stderr flushes.
+  const args = process.argv.slice(2);
+  const isBackfill = args.includes('--backfill') || process.env.MUONROI_EXP_MODE === 'backfill';
+  const result = isBackfill ? await runBackfillExtractor() : await runStopExtractor();
+
   try {
     const homeDir = getHomeDir();
     const remote = getRemoteClient(homeDir);
@@ -615,9 +758,19 @@ async function main() {
       await maybeWarnIfStale(homeDir, remote, remote.loadConfig(homeDir));
     }
   } catch {}
-  if (result.extracted > 0) {
+
+  if (isBackfill) {
+    if (result.processed > 0 || result.extracted > 0) {
+      process.stderr.write(
+        `Experience: backfill processed ${result.processed} session(s), +${result.extracted} lessons` +
+        (result.skipped ? `, ${result.skipped} skipped` : '') +
+        (result.errors ? `, ${result.errors} error(s)` : '') + `\n`
+      );
+    }
+  } else if (result.extracted > 0) {
     process.stderr.write(`Experience: +${result.extracted} lessons\n`);
   }
+
   const evolveResult = result.evolveResult;
   if (evolveResult) {
     const total = (evolveResult.promoted || 0) + (evolveResult.abstracted || 0)
@@ -640,17 +793,23 @@ module.exports = {
   SESSION_MAX_AGE_MS,
   MIN_IMPORTANT_SIGNALS,
   MIN_SIGNAL_TRANSCRIPT_CHARS,
+  BACKFILL_MAX_AGE_MS,
+  BACKFILL_MAX_SESSIONS,
   extractProjectSlug,
   findLatestClaudeSession,
   findLatestCodexSession,
   findLatestGeminiSession,
   findCurrentSession,
+  findAllRecentSessions,
   buildClaudeSessionData,
   buildCodexSessionData,
   buildGeminiSessionData,
   buildSessionData,
   countImportantSignals,
   runStopExtractor,
+  runBackfillExtractor,
+  readMarker,
+  writeMarker,
   normalizeToolName,
   formatToolCall,
 };
