@@ -806,7 +806,19 @@ async function main() {
 }
 
 if (require.main === module) {
-  main().catch(() => {}).finally(() => process.exit(0));
+  // Defer exit by one tick + a small setTimeout to let libuv finish closing
+  // HTTP keep-alive sockets and pending async handles. Without this, Windows
+  // Node hits "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)" in
+  // src/win/async.c when process.exit() races with in-flight socket close.
+  // process.exitCode is set instead of an immediate exit so the event loop
+  // drains naturally; the setTimeout is a hard cap if a hanging socket
+  // somehow blocks drain.
+  main()
+    .catch(() => {})
+    .finally(() => {
+      process.exitCode = 0;
+      setTimeout(() => process.exit(0), 250).unref();
+    });
 }
 
 module.exports = {
