@@ -450,6 +450,21 @@ process.stdin.on('end', async () => {
       outputText = outputText ? outputText + '\n---\n' + routeLine : routeLine;
     }
 
+    // Surface a one-line stderr indicator for Claude Code TUI users. Claude
+    // Code v2.1.x drops additionalContext silently for PreToolUse (issue
+    // #19432) AND auto-collapses hook output, so even when hints reach the
+    // agent the user has no visible signal that anything fired. A stderr
+    // line surfaces next to "Ran 1 PreToolUse hook" without needing Ctrl+O.
+    if (outputText && surfacedIds.length > 0 && process.env.EXPERIENCE_VISIBLE_HINT_INDICATOR !== '0') {
+      try {
+        const hintCount = surfacedIds.length;
+        const isClaudeTui = !!(process.env.CLAUDE_PROJECT_DIR || process.env.CLAUDE_CODE_SESSION_ID);
+        if (isClaudeTui) {
+          process.stderr.write(`💡 Experience: ${hintCount} hint${hintCount === 1 ? '' : 's'} surfaced (Ctrl+O to expand)\n`);
+        }
+      } catch {}
+    }
+
     emitPreToolUseGuidance(data, tool, outputText, { toolInput, surfacedIds });
   } catch (error) {
     try {
