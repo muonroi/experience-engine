@@ -844,14 +844,18 @@ function _inheritClusterScope(cluster) {
   if (!Array.isArray(cluster) || cluster.length === 0) {
     return { lang: 'all', framework: 'any' };
   }
-  const counts = { lang: new Map(), framework: new Map(), project_slug: new Map() };
+  // Carry every scope dimension we know about so abstracted entries keep
+  // their provenance (runtime + org + project_slug were previously dropped,
+  // which made wrong_repo/wrong_language feedback narrowing impossible).
+  const dims = ['lang', 'framework', 'project_slug', 'runtime', 'org'];
+  const counts = Object.fromEntries(dims.map((d) => [d, new Map()]));
   let total = 0;
   for (const entry of cluster) {
     let data;
     try { data = JSON.parse(entry.payload?.json || '{}'); } catch { continue; }
     if (!data || !data.scope || typeof data.scope !== 'object') continue;
     total++;
-    for (const key of ['lang', 'framework', 'project_slug']) {
+    for (const key of dims) {
       const v = data.scope[key];
       if (typeof v !== 'string' || !v.trim()) continue;
       const k = v.toLowerCase().trim();
@@ -871,6 +875,10 @@ function _inheritClusterScope(cluster) {
   out.framework = majority(counts.framework, 'any');
   const slug = majority(counts.project_slug, null);
   if (slug) out.project_slug = slug;
+  const runtime = majority(counts.runtime, null);
+  if (runtime) out.runtime = runtime;
+  const org = majority(counts.org, null);
+  if (org) out.org = org;
   return out;
 }
 
@@ -985,4 +993,5 @@ module.exports = {
   parsePayload, clusterByCosine, sharePrinciple, importPrinciple,
   migrateQdrantUserTags, storeExperience, evolve,
   getAllEntries, upsertEntry,
+  _inheritClusterScope,
 };
