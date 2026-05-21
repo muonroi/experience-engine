@@ -256,13 +256,13 @@ function buildGeminiSessionData(logPath) {
     if (!msg || !msg.type) continue;
 
     if (msg.type === 'user') {
-      const text = trimText(msg.content || '', 600);
+      const text = contentBlocksToText(msg.content);
       if (text) transcriptLines.push(`User: ${text}`);
       continue;
     }
 
     if (msg.type === 'gemini') {
-      const text = trimText(msg.content || '', 600);
+      const text = contentBlocksToText(msg.content);
       if (text) transcriptLines.push(`Assistant: ${text}`);
 
       if (Array.isArray(msg.toolCalls)) {
@@ -321,10 +321,10 @@ function normalizeToolName(name) {
   const tool = String(name || '').trim().toLowerCase();
   if (!tool) return 'Tool';
   if (tool === 'exec_command' || tool === 'write_stdin' || tool === 'run_shell_command') return 'Bash';
-  if (tool === 'apply_patch' || tool === 'edit' || tool === 'replace_in_file') return 'Edit';
+  if (tool === 'apply_patch' || tool === 'edit' || tool === 'replace_in_file' || tool === 'replace') return 'Edit';
   if (tool === 'write_file' || tool === 'create_file') return 'Write';
   if (tool === 'list_directory' || tool === 'glob') return 'Glob';
-  if (tool === 'grep') return 'Grep';
+  if (tool === 'grep' || tool === 'grep_search' || tool === 'search_file_content') return 'Grep';
   if (tool === 'read_file') return 'Read';
   return name;
 }
