@@ -348,12 +348,17 @@ async function extractFromSession(transcript, projectPath, meta = {}) {
     _log('transcript too short', { len: transcript?.length || 0, project: projectPath });
     return 0;
   }
-  _log('start', { transcriptLen: transcript.length, project: projectPath, meta: { lang: meta?.lang, fw: meta?.framework, slug: meta?.project_slug, runtime: meta?.runtime, sourceKind: meta?.sourceKind } });
+  _log('start', { transcriptLen: transcript.length, project: projectPath, meta: { lang: meta?.lang, fw: meta?.framework, slug: meta?.project_slug, runtime: meta?.runtime, sourceKind: meta?.sourceKind }, preDetected: meta?._preDetectedExperiences?.length || 0 });
   const domain = _context.detectTranscriptDomain(transcript);
   _log('domain detected', { domain, project: projectPath });
-  const experiences = _context.detectExperience
-    ? _context.detectExperience(transcript)
-    : _context.detectMistakes(transcript);
+  // Use pre-detected experiences from client when available (client detects
+  // on full transcript; server only sees compact 18KB which loses ~96% of
+  // experiences on large sessions).
+  const experiences = Array.isArray(meta?._preDetectedExperiences) && meta._preDetectedExperiences.length > 0
+    ? meta._preDetectedExperiences
+    : (_context.detectExperience
+      ? _context.detectExperience(transcript)
+      : _context.detectMistakes(transcript));
   _activity.logCostCall('extract', 'local', 'session-extract', _activity.estimateTextUnits(transcript, 12000), { project: projectPath || null, experiences: experiences.length });
   if (experiences.length === 0) {
     _log('no experiences detected', { project: projectPath });

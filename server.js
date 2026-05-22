@@ -638,6 +638,7 @@ async function handleExtract(req, res) {
     framework: derived.framework || body.framework || null,
     lang: derived.lang || body.lang || null,
     project_slug: derived.project_slug || body.project_slug || null,
+    _preDetectedExperiences: Array.isArray(body.preDetectedExperiences) ? body.preDetectedExperiences : null,
   };
   console.log(`[extract-api] project=${body.projectPath || 'none'} transcriptLen=${(body.transcript || '').length} lang=${meta.lang} fw=${meta.framework} slug=${meta.project_slug} runtime=${meta.sourceRuntime}`);
   try {

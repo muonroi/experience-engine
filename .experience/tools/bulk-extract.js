@@ -275,14 +275,21 @@ async function extractAndStore(transcript, projectPath, meta, dryRun) {
   if (remote) {
     const config = remote.loadConfig(homeDir);
     if (remote.isRemoteEnabled(config)) {
+      // Send compact transcript for API transfer + pre-detected experiences.
+      // Server uses preDetectedExperiences directly instead of re-detecting
+      // from the compact transcript (which loses 96% of experiences on large sessions).
+      const compactForApi = compactTranscript(transcript);
       const body = {
-        transcript,
+        transcript: compactForApi,
         projectPath,
         sourceKind: 'bulk-extract',
         sourceRuntime: meta?.runtime || 'unknown',
       };
       if (meta?.lang) body.lang = meta.lang;
       if (meta?.framework) body.framework = meta.framework;
+      if (meta?._preDetectedExperiences) {
+        body.preDetectedExperiences = meta._preDetectedExperiences;
+      }
       try {
         const result = await remote.postJson('/api/extract', body, { homeDir, config, timeoutMs: 90000 });
         return result?.stored || 0;
@@ -410,13 +417,16 @@ async function main() {
         continue;
       }
 
-      const transcript = compactTranscript(sessionData.transcript);
-      if (!transcript || transcript.length < 200) {
+      const rawTranscript = sessionData.transcript;
+      if (!rawTranscript || rawTranscript.length < 200) {
         marker.files[session.file] = { ts: Date.now(), skip: 'too-short' };
         continue;
       }
 
-      const experiences = detectExperience(transcript);
+      // Detect on FULL transcript — compactTranscript loses 96% of experiences
+      // on large sessions (24 exp from 1.4MB vs 1 exp from 18KB compact).
+      // Compact is only used when sending to remote API.
+      const experiences = detectExperience(rawTranscript);
       totalExperiences += experiences.length;
 
       const byType = {};
@@ -426,7 +436,7 @@ async function main() {
       const sizeKB = (() => { try { return (fs.statSync(session.file).size / 1024).toFixed(0); } catch { return '?'; } })();
 
       if (experiences.length > 0) {
-        const meta = enrichMeta(session.projectPath || session.file, transcript);
+        const meta = enrichMeta(session.projectPath || session.file, rawTranscript);
 
         // Track scope quality stats
         if (meta.lang) scopeStats.withLang++;
@@ -445,10 +455,11 @@ async function main() {
           }
         }
 
-        const stored = await extractAndStore(transcript, session.projectPath || session.file, {
+        const stored = await extractAndStore(rawTranscript, session.projectPath || session.file, {
           ...meta,
           runtime: session.runtime,
           verbose: args.verbose,
+          _preDetectedExperiences: experiences,
         }, args.dryRun);
         totalStored += stored;
         storedByRuntime[session.runtime] = (storedByRuntime[session.runtime] || 0) + stored;
