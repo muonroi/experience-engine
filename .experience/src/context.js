@@ -381,7 +381,7 @@ function jaccardSimilarity(a, b) {
 //  Environmental error detection
 // ============================================================
 
-const ENV_ERROR_RE = /\b(EPERM|ENOENT|EACCES|EADDRINUSE|ETIMEDOUT|ECONNREFUSED|uv_spawn|UV_HANDLE_CLOSING|cannot find module|no such file or directory|not recognized as|is not a cmdlet|command not found|permission denied|access denied)\b/i;
+const ENV_ERROR_RE = /\b(EPERM|ENOENT|EACCES|EADDRINUSE|ETIMEDOUT|ECONNREFUSED|uv_spawn|UV_HANDLE_CLOSING|cannot find module|no such file or directory|not recognized as|is not a cmdlet|command not found|permission denied|access denied|syntax error near unexpected token|SyntaxError|unexpected end of file|heredoc|unterminated string|invalid syntax)\b/i;
 
 function isEnvError(line) {
   const text = String(line || '');
@@ -521,7 +521,14 @@ function detectTraps(events, lines) {
     for (let j = i - 1; j >= lookback; j--) {
       const prior = events[j];
       if (prior.success !== false) continue;
-      if (prior.toolName.toLowerCase() !== curTool) continue;
+      // Allow cross-tool trap: fail with one tool, succeed with different approach
+      const priorTool = prior.toolName.toLowerCase();
+      const sameTool = priorTool === curTool;
+      // Cross-tool: both are "shell-like" (bash/shell/powershell) or both are "edit-like"
+      const shellLike = new Set(['bash', 'shell', 'execute_command', 'powershell']);
+      const editLike = new Set(['edit', 'write', 'write_file', 'replace']);
+      const crossTool = (shellLike.has(priorTool) && shellLike.has(curTool)) || (editLike.has(priorTool) && editLike.has(curTool));
+      if (!sameTool && !crossTool) continue;
 
       let isSameOp = false;
 
@@ -540,7 +547,12 @@ function detectTraps(events, lines) {
         }
       } else {
         const sim = jaccardSimilarity(tokenizeForSimilarity(prior.summary), tokenizeForSimilarity(cur.summary));
-        isSameOp = sim >= 0.8;
+        // Lower threshold for bash — same error signature counts as same op
+        const priorErr = lines.slice(prior.lineIdx, Math.min(lines.length, prior.lineIdx + 4)).join(' ');
+        const curErr = lines.slice(cur.lineIdx, Math.min(lines.length, cur.lineIdx + 4)).join(' ');
+        const priorSig = _extractErrorSignature ? _extractErrorSignature(priorErr) : null;
+        const curContext = lines.slice(cur.lineIdx, Math.min(lines.length, cur.lineIdx + 4)).join(' ');
+        isSameOp = sim >= 0.6 || (priorSig && curContext.includes(priorSig.split(':').pop()));
       }
 
       if (!isSameOp) continue;
@@ -663,6 +675,119 @@ function detectEnvTraps(events, lines) {
 //  Detector 5: USER_CORRECTION — user says no/wrong → agent adapts
 // ============================================================
 
+// ============================================================
+//  Detector 5b: REPEATED_ERROR — same error pattern hit >=2x then resolved
+//  Catches: wrong path repeated, same syntax error repeated, permission errors
+//  Key insight: extract the ERROR SIGNATURE, not the command, to match repeats
+// ============================================================
+
+function detectRepeatedErrors(events, lines) {
+  const results = [];
+  // Group consecutive failures by error signature
+  const errorRuns = []; // [{signature, events: [...], startIdx, endIdx}]
+  let currentSig = null;
+  let currentRun = null;
+
+  for (let i = 0; i < events.length; i++) {
+    const ev = events[i];
+    if (ev.success === false) {
+      const errLines = lines.slice(ev.lineIdx, Math.min(lines.length, ev.lineIdx + 5)).join(' ');
+      const sig = _extractErrorSignature(errLines);
+      if (sig) {
+        if (currentSig === sig) {
+          currentRun.events.push(ev);
+          currentRun.endIdx = ev.lineIdx;
+        } else {
+          if (currentRun && currentRun.events.length >= 2) errorRuns.push(currentRun);
+          currentSig = sig;
+          currentRun = { signature: sig, events: [ev], startIdx: ev.lineIdx, endIdx: ev.lineIdx };
+        }
+      } else {
+        if (currentRun && currentRun.events.length >= 2) errorRuns.push(currentRun);
+        currentSig = null;
+        currentRun = null;
+      }
+    } else if (ev.success === true) {
+      if (currentRun && currentRun.events.length >= 2) {
+        // The success AFTER repeated failures = the resolution
+        currentRun.resolution = ev;
+        errorRuns.push(currentRun);
+      }
+      currentSig = null;
+      currentRun = null;
+    }
+  }
+  if (currentRun && currentRun.events.length >= 2) errorRuns.push(currentRun);
+
+  for (const run of errorRuns) {
+    if (results.length >= 3) break;
+    const resolution = run.resolution;
+    if (!resolution) continue; // No resolution found = unresolved, skip
+
+    const firstFail = run.events[0];
+    const lastFail = run.events[run.events.length - 1];
+    const windowStart = Math.max(0, firstFail.lineIdx - 1);
+    const windowEnd = Math.min(lines.length, resolution.lineIdx + 2);
+    const window = lines.slice(windowStart, windowEnd);
+
+    const failSummaries = run.events.map(e => e.summary.slice(0, 100));
+    const failTools = [...new Set(run.events.map(e => e.toolName.toLowerCase()))];
+    const resFile = extractEditTarget(resolution.summary);
+    const files = [];
+    for (const ev of [...run.events, resolution]) {
+      const f = extractEditTarget(ev.summary);
+      if (f) files.push(f);
+    }
+
+    results.push({
+      type: 'trap',
+      context: 'Repeated error "' + run.signature.slice(0, 60) + '" (' + run.events.length + 'x) then resolved via ' + resolution.toolName,
+      excerpt: window.join('\n').slice(0, 1500),
+      failedApproach: failSummaries.join(' | ').slice(0, 400),
+      successApproach: resolution.summary.slice(0, 200),
+      evidence: {
+        files_touched: [...new Set(files)].slice(0, 5),
+        tools_used: [...new Set([...failTools, resolution.toolName.toLowerCase()])],
+        error_info: _extractErrorInfo(lines.slice(firstFail.lineIdx, firstFail.lineIdx + 5).join(' ')),
+        failed_approach: { repeated: run.events.length, signature: run.signature },
+        success_approach: _extractCommandInfo(resolution.summary),
+        file_patterns: _deriveFilePatterns([...new Set(files)]),
+      },
+    });
+  }
+  return results;
+}
+
+// Extract a normalized error signature from error output
+// Groups: path errors, permission errors, syntax errors, module errors
+function _extractErrorSignature(text) {
+  const s = String(text || '');
+  // ENOENT/EACCES with path → signature is the error type + path
+  const pathErr = s.match(/(ENOENT|EACCES|EPERM).*?['"](/[^'"]+)['"]/);
+  if (pathErr) return pathErr[1] + ':' + pathErr[2];
+  // Generic "no such file" with path
+  const noFile = s.match(/no such file or directory.*?['"](/[^'"]+)['"]/i);
+  if (noFile) return 'ENOENT:' + noFile[1];
+  // Permission denied with path
+  const perm = s.match(/permission denied.*?['"](/[^'"]+)['"]/i);
+  if (perm) return 'EACCES:' + perm[1];
+  // Syntax error (bash/python/node)
+  const syntax = s.match(/syntax error near unexpected token ['"]`?([^'"]+)/i);
+  if (syntax) return 'SYNTAX:' + syntax[1];
+  const pySyntax = s.match(/SyntaxError:s*(.{1,40})/);
+  if (pySyntax) return 'SYNTAX:' + pySyntax[1].trim();
+  // Heredoc / unterminated
+  if (/heredoc.*?delimited by end-of-file/i.test(s)) return 'HEREDOC:unterminated';
+  if (/unterminated string/i.test(s)) return 'SYNTAX:unterminated_string';
+  // Module not found
+  const modErr = s.match(/cannot find module ['"](.*?)['"]/i);
+  if (modErr) return 'MODULE:' + modErr[1];
+  // Exit code repeated
+  const exitErr = s.match(/exit code (d+)/i);
+  if (exitErr && exitErr[1] !== '0') return 'EXIT:' + exitErr[1];
+  return null;
+}
+
 function detectUserCorrections(lines) {
   const corrections = [];
 
@@ -691,17 +816,35 @@ function detectUserCorrections(lines) {
       const f = extractEditTarget(l);
       if (f) corrFiles.push(f);
     }
+    // Extract structured evidence from the agent action the user is correcting
+    const agentAction = before.length ? before[before.length - 1] : null;
+    const parsedAction = agentAction ? parseTranscriptToolCall(agentAction) : null;
+    const actionEvidence = {};
+    if (parsedAction) {
+      actionEvidence.tools_used = [parsedAction.toolName];
+      const cmdInfo = _extractCommandInfo(parsedAction.summary);
+      if (cmdInfo.executable) actionEvidence.commands = [cmdInfo.executable, ...(cmdInfo.subcommands || [])].filter(Boolean);
+      if (cmdInfo.flags && cmdInfo.flags.length) actionEvidence.flags = cmdInfo.flags;
+      const editFile = extractEditTarget(parsedAction.summary);
+      if (editFile) corrFiles.push(editFile);
+    }
+    // Only keep user_correction if we found a concrete agent action to attach it to.
+    // Generic "user said no" without a preceding tool call = noise, skip.
+    if (!parsedAction) continue;
+
     corrections.push({
       type: 'user_correction',
-      context: `User correction: "${lines[i].replace(/^User:\s*/i, '').slice(0, 100)}"`,
+      context: 'User correction: "' + lines[i].replace(/^User:\s*/i, '').slice(0, 100) + '" after agent: ' + parsedAction.toolName + ': ' + parsedAction.summary.slice(0, 80),
       excerpt: window.join('\n').slice(0, 1500),
       correction: lines[i].replace(/^User:\s*/i, '').slice(0, 200),
       before: before.map(l => l.slice(0, 100)).join(' | ').slice(0, 300),
       after: after.slice(0, 200),
       evidence: {
         files_touched: corrFiles,
+        tools_used: actionEvidence.tools_used || [],
+        commands: actionEvidence.commands || [],
         user_said: lines[i].replace(/^User:\s*/i, ''),
-        agent_did_before: before.length ? before[before.length - 1] : null,
+        agent_action: parsedAction.toolName + ': ' + parsedAction.summary.slice(0, 150),
         agent_did_after: after || null,
         file_patterns: _deriveFilePatterns(corrFiles),
       },
@@ -724,9 +867,10 @@ function detectExperience(transcript) {
   const traps = detectTraps(events, lines);
   const dependencies = detectDependencies(events, lines);
   const envTraps = detectEnvTraps(events, lines);
+  const repeatedErrors = detectRepeatedErrors(events, lines);
   const userCorrections = detectUserCorrections(lines);
 
-  return [...recipes, ...traps, ...dependencies, ...envTraps, ...userCorrections];
+  return [...recipes, ...traps, ...repeatedErrors, ...dependencies, ...envTraps, ...userCorrections];
 }
 
 // Deprecated alias — callers should migrate to detectExperience
@@ -745,6 +889,6 @@ module.exports = {
   summarizeExperienceExcerpt, summarizeMistakeExcerpt,
   parseToolEvents, tokenizeForSimilarity, jaccardSimilarity,
   detectExperience, detectMistakes,
-  isEnvError, extractEditOldString, extractEditTarget,
+  isEnvError, extractEditOldString, extractEditTarget, detectRepeatedErrors, _extractErrorSignature,
   detectRecipes, detectTraps, detectDependencies, detectEnvTraps, detectUserCorrections,
 };
