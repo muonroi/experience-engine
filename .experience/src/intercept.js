@@ -378,7 +378,7 @@ async function extractFromSession(transcript, projectPath, meta = {}) {
       continue;
     }
     try {
-      const projectSlug = _utils.extractProjectSlug(projectPath);
+      const projectSlug = meta?.project_slug || _utils.extractProjectSlug(projectPath);
       _log('calling extractQA', { i, type: exp.type, lang: meta?.lang, fw: meta?.framework, slug: projectSlug, excerptLen: exp?.excerpt?.length });
       const qa = await _brainllm.extractQA(exp, {
         framework: meta?.framework || null,
