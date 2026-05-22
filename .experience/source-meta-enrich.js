@@ -172,6 +172,24 @@ function _slnReferencesPrefix(filePath, prefix) {
   return !!(text && text.includes(prefix));
 }
 
+// Recursive scan up to `depth` levels deep — only used to refine a generic
+// "dotnet" result into an org-specific framework by finding .csproj files
+// that reference org NuGet packages in subdirectories.
+function _scanDirRecursiveForFramework(dir, packages, depth) {
+  if (depth <= 0) return null;
+  const fw = scanDirForFramework(dir, packages);
+  if (fw && fw !== 'dotnet') return fw;
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const e of entries) {
+      if (!e.isDirectory() || e.name.startsWith('.') || e.name === 'node_modules' || e.name === 'bin' || e.name === 'obj') continue;
+      const sub = _scanDirRecursiveForFramework(`${dir}/${e.name}`, packages, depth - 1);
+      if (sub && sub !== 'dotnet') return sub;
+    }
+  } catch {}
+  return fw; // return generic 'dotnet' if nothing more specific found
+}
+
 function scanDirForFramework(dir, packages) {
   let entries;
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
@@ -289,17 +307,18 @@ function detectFrameworkFromProject(filePath, opts) {
     if (FW_CACHE.has(key)) return FW_CACHE.get(key);
     let fw = scanDirForFramework(dir, packages);
     // Descend one level into conventional source dirs when the current level
-    // has no markers. Real-world repos commonly hold the actual project under
-    // src/, apps/, packages/, etc.; without this fallback, a stop-hook that
-    // only knows the repo root would yield no framework hint at all.
-    if (!fw) {
+    // has no markers OR when the result is a generic builtin label (e.g.
+    // "dotnet") that could be refined to an org-specific framework (e.g.
+    // "muonroi-dotnet") by scanning .csproj files deeper in src/.
+    const needsSubdirScan = !fw || (fw === 'dotnet' && Object.keys(packages).length > 0);
+    if (needsSubdirScan) {
       try {
         const entries = fs.readdirSync(dir, { withFileTypes: true });
         const subdirNames = new Set();
         for (const e of entries) if (e.isDirectory()) subdirNames.add(e.name);
         for (const name of _COMMON_SRC_DIRS) {
           if (!subdirNames.has(name)) continue;
-          const sub = scanDirForFramework(`${dir}/${name}`, packages);
+          const sub = _scanDirRecursiveForFramework(`${dir}/${name}`, packages, 3);
           if (sub) { fw = sub; break; }
         }
       } catch { /* ignore */ }

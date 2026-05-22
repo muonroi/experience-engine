@@ -33,7 +33,7 @@ const expDir = fs.existsSync(path.join(__dirname, '..', 'src', 'context.js'))
   : path.join(homeDir, '.experience');
 
 const { compactTranscript } = require(path.join(expDir, 'extract-compact.js'));
-const { detectExperience } = require(path.join(expDir, 'src/context.js'));
+const { detectExperience, detectTranscriptDomain } = require(path.join(expDir, 'src/context.js'));
 const {
   findAllRecentSessions,
   buildSessionData,
@@ -94,6 +94,156 @@ function writeBulkMarker(marker) {
   fs.writeFileSync(MARKER_PATH, JSON.stringify(marker, null, 2), 'utf8');
 }
 
+// ── Slug → real path resolution ──────────────────────────────────────────────
+// Claude session projectPath uses slug format: "D--sources-Core-muonroi-cli"
+// This cannot be used for file-system scanning (package.json, .csproj, etc.).
+// Convert back to a real path that exists on disk.
+//
+// Claude's slug convention: path.replace(/[/\\:]/g, '-') so both path separators
+// and literal hyphens in folder names become '-'. This is ambiguous:
+//   "D--sources-Core-muonroi-cli" could be:
+//     D:\sources\Core\muonroi\cli     (all dashes = separator)
+//     D:\sources\Core\muonroi-cli     (last dash = literal hyphen)
+//
+// Strategy: greedy DFS — at each dash, try "path separator" first (check if
+// resulting directory exists on disk), then "literal hyphen" (merge with current
+// segment). This correctly resolves:
+//   D--sources-Core-muonroi-cli    → D:\sources\Core\muonroi-cli
+//   D--sources-Core-storyflow-ui   → D:\sources\Core\storyflow_ui  (via underscore fallback)
+//   D--sources-eBerth              → D:\sources\eBerth
+
+const _slugCache = new Map();
+
+function resolveProjectPath(rawPath) {
+  if (!rawPath || typeof rawPath !== 'string') return null;
+
+  if (_slugCache.has(rawPath)) return _slugCache.get(rawPath);
+
+  let result = null;
+
+  // Already a real path (Codex/Gemini style)?
+  if (rawPath.includes('/') || rawPath.includes('\\')) {
+    const normalized = path.resolve(rawPath);
+    try { if (fs.statSync(normalized).isDirectory()) result = normalized; } catch {}
+    _slugCache.set(rawPath, result);
+    return result;
+  }
+
+  // Claude slug format: single letter + "--" prefix = drive letter
+  // "D--sources-Core-muonroi-cli" → drive=D, parts=[sources,Core,muonroi,cli]
+  //
+  // Each dash is ambiguous: path separator OR literal hyphen in folder name.
+  // DFS: track (parentDir, pendingSegment) — pendingSegment accumulates chars
+  // until we "commit" it by checking if parentDir/pendingSegment exists on disk.
+  const slugMatch = rawPath.match(/^([A-Za-z])--(.+)$/);
+  if (!slugMatch) { _slugCache.set(rawPath, null); return null; }
+
+  const drive = slugMatch[1].toUpperCase();
+  const parts = slugMatch[2].split('-');
+
+  // parentDir: confirmed existing directory
+  // pending: segment being built (not yet committed as a child dir)
+  // idx: next part index to consume
+  function tryResolve(idx, parentDir, pending) {
+    if (idx >= parts.length) {
+      // All parts consumed — commit pending as final segment
+      const full = path.join(parentDir, pending);
+      try { if (fs.statSync(full).isDirectory()) return full; } catch {}
+      return null;
+    }
+
+    const part = parts[idx];
+
+    // Option A: commit pending as directory, start new segment with part
+    const committedDir = path.join(parentDir, pending);
+    try {
+      if (fs.statSync(committedDir).isDirectory()) {
+        const deeper = tryResolve(idx + 1, committedDir, part);
+        if (deeper) return deeper;
+      }
+    } catch {}
+
+    // Option B: dash was literal hyphen — extend pending
+    const deeper2 = tryResolve(idx + 1, parentDir, pending + '-' + part);
+    if (deeper2) return deeper2;
+
+    // Option C: dash was literal underscore — extend pending
+    const deeper3 = tryResolve(idx + 1, parentDir, pending + '_' + part);
+    if (deeper3) return deeper3;
+
+    // Option D: dash was literal dot — extend pending (e.g. Muonroi.BaseTemplate)
+    const deeper4 = tryResolve(idx + 1, parentDir, pending + '.' + part);
+    if (deeper4) return deeper4;
+
+    return null;
+  }
+
+  result = tryResolve(1, `${drive}:\\`, parts[0]);
+  _slugCache.set(rawPath, result);
+  return result;
+}
+
+// ── Transcript-based lang/framework detection ────────────────────────────────
+// When file-system enrichment fails (slug path, remote session), fall back to
+// analyzing file extensions and framework markers in the transcript itself.
+const TRANSCRIPT_FW_PATTERNS = [
+  { pattern: /package\.json|node_modules|npm |bun |yarn /i, frameworks: null }, // JS ecosystem, check deeper
+  { pattern: /\.csproj|\.sln|dotnet |nuget /i, framework: 'dotnet' },
+  { pattern: /Cargo\.toml|cargo build/i, framework: 'rust' },
+  { pattern: /go\.mod|go build|go run/i, framework: 'go' },
+  { pattern: /pyproject\.toml|pip install|requirements\.txt/i, framework: 'python' },
+  { pattern: /@angular\/core|angular\.json/i, framework: 'angular' },
+  { pattern: /next\.config|next\/|from 'next/i, framework: 'next' },
+  { pattern: /@nestjs\/|nest-cli\.json/i, framework: 'nest' },
+  { pattern: /from ['"]react['"]|jsx|tsx.*React/i, framework: 'react' },
+  { pattern: /from ['"]vue['"]|\.vue\b/i, framework: 'vue' },
+];
+
+// Map domain string from detectTranscriptDomain to the scope lang enum
+const DOMAIN_TO_LANG = {
+  'TypeScript': 'TypeScript',
+  'TypeScript React': 'TypeScript',
+  'JavaScript': 'JavaScript',
+  'JavaScript React': 'JavaScript',
+  'C#': 'C#',
+  'F#': 'C#',
+  'Python': 'Python',
+  'Ruby': 'Ruby',
+  'Rust': 'Rust',
+  'Go': 'Go',
+  'Java': 'Java',
+  'Kotlin': 'Java',
+  'Swift': 'Swift',
+  'C++': 'C++',
+  'C': 'C',
+  'Shell': 'Shell',
+  'PowerShell': 'Shell',
+};
+
+function detectMetaFromTranscript(transcript) {
+  const out = {};
+  if (!transcript) return out;
+
+  // Lang from file extensions in transcript
+  const domain = detectTranscriptDomain(transcript);
+  if (domain && DOMAIN_TO_LANG[domain]) {
+    out.lang = DOMAIN_TO_LANG[domain];
+  }
+
+  // Framework from content patterns
+  const sample = transcript.slice(0, 30000); // first 30KB enough for detection
+  for (const entry of TRANSCRIPT_FW_PATTERNS) {
+    if (entry.pattern.test(sample)) {
+      if (entry.framework) {
+        out.framework = entry.framework;
+        break;
+      }
+    }
+  }
+
+  return out;
+}
+
 async function extractAndStore(transcript, projectPath, meta, dryRun) {
   if (dryRun || !transcript) return 0;
 
@@ -128,15 +278,41 @@ async function extractAndStore(transcript, projectPath, meta, dryRun) {
   }
 }
 
-function enrichMeta(projectPath) {
-  try {
-    const enrichPath = path.join(expDir, 'source-meta-enrich.js');
-    if (fs.existsSync(enrichPath) && projectPath) {
-      const enrich = require(enrichPath);
-      return enrich.enrichSourceMeta(null, undefined, projectPath) || {};
-    }
-  } catch {}
-  return {};
+function enrichMeta(projectPath, transcript) {
+  const out = {};
+
+  // Step 1: Try file-system based detection (most accurate)
+  const realPath = resolveProjectPath(projectPath);
+  if (realPath) {
+    try {
+      const enrichPath = path.join(expDir, 'source-meta-enrich.js');
+      if (fs.existsSync(enrichPath)) {
+        const enrich = require(enrichPath);
+        const fsMeta = enrich.enrichSourceMeta(null, undefined, realPath) || {};
+        if (fsMeta.lang) out.lang = fsMeta.lang;
+        if (fsMeta.framework) out.framework = fsMeta.framework;
+        if (fsMeta.project_slug) out.project_slug = fsMeta.project_slug;
+      }
+    } catch {}
+  }
+
+  // Step 2: Fill gaps from transcript analysis
+  if (transcript && (!out.lang || !out.framework)) {
+    const txMeta = detectMetaFromTranscript(transcript);
+    if (!out.lang && txMeta.lang) out.lang = txMeta.lang;
+    if (!out.framework && txMeta.framework) out.framework = txMeta.framework;
+  }
+
+  // Step 3: Derive project_slug from raw path if not already set
+  if (!out.project_slug && projectPath) {
+    try {
+      const enrich = require(path.join(expDir, 'source-meta-enrich.js'));
+      const slug = enrich.detectProjectSlug(realPath || projectPath);
+      if (slug) out.project_slug = slug;
+    } catch {}
+  }
+
+  return out;
 }
 
 function shortLabel(session) {
@@ -192,6 +368,7 @@ async function main() {
   let totalStored = 0;
   let totalSessions = 0;
   let errors = 0;
+  let scopeStats = { withLang: 0, withFw: 0, withSlug: 0, fromFs: 0, fromTranscript: 0 };
   const storedByRuntime = {};
 
   for (let i = 0; i < toProcess.length; i++) {
@@ -223,10 +400,27 @@ async function main() {
       const typeStr = Object.entries(byType).map(([k, v]) => `${k}:${v}`).join(' ');
 
       const sizeKB = (() => { try { return (fs.statSync(session.file).size / 1024).toFixed(0); } catch { return '?'; } })();
-      console.log(`${label} ${shortLabel(session)} (${sizeKB}KB) → ${experiences.length} exp [${typeStr || 'none'}]`);
 
       if (experiences.length > 0) {
-        const meta = enrichMeta(session.projectPath || session.file);
+        const meta = enrichMeta(session.projectPath || session.file, transcript);
+
+        // Track scope quality stats
+        if (meta.lang) scopeStats.withLang++;
+        if (meta.framework) scopeStats.withFw++;
+        if (meta.project_slug) scopeStats.withSlug++;
+        const resolvedPath = resolveProjectPath(session.projectPath);
+        if (resolvedPath) scopeStats.fromFs++;
+        else if (meta.lang) scopeStats.fromTranscript++;
+
+        const scopeLabel = `lang=${meta.lang || 'NONE'} fw=${meta.framework || 'NONE'} slug=${meta.project_slug || 'NONE'}`;
+        console.log(`${label} ${shortLabel(session)} (${sizeKB}KB) → ${experiences.length} exp [${typeStr || 'none'}] scope:[${scopeLabel}]`);
+
+        if (args.dryRun && args.verbose) {
+          for (const e of experiences.slice(0, 3)) {
+            console.log(`    ${e.type}: ${(e.excerpt || '').substring(0, 100)}`);
+          }
+        }
+
         const stored = await extractAndStore(transcript, session.projectPath || session.file, {
           ...meta,
           runtime: session.runtime,
@@ -235,6 +429,8 @@ async function main() {
         totalStored += stored;
         storedByRuntime[session.runtime] = (storedByRuntime[session.runtime] || 0) + stored;
         if (stored > 0) console.log(`  → stored ${stored}`);
+      } else {
+        console.log(`${label} ${shortLabel(session)} (${sizeKB}KB) → 0 exp`);
       }
 
       totalSessions++;
@@ -251,11 +447,14 @@ async function main() {
 
   writeBulkMarker(marker);
 
+  const sessionsWithExp = scopeStats.withLang + (totalExperiences > 0 ? 0 : 0); // just for clarity
   const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
   console.log(`\n${'═'.repeat(55)}`);
   console.log(`  bulk-extract complete in ${elapsed}s`);
   console.log(`  Sessions: ${totalSessions} processed, ${errors} errors`);
   console.log(`  Experiences: ${totalExperiences} detected, ${totalStored} stored`);
+  console.log(`  Scope quality: lang=${scopeStats.withLang} fw=${scopeStats.withFw} slug=${scopeStats.withSlug}`);
+  console.log(`  Detection source: filesystem=${scopeStats.fromFs} transcript=${scopeStats.fromTranscript}`);
   console.log(`  By runtime: ${Object.entries(storedByRuntime).map(([k, v]) => `${k}=${v}`).join(', ') || 'none'}`);
   if (args.dryRun) console.log(`  (DRY RUN — nothing stored)`);
   console.log(`${'═'.repeat(55)}`);
