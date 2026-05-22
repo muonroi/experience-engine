@@ -95,8 +95,8 @@ if [ "$SYNC_ONLY" = "true" ]; then
     exit 0
   fi
   node "$BULK_EXTRACT" --max "$SYNC_MAX" --max-age 365d
-  # Write sync timestamp
-  node -e "require('fs').writeFileSync('${HOME}/.experience/.last-sync.json', JSON.stringify({ts:new Date().toISOString(),sessions:$SYNC_MAX,source:'upgrade.sh --sync-only'}))"
+  # Write sync timestamp (use node os.homedir for correct Windows path)
+  node -e "const p=require('path').join(require('os').homedir(),'.experience','.last-sync.json');require('fs').writeFileSync(p,JSON.stringify({ts:new Date().toISOString(),sessions:$SYNC_MAX,source:'upgrade.sh --sync-only'}))"
   step "Session sync complete."
   exit 0
 fi
@@ -184,7 +184,7 @@ if [ "$DO_SYNC" = "true" ] && [ -f "$BULK_EXTRACT" ]; then
       echo "[upgrade] Session sync had errors (non-fatal — upgrade still succeeded)."
     }
     # Write sync timestamp for health-check staleness warning
-    node -e "require('fs').writeFileSync('${HOME}/.experience/.last-sync.json', JSON.stringify({ts:new Date().toISOString(),sessions:$SYNC_MAX,source:'upgrade.sh'}))" 2>/dev/null || true
+    node -e "const p=require('path').join(require('os').homedir(),'.experience','.last-sync.json');require('fs').writeFileSync(p,JSON.stringify({ts:new Date().toISOString(),sessions:$SYNC_MAX,source:'upgrade.sh'}))" 2>/dev/null || true
   else
     echo "[upgrade] Node.js not found — skipping session sync."
   fi
