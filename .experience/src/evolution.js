@@ -201,9 +201,11 @@ async function storeExperience(qa, domain, projectSlug) {
     return { stored: false, merged: true, id: supportCandidate.point.id };
   }
 
+  const storeData = buildStorePayload(id, qa, domain, projectSlug);
   const payload = {
-    json: JSON.stringify(buildStorePayload(id, qa, domain, projectSlug)),
+    json: JSON.stringify(storeData),
     user: getExpUser(),
+    ...buildScopeFlatFields(storeData),
   };
 
   if (!(await checkQdrant())) {
