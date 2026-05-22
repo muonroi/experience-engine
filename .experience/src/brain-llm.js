@@ -264,6 +264,35 @@ async function extractQA(experience, opts = {}) {
       }
       if (callerSlug) result.scope.project_slug = callerSlug;
     }
+
+    // Post-process conditions: if LLM returned array (DeepSeek ignores
+    // structured format), build structured conditions FROM evidence.
+    // Evidence is authoritative — LLM keywords are fallback only.
+    if (Array.isArray(result.conditions) || !result.conditions || typeof result.conditions !== 'object') {
+      const ev = evidence;
+      const structured = {};
+      if (ev.file_patterns?.length) structured.filePattern = ev.file_patterns;
+      else if (ev.files_touched?.length) structured.filePattern = ev.files_touched.map(f => {
+        const parts = f.replace(/\\/g, '/').split('/');
+        return parts.length > 1 ? parts[parts.length - 2] + '/' + parts[parts.length - 1] : f;
+      });
+      if (ev.tools_used?.length) structured.toolMatch = ev.tools_used;
+      if (ev.commands_run?.length) structured.commandMatch = ev.commands_run.map(c => {
+        const parts = c.split(/\s+/);
+        return parts[0] || c;
+      });
+      if (ev.error_info?.type) structured.errorMatch = [ev.error_info.type, ev.error_info.message].filter(Boolean);
+      if (ev.failed_approach?.name) {
+        if (!structured.commandMatch) structured.commandMatch = [];
+        structured.commandMatch.push(ev.failed_approach.name);
+      }
+      if (ev.user_said) structured.userSaid = ev.user_said;
+      if (Object.keys(structured).length > 0) {
+        result.conditions = structured;
+      } else if (Array.isArray(result.conditions)) {
+        result.conditions = { keywords: result.conditions.filter(k => k && k.length > 2) };
+      }
+    }
   }
   return result;
 }
