@@ -631,15 +631,23 @@ async function handleExtract(req, res) {
   if (!v.ok) return error(res, v.error);
   const { extractFromSession } = loadExperienceCore();
   const derived = deriveCallerMeta(body);
-  const stored = await extractFromSession(body.transcript, body.projectPath || null, {
+  const meta = {
     sourceKind: body.sourceKind || 'manual-api',
     sourceRuntime: body.sourceRuntime || 'api',
     sourceSession: body.sourceSession || null,
-    framework: derived.framework,
-    lang: derived.lang,
-    project_slug: derived.project_slug,
-  });
-  json(res, { stored, success: true });
+    framework: derived.framework || body.framework || null,
+    lang: derived.lang || body.lang || null,
+    project_slug: derived.project_slug || body.project_slug || null,
+  };
+  console.log(`[extract-api] project=${body.projectPath || 'none'} transcriptLen=${(body.transcript || '').length} lang=${meta.lang} fw=${meta.framework} slug=${meta.project_slug} runtime=${meta.sourceRuntime}`);
+  try {
+    const stored = await extractFromSession(body.transcript, body.projectPath || null, meta);
+    console.log(`[extract-api] done project=${body.projectPath || 'none'} stored=${stored}`);
+    json(res, { stored, success: true });
+  } catch (err) {
+    console.error(`[extract-api] ERROR project=${body.projectPath || 'none'}:`, err?.message, err?.stack?.split('\n').slice(0, 3).join(' | '));
+    json(res, { stored: 0, success: false, error: err?.message });
+  }
 }
 
 async function handleEvolve(req, res) {

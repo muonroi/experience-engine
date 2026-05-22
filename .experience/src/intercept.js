@@ -343,43 +343,72 @@ function _isDuplicate(hash) {
 const MAX_EXTRACTIONS_PER_SESSION = 10;
 
 async function extractFromSession(transcript, projectPath, meta = {}) {
-  if (!transcript || transcript.length < 100) return 0;
+  const _log = (msg, data) => _activity.activityLog({ op: 'extract-debug', msg, ...data });
+  if (!transcript || transcript.length < 100) {
+    _log('transcript too short', { len: transcript?.length || 0, project: projectPath });
+    return 0;
+  }
+  _log('start', { transcriptLen: transcript.length, project: projectPath, meta: { lang: meta?.lang, fw: meta?.framework, slug: meta?.project_slug, runtime: meta?.runtime, sourceKind: meta?.sourceKind } });
   const domain = _context.detectTranscriptDomain(transcript);
+  _log('domain detected', { domain, project: projectPath });
   const experiences = _context.detectExperience
     ? _context.detectExperience(transcript)
     : _context.detectMistakes(transcript);
   _activity.logCostCall('extract', 'local', 'session-extract', _activity.estimateTextUnits(transcript, 12000), { project: projectPath || null, experiences: experiences.length });
   if (experiences.length === 0) {
+    _log('no experiences detected', { project: projectPath });
     _activity.activityLog({ op: 'extract', experiences: 0, stored: 0, project: projectPath || null });
     return 0;
   }
+  _log('experiences detected', { count: experiences.length, types: experiences.map(e => e.type), project: projectPath });
   _activity.logMistakeSeen(experiences, projectPath);
   let stored = 0;
   const capped = experiences.slice(0, MAX_EXTRACTIONS_PER_SESSION);
-  for (const exp of capped) {
+  for (let i = 0; i < capped.length; i++) {
+    const exp = capped[i];
     const hash = _dedupHash(exp);
     if (_isDuplicate(hash)) {
+      _log('dedup skip', { i, type: exp.type, hash, project: projectPath });
       _activity.activityLog({ op: 'extract-skip', reason: 'dedup', type: exp.type, hash, project: projectPath || null });
       continue;
     }
     try {
       const projectSlug = _utils.extractProjectSlug(projectPath);
+      _log('calling extractQA', { i, type: exp.type, lang: meta?.lang, fw: meta?.framework, slug: projectSlug, excerptLen: exp?.excerpt?.length });
       const qa = await _brainllm.extractQA(exp, {
         framework: meta?.framework || null,
         lang: meta?.lang || null,
         projectSlug,
       });
-      if (!qa) { _activity.activityLog({ op: 'extract-skip', reason: 'brain_null', type: exp.type, project: projectPath || null }); continue; }
-      if (qa.skip) { _activity.activityLog({ op: 'extract-skip', reason: qa.reason || 'brain_skip', type: exp.type, project: projectPath || null }); continue; }
+      if (!qa) {
+        _log('brain returned null', { i, type: exp.type, project: projectPath });
+        _activity.activityLog({ op: 'extract-skip', reason: 'brain_null', type: exp.type, project: projectPath || null });
+        continue;
+      }
+      if (qa.skip) {
+        _log('brain returned skip', { i, type: exp.type, reason: qa.reason, project: projectPath });
+        _activity.activityLog({ op: 'extract-skip', reason: qa.reason || 'brain_skip', type: exp.type, project: projectPath || null });
+        continue;
+      }
+      _log('QA extracted', { i, type: exp.type, trigger: (qa.trigger || '').slice(0, 80), lang: qa.scope?.lang, fw: qa.scope?.framework, category: qa.category });
       if (meta?.sourceSession && !qa.sourceSession) qa.sourceSession = meta.sourceSession;
       if (exp.type) qa._experienceType = exp.type;
       const quality = _context.assessExtractedQaQuality(qa);
-      if (!quality.ok) { _activity.activityLog({ op: 'extract-skip', reason: quality.reason, type: exp.type, project: projectPath || null }); continue; }
+      if (!quality.ok) {
+        _log('quality gate rejected', { i, type: exp.type, reason: quality.reason, project: projectPath });
+        _activity.activityLog({ op: 'extract-skip', reason: quality.reason, type: exp.type, project: projectPath || null });
+        continue;
+      }
+      _log('storing', { i, type: exp.type, domain, slug: projectSlug });
       const result = await _evolution.storeExperience(qa, domain, projectSlug);
+      _log('store result', { i, type: exp.type, result: { stored: result?.stored, merged: result?.merged, id: result?.id } });
       if (result?.stored || result?.merged) stored++;
-    } catch { /* skip */ }
+    } catch (err) {
+      _log('extract error', { i, type: exp.type, error: err?.message, stack: (err?.stack || '').split('\n').slice(0, 3).join(' | '), project: projectPath });
+    }
   }
   _activity.activityLog({ op: 'extract', experiences: experiences.length, capped: capped.length, stored, project: projectPath || null });
+  _log('complete', { experiences: experiences.length, stored, project: projectPath });
   return stored;
 }
 
