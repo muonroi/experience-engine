@@ -1,0 +1,181 @@
+{
+  "batchId": "common-doc-v1",
+  "createdAt": "2026-05-11T13:35:53.050Z",
+  "source": "/home/phila/experience-engine/seed-common-principles.jsonl",
+  "points": [
+    {
+      "collection": "experience-principles",
+      "pointId": "28a5ea25-e773-4da6-9675-987df0ee084a",
+      "tier": "T0",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "018007ea-d4e1-495e-923a-74924dfe0829",
+      "tier": "T0",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "d2f3c932-7143-4339-aca4-b07acd77dc1d",
+      "tier": "T0",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "8cf28943-870d-4cd2-91b0-8a66b6e69cbc",
+      "tier": "T0",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "7dc79b9f-1a00-4c1d-9de5-acf8ae73302a",
+      "tier": "T0",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "3e4cf9c2-3fb5-4a37-86fe-018729a68812",
+      "tier": "T0",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "2755ed38-7675-4099-bde3-ccbe0ef7fe8e",
+      "tier": "T0",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "e47aea49-8542-4b5e-8732-c41687de4f70",
+      "tier": "T0",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "8e4eefc0-19c1-4b83-929d-69adbcd78cc4",
+      "tier": "T0",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "ec031d46-23bc-4341-bcff-46179a79d262",
+      "tier": "T0",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "7044b1aa-f68b-4c05-8aa2-d3eeeaedb008",
+      "tier": "T0",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "f993eb4e-d9f9-4cf7-90c3-18c9d45d0168",
+      "tier": "T0",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "600014d1-bc86-45dd-99bd-b9c95c06f21d",
+      "tier": "T0",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "93061a1d-58c6-42d9-8362-30125b221fff",
+      "tier": "T0",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "767067ef-6e4a-4933-8757-439bd53f5d9b",
+      "tier": "T0",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "d1216365-264a-4a52-b9a9-ac2aadc28d28",
+      "tier": "T0",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "1dc2c51d-f692-4bb0-8475-95a29c58e63d",
+      "tier": "T0",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "16b40980-3031-4bec-9200-91b0a0a57149",
+      "tier": "T0",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "2b68aa88-fb77-4207-8739-6702ad029e89",
+      "tier": "T0",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "8b893325-585d-4d92-8171-8bda933f4cc7",
+      "tier": "T0",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "eb3e2633-d6ec-402b-83f0-f9ee6e2dc873",
+      "tier": "T0",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "cf7d3376-0d56-4b36-9ba0-110f5dd4a3d5",
+      "tier": "T0",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "c49cc842-2745-4a97-bd08-084090747101",
+      "tier": "T0",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "857a08da-c4e1-408e-ba6a-c6e95ff795db",
+      "tier": "T0",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "087ff0b7-a9df-4def-9004-e5f093a516d1",
+      "tier": "T0",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "9704e894-8b1e-457e-98a4-bbc9fc5cccab",
+      "tier": "T0",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "51a42c54-fb21-4b3b-9d2a-996f738755f2",
+      "tier": "T0",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "1fc3db78-8208-4e5c-9052-9fbd6ca1617c",
+      "tier": "T0",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-principles",
+      "pointId": "475f175b-0b2e-4d63-8a9b-a21f96c85bf6",
+      "tier": "T0",
+      "variantIndex": 5
+    }
+  ]
+}

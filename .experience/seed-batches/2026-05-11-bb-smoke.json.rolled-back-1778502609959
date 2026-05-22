@@ -1,0 +1,775 @@
+{
+  "batchId": "2026-05-11-bb-smoke",
+  "createdAt": "2026-05-11T12:01:16.891Z",
+  "source": "/home/phila/seed-entries.jsonl",
+  "points": [
+    {
+      "collection": "experience-behavioral",
+      "pointId": "591264c7-71fd-4a60-bde3-7c0585d15011",
+      "tier": "T1",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "4f0977e2-1bfc-4c89-8619-423f99d96c77",
+      "tier": "T1",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "d5e01c83-7524-4269-b25f-bb30305db9df",
+      "tier": "T1",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "68495695-b692-42b4-975d-e68862e893b6",
+      "tier": "T1",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "a0a4650c-37c9-4b2e-9e56-0020ae82d778",
+      "tier": "T1",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "027e6db3-c989-4dac-9462-b114365a8df0",
+      "tier": "T1",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "4954293e-b7c9-4e0e-808c-0ecf78cf69db",
+      "tier": "T1",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "5a427482-90c1-4b0a-a9e8-7ba35fcf7bd9",
+      "tier": "T1",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "24a25cc8-a745-4407-8f0e-23dbe4e338f7",
+      "tier": "T1",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "d948b98c-8898-419f-8ba0-85d6488a155e",
+      "tier": "T1",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "aba89d04-9685-4f82-95c2-76ddad791908",
+      "tier": "T1",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "a2e8ca33-01a3-493a-800d-c2ee2d7a529e",
+      "tier": "T1",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "25c95e27-bacf-44b7-8c28-18f88779d54c",
+      "tier": "T1",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "cca8ac33-a128-4ab4-a42c-250e83ad6eb1",
+      "tier": "T1",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "4c65df5a-7759-4bbe-83c0-8df921679441",
+      "tier": "T1",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "f017d38f-c530-4bed-b3a4-c99b9723160f",
+      "tier": "T1",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "d7794e47-25a9-4e2f-89ef-f2fc1d468cb8",
+      "tier": "T1",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "85f9b44b-ae7b-4c3a-8443-36e8daec40af",
+      "tier": "T1",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "3834572d-2f37-4fb1-bd61-c591170b1e52",
+      "tier": "T1",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "c102213a-0d83-4916-b75d-e357d345f009",
+      "tier": "T1",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "d6102126-14b9-4ded-93b7-86671d01c45c",
+      "tier": "T1",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "badbacd2-6b59-41dc-b158-ca7e5d8439a1",
+      "tier": "T1",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "6161271a-bd33-4f70-8b99-839782cb23d0",
+      "tier": "T1",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "e8717a94-0e7d-4a25-adf5-411720e74ca9",
+      "tier": "T1",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "898f5bff-5e69-49a8-b97c-808aaae83616",
+      "tier": "T1",
+      "variantIndex": 6
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "b93d437d-ecc9-4461-b817-017062462fd1",
+      "tier": "T1",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "efbe6da9-a443-42d7-aa1e-adb60c9a6c60",
+      "tier": "T1",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "1f284c0c-c861-433a-b2d7-9d8f522c433e",
+      "tier": "T1",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "abf434a6-1d16-4242-b08b-5cdd4a5323aa",
+      "tier": "T1",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "1498025c-1e18-49e9-8dc7-0eac633cd913",
+      "tier": "T1",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "cb83a35b-7f32-479d-a1e5-b619c0bf0278",
+      "tier": "T1",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "2c709762-dabc-4f8f-8302-09f121df1ec2",
+      "tier": "T1",
+      "variantIndex": 6
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "2f633758-fc39-497e-8cc1-0bb4ab50e601",
+      "tier": "T1",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "a24ee1f4-ad3d-4c85-aeb4-f305d4e66445",
+      "tier": "T1",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "cc06c471-cd5d-44cb-bfca-65f2a4c820f5",
+      "tier": "T1",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "7463c05a-f954-4181-b3ad-ab893cfa7abb",
+      "tier": "T1",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "9d17a979-e3c1-4a51-b598-1a3bdd7fcd28",
+      "tier": "T1",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "55aaaaa6-d8f2-4b80-8af2-df9f97c79950",
+      "tier": "T1",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "5b30170f-01e8-48d7-9087-ebc09d1607c4",
+      "tier": "T1",
+      "variantIndex": 6
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "6c22788d-169e-4abc-9268-88db24b10ed6",
+      "tier": "T1",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "3d20fbd8-7e11-4c0c-991f-6023c5c523c5",
+      "tier": "T1",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "870cdead-2199-4442-8d44-32f0649623a7",
+      "tier": "T1",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "bad3a90f-acc0-47d1-86f3-38c632df57ae",
+      "tier": "T1",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "e69b05ce-e60f-4ab1-91f3-32408bc60b88",
+      "tier": "T1",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "55d29fb3-f8de-4e62-88b1-ed3e938d73c5",
+      "tier": "T1",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "163e7e3f-102c-4515-be1e-deb70abd0299",
+      "tier": "T1",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "cb126216-04bf-42a3-a611-c50e0e48dd33",
+      "tier": "T1",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "3cb7c579-6a1a-4d93-8ab1-da4157c77d0d",
+      "tier": "T1",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "19c02b8e-ad24-4bfb-9a86-d636d53fce57",
+      "tier": "T1",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "24f8ce7d-4fce-44e1-895f-25cf49aa5782",
+      "tier": "T1",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "d72cc310-5e2f-4155-8d1f-dc834905dff5",
+      "tier": "T1",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "6aca4aa1-41c9-4aec-aacd-7f487755404f",
+      "tier": "T1",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "b35e3de0-91bb-43d8-bb68-11c7f9c5a850",
+      "tier": "T1",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "88d3f18d-07c1-40c8-a43e-01659de41cd5",
+      "tier": "T1",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "676bab30-83f1-4046-b2fe-31f93d775586",
+      "tier": "T1",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "81bc8065-1a64-4f51-b6f4-608a7eaa80a6",
+      "tier": "T1",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "ee12f437-865d-4de3-afa0-50b6a15dbfc8",
+      "tier": "T1",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "5d051210-1fb7-4635-9f71-6e0836c402ac",
+      "tier": "T1",
+      "variantIndex": 6
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "c4f2992d-62d9-4983-a8b6-66952c765f01",
+      "tier": "T1",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "cdf97ac1-1209-4701-a55a-1050cb756ac7",
+      "tier": "T1",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "84873b8f-44bf-4b63-8435-7d09324a174c",
+      "tier": "T1",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "e8fd162c-1ce5-442d-a853-c0b85567cd03",
+      "tier": "T1",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "82cdb17e-af86-4477-bd81-fff3f3cc8132",
+      "tier": "T1",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "08499712-8316-488d-af71-4214b443b748",
+      "tier": "T1",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "abe0837f-923a-4d95-890b-f53963aca771",
+      "tier": "T1",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "ef67d1f3-9c50-4360-a0cb-6252d2dd87fc",
+      "tier": "T1",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "7a0a8600-5edc-4d0d-a3cd-3a17d6a3ff16",
+      "tier": "T1",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "bbb6800e-2dd2-4c6a-a385-5e6d7e315f47",
+      "tier": "T1",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "ceafd5cc-9951-4c49-b375-1ef1bca46189",
+      "tier": "T1",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "101576c7-b409-4799-8440-e70214ef82e6",
+      "tier": "T1",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "bc68f913-cf66-4d36-9047-0cc9f1ee08ad",
+      "tier": "T1",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "d3e3e1e5-1770-4195-b39b-779f059fbaf1",
+      "tier": "T1",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "1cc7f3ed-fe0e-48c0-907f-9a6097867488",
+      "tier": "T1",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "5a4bab72-cd54-47bc-b5d9-8c16911cf079",
+      "tier": "T1",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "93f3cadc-a919-4b11-a455-bcb22ff46c2c",
+      "tier": "T1",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "4fd0b308-bdc8-47bd-9b02-63b2475167b6",
+      "tier": "T1",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "598194ea-c33c-423f-ab0e-31a98104d7ae",
+      "tier": "T1",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "fff5c947-7071-4784-b4c5-9d9178ac0cbf",
+      "tier": "T1",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "11de029b-c792-4601-b60e-9311b6e5aaa1",
+      "tier": "T1",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "4fea9499-6308-4f84-8924-e6bf0ac42425",
+      "tier": "T1",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "c0c645f5-67e1-40d0-8634-92f96860c70c",
+      "tier": "T1",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "cbf7139b-42fd-4a98-bc57-8dae8bec1a73",
+      "tier": "T1",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "da4b5a36-90b2-41d1-bab6-f443c9269f25",
+      "tier": "T1",
+      "variantIndex": 6
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "d7078c89-d712-49a8-9ec6-a3f5d7589820",
+      "tier": "T1",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "cdfeeb89-cf34-479c-b44d-23e7fd0003f0",
+      "tier": "T1",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "a7284318-b25a-4f44-bd1e-dd7840a0f1d2",
+      "tier": "T1",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "0564b91b-e1a6-4cb7-b7b4-a902662745ca",
+      "tier": "T1",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "1f5fdba6-0c78-4648-8f3b-b733c187bf5f",
+      "tier": "T1",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "1d72cadd-1c2c-4906-ab55-efc3c2a8e448",
+      "tier": "T1",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "dbfc55ac-fc74-4e40-bd25-34efa1f96342",
+      "tier": "T1",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "47651b0e-27f1-4d47-9f05-61627822d94e",
+      "tier": "T1",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "7e152b36-0e3f-4fdb-bb23-fee7012bfde1",
+      "tier": "T1",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "404841a7-9552-49b4-9b8f-276e9854dfe2",
+      "tier": "T1",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "ca557550-2e20-4135-851b-924618b7da86",
+      "tier": "T1",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "36b799fa-9a89-42c9-b0a5-2ef709c2d33a",
+      "tier": "T1",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "ea6be89a-31ff-4e00-8626-3b00312a8e73",
+      "tier": "T1",
+      "variantIndex": 6
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "1876d6d0-4b9e-428f-88af-ac4066b677ab",
+      "tier": "T1",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "2f4fc028-9384-4f5a-853f-ec2321b88743",
+      "tier": "T1",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "6a58d09e-1b39-464d-8481-0425ffecb974",
+      "tier": "T1",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "d7e78bfa-8e4f-4b50-8acb-9fdcc2231ec2",
+      "tier": "T1",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "337b6c86-9582-4243-bd68-9d88bdb01a53",
+      "tier": "T1",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "55b0e0d6-eb33-4575-abeb-36e7ccc331d2",
+      "tier": "T1",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "5b5c15a0-aa7b-41ba-8293-eb5cd36618ff",
+      "tier": "T1",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "22cad347-9080-497c-8594-772328f63679",
+      "tier": "T1",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "7768b62c-1a39-41a1-8eb4-3d4277e053ab",
+      "tier": "T1",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "a6c29463-c2f0-4ab1-a83f-ff4753868128",
+      "tier": "T1",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "f0b3eb39-7050-4cc1-9fd7-1f7b966c28b5",
+      "tier": "T1",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "7f4f94f2-4764-47e3-8aa9-0680436d87cb",
+      "tier": "T1",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "58de6e65-033a-48f0-b898-0679a263016e",
+      "tier": "T1",
+      "variantIndex": 6
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "f793b394-4b90-4ebb-8237-ff6b5805d9aa",
+      "tier": "T1",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "24f8a1a8-5e05-45a1-b11d-b6b334871c59",
+      "tier": "T1",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "6696bed8-6ee1-4ce6-b22f-be03abe05639",
+      "tier": "T1",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "4f96079f-b78b-404e-b060-da078d9830ba",
+      "tier": "T1",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "8d845d64-9b61-4a84-a9fa-6c036eb30771",
+      "tier": "T1",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "d7a88ba1-8f1a-46dd-bfef-52475a29c927",
+      "tier": "T1",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "91bfeb34-a09f-4391-88a5-e420b132109f",
+      "tier": "T1",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "e86147e3-5b33-4c44-b9c6-99476b785968",
+      "tier": "T1",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "a7173c27-0963-44f8-b248-27d103ffa30e",
+      "tier": "T1",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "cbc50c66-4a6f-4bf4-9a9e-f885c124270c",
+      "tier": "T1",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "296f2621-b9c0-4469-810d-968ff6ce1152",
+      "tier": "T1",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "593e086b-dc53-42fd-bcd6-47cbb308f5bf",
+      "tier": "T1",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "5f9a5359-7a92-4141-80f1-0b572c59d8e0",
+      "tier": "T1",
+      "variantIndex": 0
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "4233b1e3-8a77-4871-b148-d6d5d8a98f62",
+      "tier": "T1",
+      "variantIndex": 1
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "dbc24d21-5305-403a-8d77-19119c9a22cc",
+      "tier": "T1",
+      "variantIndex": 2
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "c48ca566-3f32-4b23-a062-0adf9b463054",
+      "tier": "T1",
+      "variantIndex": 3
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "e732b4cb-f204-411e-9295-e4a9c0f896b2",
+      "tier": "T1",
+      "variantIndex": 4
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "78ae5eef-d737-4f1b-babf-2949b90048c4",
+      "tier": "T1",
+      "variantIndex": 5
+    },
+    {
+      "collection": "experience-behavioral",
+      "pointId": "74d65fb8-41f1-4a52-ac90-2834e00cbcd9",
+      "tier": "T1",
+      "variantIndex": 6
+    }
+  ]
+}
