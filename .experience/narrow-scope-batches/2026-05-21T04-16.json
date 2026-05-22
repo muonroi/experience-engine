@@ -1,0 +1,3291 @@
+{
+  "batchId": "2026-05-21T04-16",
+  "startedAt": "2026-05-21T04:16:25.751Z",
+  "updates": [
+    {
+      "id": "04fc9201-35ad-4088-afd2-26735579e427",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "1ecb7243-979b-e7a8-9a3c-3ab85f646807",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "01545dde-e686-6bfe-efa3-5113b046000e",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "13720d75-8801-54a5-11b1-c8c3662283d3",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "1de7435f-fcb9-08df-ef2d-68032b2334f4",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "1cd3f619-0578-b072-bed8-246c7b815742",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "059e2b99-370b-d87e-05ec-4692730b72b8",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "27b097e6-f11a-9b58-e21c-5aef360650cb",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "24b5207c-7671-5de7-cbad-18aa30790ab3",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "2ce1aedb-5153-6fe2-35d9-84b4c36da112",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "2263b836-31e2-452a-afc0-21a20c13914b",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^write_file$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^WriteFile$"
+      }
+    },
+    {
+      "id": "07db8fcd-16b9-4375-9e55-c2fb35490d4c",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^(Bash|Edit|Read|Grep)$"
+      }
+    },
+    {
+      "id": "30de0207-4718-52a5-4e70-2490a472b716",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "2d061a9a-bfcd-4e31-a102-1af79c931418",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "361efd44-0cc4-70e5-53d2-577081dd723a",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "348c42f5-bce8-4640-80b1-2ff286483b34",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "3b6de7be-3e5d-423e-ba9f-ba7fa8422bd0",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "3f84e12d-506f-48b7-ad65-27a85ad86546",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^RuleFlowDesigner$"
+      },
+      "newScope": {
+        "appliesToTools": "^RuleFlowDesigner$"
+      }
+    },
+    {
+      "id": "3abd5d96-a143-4cac-9a3d-fbdd1ab05fa3",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "3fd05042-80b8-0ac3-1427-0e3dfb601394",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "3c7a9f46-de2f-105e-be5d-3c336fd43621",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "4203c80d-b859-420f-929d-074c761d6e96",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "3cab74f7-8207-1cf1-ea77-957b00f00642",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "409287a0-5869-4326-a659-3681e666f118",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "4343572b-0471-6535-e4ae-2d5729548b3b",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "5b53da58-e624-4e8f-9519-3492c4637378",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "442016c0-953e-2508-b009-84209bc38405",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "462c69e5-9e58-4ea1-8d3c-d5a3c6ca886d",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^(Bash|Edit|Write|Read)$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^(Bash|Edit|Write|Read)$"
+      }
+    },
+    {
+      "id": "6315be99-2f5d-4d1b-8692-ec09e82ad3fd",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "679573e3-083d-4e26-9cf2-4bebdfae3ce0",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "536ac916-142d-3120-7bcd-d8fbd1073755",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "5f534a53-80cb-30a0-e045-cd8b80f18563",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "6920af1e-2f3e-a221-a09a-606af0a9d57d",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "697091f7-0b74-2060-39e9-71dea4574277",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "7d46356a-4878-40fd-a0a5-e7fe1308ae62",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {},
+      "newScope": {
+        "appliesToTools": "^(AuditTrailHook|IFlightRecorder)$"
+      }
+    },
+    {
+      "id": "720c1aad-912f-4142-b96e-dfe450c29237",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^(Bash|Edit|Read|Grep)$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "7a8f4d04-36e1-5472-a990-096a5a5d6d2a",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "728c55da-e9a0-41f3-9ed7-0b6f396106c4",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^StateManagement$"
+      },
+      "newScope": {
+        "appliesToTools": "^StateManagement$"
+      }
+    },
+    {
+      "id": "7cadddfb-5320-59c5-8981-c8a744b0b2ee",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "835363ad-6f1d-194c-1117-7951c2aa3715",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "78f9cae6-afbe-4b0a-be46-486ebbcdbb19",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "80262ca7-a06f-430c-9eff-ec0ff230e2c0",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "8d18d64d-343f-c3de-4e9f-331eb9277c7e",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "8e53c54b-28ea-10cd-6dbe-a503a8861d6a",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "95bdc155-68e6-9263-7a9e-f490215f326d",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "8ad313df-b5c5-e5df-a733-d2d70ef2887d",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "8c5f24d0-f54c-7cd8-a2e4-12f1f9324487",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "8fc62b80-dcb2-40d3-a127-a3e65ae91150",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {},
+      "newScope": {
+        "appliesToTools": "^React$"
+      }
+    },
+    {
+      "id": "96c53d65-8498-1c89-6c1f-e0700b4264a1",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "9eac495b-df9e-2067-ab8f-076307fd9b7f",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "a001602b-9c5a-294d-d9c8-40d0b8a3f350",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "9eebe5d5-460e-70da-a2d5-19a85e9d5f32",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "95d0e8db-a9a0-4d06-9e79-309bac88b6ec",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "8eb4a8e0-4b4b-4da1-b8f5-e94edf3fa1c5",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "a1b95829-9a56-429d-9f8b-665796e4a94a",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "9920175d-0fbc-ba0b-b990-001b7c56acf5",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "a02623f0-88dc-e9f6-63b9-d7754d76d305",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "a548fc06-21de-92e1-6f4f-cea0bd1d25cb",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "ab3c45fe-8ae2-b9db-5c82-60385b8fd624",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "b17443a0-6bf7-4d06-8e06-da5a0cb9f675",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "b29cdadc-6bba-4f59-9e82-f3991035d576",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "b4f7491e-b4ed-4e32-8ac2-da883e89bbe9",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "b92e4747-f117-c1dc-02b2-62b58cbdfa03",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "ba70a742-e05a-bf69-1f45-fa2b5ab8ceb9",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "bc5ad189-d2a7-c7b3-e776-d24e35d18ac8",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "d3a83284-5285-b93c-7eaa-73c149365189",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "d049a152-82bb-f8d4-396a-668f5a60a488",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "d24af28c-a3c0-ecb2-b547-82ef46167eb0",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "bead5c18-4daf-421f-a596-9f08d0006548",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "d2352467-4be9-418e-86b6-9253aee744fe",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^(Bash|Edit|Read|Grep)$"
+      },
+      "newScope": {
+        "appliesToTools": "^(Bash|Edit|Read|Grep)$"
+      }
+    },
+    {
+      "id": "d57728fb-5de8-4bd8-9e85-1a58f10ba621",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "d8d1032d-bf35-4aeb-a7b9-def089160127",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "d994ac32-6c7f-43f8-a166-f67df4619919",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {},
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "d9635592-3156-aa85-474f-3c2ed36aad8a",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "e121cd3a-ca7f-6fe6-23d5-4479d265e782",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "e0fd6e23-59a3-423a-a49e-1cd3ef590067",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {},
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "de741443-23d9-4e99-a2ed-0e33c5855ddb",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "db6c049a-970c-cd0b-b95b-ef5e74119abf",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "e8a8219c-64c4-caf4-1b4f-86ce4f585034",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "ebcb465e-1c5f-88fc-90a5-83c8fd8f6181",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "efbbd55a-4e83-d7c3-9970-8a0bea7f1ec5",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "feb1db5a-6b7e-5be9-0f88-d2f22f563a05",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "f7a18b89-ec62-4c61-b058-6dcd9c949796",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^(Bash|Edit|Read|Grep)$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "fa6606b6-e554-8c3a-fb74-29f354271f2e",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "00591f2a-e80c-4b16-9ac5-25cd4c144226",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "f8495fb4-e3b9-4311-add1-38705a0da1d7",
+      "collection": "experience-principles",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "0d81f9bd-d20c-4adc-98e3-99cb1fcb5887",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "0f248a7b-13d7-4c75-8bb8-ce7fab908361",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "024a87b0-ce22-4721-bd58-de10a1bf2340",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^(Edit|Write|Bash)$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^(Edit|Write|Bash)$"
+      }
+    },
+    {
+      "id": "02d78b44-c030-4614-a6a1-15c04c499952",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "09c63529-195d-41af-9ec0-56c4df17fffd",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "org": "muonroi"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "org": "muonroi",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "0f997131-838c-4fd0-8e19-228242c39df5",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "0970b65b-6327-4556-af13-b38419b2cc4a",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^(Bash|Edit|Write|Read|Grep)$"
+      }
+    },
+    {
+      "id": "1725e179-6350-4512-b642-bb09b6bd38e9",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "09ca2d61-b7fb-4aee-9bcf-78d5e71aee66",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "189a6f62-d216-4b80-8210-e3effc32389c",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^RuleGen$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "2de515f8-b2dd-4c28-8faa-d1c55eec104d",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "2428c7c9-a3a0-4725-980e-3cf49558d7a8",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "218dca22-8948-4068-bcfd-67bebc02fd9a",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "1de8ad85-bf64-4b6f-ae60-e57d83fa2de2",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "21c435ce-0464-4c57-ae65-a3da991a58a4",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "2cde4027-b036-4db5-a417-5079d8adee9c",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "2fe484ea-5116-4d2d-aaba-626687761f11",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "31081bf4-ae58-402a-a279-2810166b23af",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "38fbfdba-665f-461a-9844-1f85d9f223cc",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "3813fc74-f8c3-4517-83db-4c14f054635f",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "361e1f2b-8d39-4a8a-80aa-2a38a7200404",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "46b08dfd-c464-403d-b632-9dc037bc5c9f",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "45d34898-7f21-4382-a959-38e93180763e",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "393e6be2-b0a0-4517-95e0-e14873985502",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "4134e14d-a8f9-46e8-b362-2de3ffaf536a",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^(Bash|Edit|Write|Read|Grep)$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "4301b5ff-761e-41a0-ab66-63af6f39421d",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^(Bash|Edit|Write|Read|Grep)$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "524b367a-6108-4637-8f1f-ba267381baee",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "4b4e3484-44f9-4a80-afcd-89a9d6113922",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^(Bash|Edit|Read|Grep)$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "52b3c1f9-15d3-4890-8094-e84cb29c0ed8",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "60f14b1e-5af0-4d4a-8db4-5b86e8caf8e4",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^(Bash|Edit)$"
+      }
+    },
+    {
+      "id": "53982fc7-820d-4868-ad7f-36ac36073bf3",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "670c3da7-a7f5-4b37-a1cc-4d0f2cf89e41",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "657f0317-e0e1-40f8-974d-281b357b1625",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "appliesToTools": "^(Bash|Edit|Read|Grep)$"
+      },
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "6cf7b362-d6b5-467d-8c35-17c7bd0d12c8",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "5ae8759b-cf88-40d5-803e-0a95443b7cf8",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "org": "muonroi"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "org": "muonroi",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "71e3ecae-29fc-4ff6-ab5d-5a232997531d",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "58da4c93-246f-478b-b951-7fd9bd85c07b",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "7368449f-b334-4f6b-a591-22e164293638",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "org": "muonroi"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "org": "muonroi",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "5fee859f-6aeb-4eaf-9c02-0c88faeaf981",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "897a7f82-0b4f-4667-ba79-6341fbc1e322",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "860470a1-925d-492f-9806-294383b232bf",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "857f60a5-7568-40f0-9bb4-317e7e21c80c",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "8690536d-55b3-4f65-9c97-2580f0fc647a",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^(Bash|Edit|Read|Grep)$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^(Bash|Edit|Write|Read|Grep)$"
+      }
+    },
+    {
+      "id": "73e90c0f-5ae2-409f-b100-b54d9a5965b4",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "7a48f121-73ab-4120-9c34-f136010453a1",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^(Bash|Search|Retrieve)$"
+      }
+    },
+    {
+      "id": "74420016-4b55-4dd3-b4c8-5d3c73e1e1fa",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "95fc7011-7922-41bc-8862-ecc4161845b0",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {},
+      "newScope": {
+        "appliesToTools": "^(Bash|Edit|Write|Read|Grep)$"
+      }
+    },
+    {
+      "id": "9371ad98-c8d3-4247-b453-e7af813b6e5c",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "93ecf842-b742-4eea-a93f-19791fd8999d",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {},
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "9f64c1f7-4796-4ce1-9153-2efbaf128f88",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {},
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "9e2a255e-587b-4074-b6a0-bf5cbf905895",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "framework": "any",
+        "lang": "all"
+      },
+      "newScope": {
+        "framework": "any",
+        "lang": "all",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "a7a3019f-18ac-497b-b7d6-01ca07fbd9f0",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "ae93b513-cd4b-4623-b4b1-919b251d36a1",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "framework": "any",
+        "lang": "all"
+      },
+      "newScope": {
+        "framework": "any",
+        "lang": "all",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "aff142c1-9cd4-401e-b4e3-cb04c0374683",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Docker$"
+      }
+    },
+    {
+      "id": "b87b00fe-c4a8-4a32-b514-2a92220337f1",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {},
+      "newScope": {
+        "appliesToTools": "^React$"
+      }
+    },
+    {
+      "id": "bb6254b2-5684-41f1-aed4-417395dfe2a7",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "cd03dfdd-4a71-4719-8fcf-6246f65bb597",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "b2c7c798-df55-4b71-a9dd-a27da5d5a14e",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "org": "muonroi"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "org": "muonroi",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "cb0b8b82-04f9-45f6-8c07-6e7d4240d7ac",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "ce668258-d69a-44c4-8780-f1dfba5fc7cb",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "ce565aa1-146f-4706-bfae-6c2f56e1a1a9",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {},
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "d3c7d3c6-0ea3-45c5-a00c-31581be2b0ea",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "d906c550-a0b8-42ba-9aec-381f72c2dd45",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "d76a8c34-2ac0-44ae-8cb7-40901910254b",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_framework",
+      "oldScope": {},
+      "newScope": {
+        "framework": "React"
+      }
+    },
+    {
+      "id": "e120cdb1-abf2-4428-9528-f3c871cab867",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "ea17ec30-246d-4bb7-989d-bd406d1e23e3",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {},
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "eb5b6080-f40a-43b8-bd0d-6c83120bbd05",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "ea2c1ddd-669d-4051-8647-eaa1b3d29119",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "ee800f6f-bd8d-4fe9-bf7e-51fc0efb833e",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {},
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "ec431d4d-2cf6-495e-8b53-3c1c8f964295",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {},
+      "newScope": {
+        "appliesToTools": "^(Bash|Edit|Write|Read|Grep)$"
+      }
+    },
+    {
+      "id": "fab177f8-b89e-4edd-8299-a2f579ff96c2",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {},
+      "newScope": {
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "1c5674e5-b17c-448d-9605-e1e49edae834",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "repos": [],
+        "filePattern": "*.sh",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "repos": [],
+        "filePattern": "*.sh",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "f90c6a57-15f4-465a-b0bb-5c961c68a117",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "f5de3fdd-8430-4540-98c9-e412de68e071",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "f00544b4-f4e8-47ec-a37a-b1957f4b78de",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {},
+      "newScope": {
+        "appliesToTools": "^React$"
+      }
+    },
+    {
+      "id": "13825399-cd7f-4139-b70d-a9f2f2cb0b8c",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "20c3df87-585a-4db4-b23a-d92dab64715d",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "f8789ada-64d5-47b1-905c-efadd063e260",
+      "collection": "experience-behavioral",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "appliesToTools": "^(Edit|Write|Read|Grep)$"
+      }
+    },
+    {
+      "id": "20fca673-d2d6-4580-b72b-06b7ff6351d3",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "25b27577-5be9-40c0-b313-cb926886ad43",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "repos": [],
+        "filePattern": "*.py",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "repos": [],
+        "filePattern": "*.py",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "2e9a2cf1-4447-40ff-b98f-1a16bd12dc02",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "2fcd5ae2-20d7-40be-acac-218809b9594a",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "2fd45392-bddc-4d84-9b61-87a95b5a0e01",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "361f341e-44c6-4f7b-8b9e-5183cc29a7b4",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^(Edit|Write|Read|Grep)$"
+      }
+    },
+    {
+      "id": "37cefbed-bb0f-4968-8afb-f520ec5ed933",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "3889031d-3a68-4a01-be69-0059dac8030b",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^WebFetch$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^WebFetch$"
+      }
+    },
+    {
+      "id": "2e8bc7e9-20a6-4afe-8af6-044f4dd1420c",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "38da957c-28ce-485e-9a02-99b399b38b29",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "3d03d6ca-83f1-4784-a020-04959d9ac687",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "repos": [],
+        "filePattern": "*.sh",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "repos": [],
+        "filePattern": "*.sh",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "380c58ad-cc2b-4050-956f-7c3c44292ac9",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Grep$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Grep$"
+      }
+    },
+    {
+      "id": "48e23c91-acdb-4cf1-87bf-67ffbb7027f9",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "repos": [],
+        "filePattern": "*.log",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "repos": [],
+        "filePattern": "*.log",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "4c45afeb-ea84-49b2-a834-895938903450",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "49ee152e-f999-4463-8154-2f439ce1fe80",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "4ffca2c4-2026-4b55-940c-619a1a6117ca",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "54f6c26b-90f0-4e4b-8fa4-75cac4aac7c3",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "5fecc23c-cd92-4b59-bc50-e477f9d4316c",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "5973e17e-1118-4a8c-94fb-59ba0412d9dd",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "4f40df94-f301-46cb-92cc-79f76b64cf1e",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "repos": [],
+        "filePattern": "",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "repos": [],
+        "filePattern": "",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "64a94cba-c47a-4493-8965-daff53b69758",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^(Bash|Edit|Write)$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "6cdcc944-8b9e-4180-bdad-27a9df98be95",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "58e8c38c-fd62-485a-a47c-6baf03c03124",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^(Bash|Edit|Write|Read|Grep)$"
+      }
+    },
+    {
+      "id": "68896452-f10f-4a6f-979f-34a0818786bb",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "6d411cac-3fe6-4b27-ba56-ff0529dcf3b2",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "6dfbd029-e667-47e3-98c8-587b749ce494",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "711f72cc-7133-4675-b1ae-f2f70a58c597",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "6fc47365-eb70-4c2e-9e6d-88dafa9bfb4d",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "repos": [
+          "experience-engine"
+        ],
+        "filePattern": "*.js",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "repos": [
+          "experience-engine"
+        ],
+        "filePattern": "*.js",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "7627f6d7-4456-4eee-a3f1-78328137735c",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "840642cc-f150-441d-8e6e-01edcaa5df27",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "8422374d-b41f-48a9-bd78-af5e27f071fc",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "811385ed-05b8-4b9a-a5fb-741961928cb1",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "8a15b51f-9cdc-42c8-9072-592b04b42324",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "8c36506c-4862-47df-b714-fba4e557e767",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "repos": [],
+        "filePattern": "*.py",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "repos": [],
+        "filePattern": "*.py",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "9cf7e527-d486-42db-82e3-affb7c096cb8",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "a1a2a568-216e-41b4-a267-86add18f3a6b",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "a1be124f-186f-4fbe-b340-a6575894b870",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "a73e5584-59eb-47ad-bec6-f063806f0046",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "9558f554-be51-4703-869a-24babf2acc10",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "a60abd25-14b7-4821-8a87-f06480ff3d9e",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "b7f46659-c0d0-4275-91f6-d48caea6d90b",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "b8ba58c0-cb54-4085-b949-45b81dba193a",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "d5999cf5-c7a5-4b6f-82af-b84f4ff3dbcd",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "b95ae099-5740-40f2-aceb-569aabdae34f",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "bdff891f-d593-4b60-9c2b-3ce0da0db39f",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "c437335a-4f75-40ca-9809-5d882aa35e89",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "cfbda23d-c642-469e-a84e-239008d3925b",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^(Bash|Edit|Write|Read|Grep)$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^(Edit|Write|Read|Grep)$"
+      }
+    },
+    {
+      "id": "d812b33d-bacf-4537-a496-d9d02cc39ed6",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "d2a49ec9-9600-4e79-8778-81bfba2a688f",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "daf035f7-395b-4ed8-9bc5-1108a309858e",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "db5ecfba-a028-4678-8c3e-25a47f79d898",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "dcecf59a-4d78-4597-a3ef-f5f7ad2de876",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "repos": [
+          "storyflow"
+        ],
+        "filePattern": "*.cs",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "repos": [
+          "storyflow"
+        ],
+        "filePattern": "*.cs",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "db4b76aa-6db5-43fc-9649-bd3aaed0c581",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "dde4dc56-708c-462a-b0bc-ad2f10a82724",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "dfbf4913-b7d3-4ca2-97d4-27d859215d24",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "project_slug": "d:/sources",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "project_slug": "d:/sources",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "e5803f59-e6f1-4791-b0b5-7aa6a2bff190",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Edit$"
+      }
+    },
+    {
+      "id": "f1270beb-670a-475a-9c25-e24853ac31e0",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "e6174ef9-f0b9-4521-adbb-ef1d0386be9f",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "ec504527-7fe9-46ca-bcf4-a82becf8ea87",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "e7abaf33-f402-4fb6-a940-28a6ae816994",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "f20c4e0a-e925-4d0a-a0a5-a2474464d815",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "repos": [],
+        "filePattern": "*.js",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "repos": [],
+        "filePattern": "*.js",
+        "appliesToTools": "^Bash$"
+      }
+    },
+    {
+      "id": "fb52b12c-49d6-44fb-bf84-5a1281e50256",
+      "collection": "experience-selfqa",
+      "verdict": "narrow_tool",
+      "oldScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      },
+      "newScope": {
+        "lang": "all",
+        "framework": "any",
+        "repos": [],
+        "filePattern": "*",
+        "appliesToTools": "^Bash$"
+      }
+    }
+  ],
+  "errors": [
+    {
+      "id": "a64d52d2-314f-4af6-86b3-d365c67549f3",
+      "reason": "invalid_framework"
+    },
+    {
+      "id": "48ddf2b9-2cb3-49e1-a544-e82757b1ddfc",
+      "reason": "invalid_framework"
+    },
+    {
+      "id": "90e03ddd-c4b5-4d4f-a41a-e85e3da169b0",
+      "reason": "invalid_framework"
+    },
+    {
+      "id": "bbe86cb0-28b1-4822-ac8b-c02bad21ea29",
+      "reason": "invalid_framework"
+    }
+  ],
+  "finishedAt": "2026-05-21T04:17:29.861Z",
+  "stats": {
+    "keep": 0,
+    "lang": 0,
+    "framework": 1,
+    "tool": 225,
+    "demote": 0,
+    "errors": 0,
+    "skipped": 4
+  }
+}
