@@ -268,7 +268,10 @@ async function extractQA(experience, opts = {}) {
     // Post-process conditions: if LLM returned array (DeepSeek ignores
     // structured format), build structured conditions FROM evidence.
     // Evidence is authoritative — LLM keywords are fallback only.
-    if (Array.isArray(result.conditions) || !result.conditions || typeof result.conditions !== 'object') {
+    const condIsArray = Array.isArray(result.conditions);
+    const condMissing = !result.conditions || typeof result.conditions !== 'object';
+    console.log(`[brain-llm] conditions post-process: isArray=${condIsArray} missing=${condMissing} evidenceKeys=${Object.keys(evidence).join(',') || 'none'}`);
+    if (condIsArray || condMissing) {
       const ev = evidence;
       const structured = {};
       if (ev.file_patterns?.length) structured.filePattern = ev.file_patterns;
