@@ -236,9 +236,12 @@ async function extractQA(experience, opts = {}) {
     const isCrossStack = CROSS_STACK_CATS.has(category);
 
     if (isCrossStack) {
-      // Cross-stack lesson — lock to wildcards regardless of caller stack.
-      result.scope.lang = 'all';
+      // Cross-stack lesson — wildcard framework but keep caller lang + slug.
+      // A "bash path error on Windows" is cross-framework but still scoped
+      // to the language ecosystem where it was observed.
       result.scope.framework = 'any';
+      if (callerLang) result.scope.lang = callerLang;
+      else result.scope.lang = 'all';
       if (callerSlug) result.scope.project_slug = callerSlug;
     } else {
       // Code mistake — caller meta authoritative.
