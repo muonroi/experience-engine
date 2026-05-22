@@ -307,7 +307,7 @@ async function brainOpenAI(prompt, opts = {}) {
   const model = opts.model || getBrainModel() || 'gpt-4o-mini';
   const body = { model, messages: [{ role:'user', content: prompt }], temperature: 0.3 };
   // Only add json_object mode for known-supporting providers (OpenAI, DeepSeek)
-  if (endpoint.includes('openai.com') || endpoint.includes('deepseek.com')) {
+  if (endpoint.includes('openai.com') || endpoint.includes('deepseek.com') || endpoint.includes('freemodel.dev')) {
     body.response_format = { type: 'json_object' };
   }
   try {
@@ -315,15 +315,21 @@ async function brainOpenAI(prompt, opts = {}) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getBrainKey()}` },
       body: JSON.stringify(body),
-      signal: opts.signal || AbortSignal.timeout(15000),
+      signal: opts.signal || AbortSignal.timeout(30000),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '');
+      console.error(`[brain-openai] HTTP ${res.status}: ${errBody.slice(0, 200)}`);
+      return null;
+    }
     const text = (await res.json()).choices?.[0]?.message?.content || '';
-    // Try direct parse, fallback to regex extract
     try { return JSON.parse(text); } catch {}
     const m = text.match(/\{[\s\S]*\}/);
     return m ? JSON.parse(m[0]) : null;
-  } catch { return null; }
+  } catch (err) {
+    console.error(`[brain-openai] ${err?.message}`);
+    return null;
+  }
 }
 
 async function brainGemini(prompt, opts = {}) {
