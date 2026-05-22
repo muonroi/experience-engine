@@ -510,6 +510,7 @@ function detectRecipes(events, lines) {
 
 function detectTraps(events, lines) {
   const traps = [];
+  const MAX_TRAPS = 5;
 
   for (let i = 1; i < events.length; i++) {
     const cur = events[i];
@@ -552,13 +553,14 @@ function detectTraps(events, lines) {
         const curErr = lines.slice(cur.lineIdx, Math.min(lines.length, cur.lineIdx + 4)).join(' ');
         const priorSig = _extractErrorSignature ? _extractErrorSignature(priorErr) : null;
         const curContext = lines.slice(cur.lineIdx, Math.min(lines.length, cur.lineIdx + 4)).join(' ');
-        isSameOp = sim >= 0.6 || (priorSig && curContext.includes(priorSig.split(':').pop()));
+        isSameOp = sim >= 0.75 || (priorSig && curContext.includes(priorSig.split(':').pop()));
       }
 
       if (!isSameOp) continue;
 
       const window = lines.slice(Math.max(0, prior.lineIdx - 1), Math.min(lines.length, cur.lineIdx + 2));
       const trapFile = extractEditTarget(cur.summary);
+    if (traps.length >= MAX_TRAPS) break;
       traps.push({
         type: 'trap',
         context: `${cur.toolName} on same target: failed then succeeded (${i - j} turns apart)`,
