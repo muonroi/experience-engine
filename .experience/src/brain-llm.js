@@ -348,15 +348,25 @@ async function brainClaude(prompt, opts = {}) {
 
 async function brainDeepSeek(prompt, opts = {}) {
   try {
-    const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
+    const endpoint = getBrainEndpoint() || 'https://api.deepseek.com/chat/completions';
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getBrainKey()}` },
       body: JSON.stringify({ model: opts.model || getBrainModel() || 'deepseek-chat', messages: [{ role:'user', content: prompt }], temperature: 0.3, response_format: { type:'json_object' } }),
       signal: opts.signal || AbortSignal.timeout(15000),
     });
-    if (!res.ok) return null;
-    return JSON.parse((await res.json()).choices?.[0]?.message?.content || '{}');
-  } catch { return null; }
+    if (!res.ok) {
+      console.error(`[brain-deepseek] HTTP ${res.status} ${res.statusText} from ${endpoint}`);
+      return null;
+    }
+    const text = (await res.json()).choices?.[0]?.message?.content || '{}';
+    try { return JSON.parse(text); } catch {}
+    const m = text.match(/\{[\s\S]*\}/);
+    return m ? JSON.parse(m[0]) : null;
+  } catch (err) {
+    console.error(`[brain-deepseek] error: ${err?.message}`);
+    return null;
+  }
 }
 
 // ============================================================
