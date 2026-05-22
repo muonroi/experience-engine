@@ -34,6 +34,12 @@ function computeEffectiveConfidence(data) {
   // a 0.7-base seed with 0 hits → 0.7 * 0.7 = 0.49 and gets filtered below
   // minConfidence at display time, even when retrieval is otherwise perfect.
   if (isSeedEntry(data)) return base;
+  // Bootstrap grace: entries that were never surfaced (surfaceCount=0) should
+  // not be penalized for lack of hits — they never had a chance to be validated.
+  // Without this, the circular death spiral kills entries: no surface -> no hits
+  // -> ageFactor 0.7 -> effConf drops below minConfidence -> never surfaces.
+  const surfaceCount = data.surfaceCount || 0;
+  if (surfaceCount === 0 && hits === 0) return base;
   const ageFactor = Math.min(1.0, 0.7 + (hits * 0.06));
   return base * ageFactor;
 }

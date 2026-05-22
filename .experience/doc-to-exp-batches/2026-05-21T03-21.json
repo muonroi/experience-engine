@@ -1,0 +1,25 @@
+{
+  "batchId": "2026-05-21T03-21",
+  "startedAt": "2026-05-21T03:21:19.495Z",
+  "entries": [
+    {
+      "sourceId": "001321be-e305-49c6-a003-3e16bd6ee393",
+      "newId": "203e6c66-7c98-4949-aaa1-26e206189db0"
+    },
+    {
+      "sourceId": "0013613c-0a04-4b61-9081-0c86aad4d3f7",
+      "newId": "d294535f-f246-4397-a869-6c30cb8cc9f2"
+    },
+    {
+      "sourceId": "0053db4f-ebc0-4d33-a31e-9b6aa77a43fd",
+      "newId": "79ffd32c-13bb-43e6-bf9e-6b75f21ea8bd"
+    }
+  ],
+  "errors": [],
+  "finishedAt": "2026-05-21T03:21:58.481Z",
+  "stats": {
+    "ok": 3,
+    "skipped": 0,
+    "errors": 0
+  }
+}

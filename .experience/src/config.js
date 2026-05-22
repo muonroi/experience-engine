@@ -91,6 +91,7 @@ function getBrainKey()       { return cfgValue('brainKey', 'EXPERIENCE_BRAIN_KEY
 function getEmbedDim()       { return cfgValue('embedDim', 'EXPERIENCE_EMBED_DIM', 768); }
 function getMinConfidence()  { return cfgValue('minConfidence', 'EXPERIENCE_MIN_CONFIDENCE', 0.42); }
 function getHighConfidence() { return cfgValue('highConfidence', 'EXPERIENCE_HIGH_CONFIDENCE', 0.60); }
+function getMinSearchScore() { return cfgValue('minSearchScore', 'EXPERIENCE_MIN_SEARCH_SCORE', 0.40); }
 function getOllamaEmbedUrl() { return `${getOllamaBase()}/api/embed`; }
 function getOllamaGenerateUrl() { return `${getOllamaBase()}/api/generate`; }
 function getExpUser() {
@@ -159,7 +160,7 @@ module.exports = {
   getOllamaBase, getOllamaEmbedUrl, getOllamaGenerateUrl,
   getEmbedProvider, getEmbedModel, getEmbedEndpoint, getEmbedKey, getEmbedDim,
   getBrainProvider, getBrainModel, getBrainExtractModel, getBrainModelForSource, getBrainEndpoint, getBrainKey,
-  getMinConfidence, getHighConfidence,
+  getMinConfidence, getHighConfidence, getMinSearchScore,
   getExpUser, EXP_USER,
   getHomeExpDir, getStoreDir, getActivityLogPath,
   COLLECTIONS, SELFQA_COLLECTION, EDGE_COLLECTION, ROUTES_COLLECTION,

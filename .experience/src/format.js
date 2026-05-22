@@ -1,6 +1,6 @@
 'use strict';
 
-const { getMinConfidence, getHighConfidence } = require('./config');
+const { getMinConfidence, getHighConfidence, getMinSearchScore } = require('./config');
 const { computeEffectiveConfidence } = require('./scoring');
 const { detectNaturalLang } = require('./context');
 
@@ -68,7 +68,7 @@ function formatPoints(points) {
     // factors in ignore/hit ratio + scope mismatch penalties) falls below
     // the min threshold, surfacing it as 💡 [Suggestion] tells the agent the
     // opposite of what the score actually says.
-    if (!point._probationaryT2 && displayScore < getMinConfidence()) continue;
+    if (!point._probationaryT2 && displayScore < getMinSearchScore()) continue; // GATE 2: search relevance (separate from confidence quality)
     // Probationary entries are intentionally low-confidence (new, untested),
     // but never surface if score is clearly negative — that's a stronger
     // signal than "untested": penalties exceeded similarity, meaning the

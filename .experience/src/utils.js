@@ -7,6 +7,7 @@
 'use strict';
 
 const { getMinConfidence, getHighConfidence } = require('./config');
+const { buildSemanticQuery } = require('./query-builder');
 
 // ============================================================
 //  Language/context detection
@@ -345,28 +346,20 @@ function extractCodeSymbols(text) {
 }
 
 function buildQuery(toolName, toolInput) {
-  const filePath = toolInput?.file_path || toolInput?.path || '';
-  const lang = detectContext(filePath);
-  const prefix = lang ? `[${lang}] ` : '';
-  let action = toolInput?.command || toolInput?.cmd || toolInput?.new_string || toolInput?.content || toolInput?.old_string || '';
-  if (!action && toolInput?.new_string) action = toolInput.new_string;
-  if (!action && toolInput?.content) action = toolInput.content;
-  const actionStr = String(action || toolName || '').trim();
-  // Augment with extracted symbols when the action looks like code (has any qualified
-  // identifier or class declaration). Skip for plain prose / shell commands.
-  let augmented = actionStr;
-  // Apply augmentation when the action contains anything that looks like a code identifier
-  // worth surfacing: qualified Type.Method, generic, inheritance, I-prefixed interfaces with
-  // common .NET suffixes, M-wrappers, or known dotnet keywords.
-  const codeShape = /(?:[A-Z][A-Za-z0-9_]+(?:\.[A-Z]|<|\s*:\s*[A-Z]|Async\b|Exception\b))|(?:\bI[A-Z][A-Za-z0-9_]+(?:Accessor|Service|Context|Repository|Logger|Factory|Provider|Handler)\b)|(?:\bM[A-Z][A-Za-z]{2,}\b)/;
-  if (actionStr.length > 8 && codeShape.test(actionStr)) {
-    const symbols = extractCodeSymbols(`${toolInput?.old_string || ''}\n${toolInput?.new_string || ''}\n${actionStr}`);
-    if (symbols.length) {
-      augmented = `Using ${symbols.join(', ')}. ${actionStr}`;
+  // Delegate to intent-based query builder. The old implementation sent raw
+  // code content which embedded far from natural-language principles (avg
+  // cosine 0.27). The new builder extracts INTENT — what the agent is doing —
+  // producing queries that embed much closer to brain entry text.
+  const symbols = (() => {
+    const raw = toolInput?.new_string || toolInput?.content || toolInput?.old_string || toolInput?.command || '';
+    const actionStr = String(raw || toolName || '').trim();
+    const codeShape = /(?:[A-Z][A-Za-z0-9_]+(?:\.[A-Z]|<|\s*:\s*[A-Z]|Async\b|Exception\b))|(?:\bI[A-Z][A-Za-z0-9_]+(?:Accessor|Service|Context|Repository|Logger|Factory|Provider|Handler)\b)|(?:\bM[A-Z][A-Za-z]{2,}\b)/;
+    if (actionStr.length > 8 && codeShape.test(actionStr)) {
+      return extractCodeSymbols(actionStr);
     }
-  }
-  const query = `${prefix}${augmented}`;
-  return query.slice(0, QUERY_MAX_CHARS);
+    return [];
+  })();
+  return buildSemanticQuery(toolName, toolInput, { existingSymbols: symbols });
 }
 
 // ============================================================
