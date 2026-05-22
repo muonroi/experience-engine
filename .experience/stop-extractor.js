@@ -6,10 +6,14 @@ const os = require('os');
 const path = require('path');
 const { compactTranscript } = require('./extract-compact');
 
+const crypto = require('crypto');
+
 const MIN_NEW_LINES = 5;
 const SESSION_MAX_AGE_MS = 30 * 60 * 1000;
 const MIN_IMPORTANT_SIGNALS = 4;
 const MIN_SIGNAL_TRANSCRIPT_CHARS = 180;
+const MAX_EXTRACTIONS_PER_SESSION = 10;
+const DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000;
 // Backfill: cover sessions a STOP hook may have missed (user closes the
 // terminal with the window's X button instead of letting the agent exit
 // cleanly, /clear, /compact, ...). Bounded so SessionStart stays fast.
@@ -443,8 +447,11 @@ function summarizeToolArguments(name, args) {
   if (tool === 'Bash') return trimText(parsed.cmd || parsed.command || parsed.chars || '', 300);
   if (tool === 'Edit') {
     const target = parsed.file_path || parsed.path || '';
-    const snippet = parsed.new_string || parsed.content || parsed.patch || '';
-    return trimText(`${target} ${snippet}`.trim(), 300);
+    const oldStr = parsed.old_string || '';
+    const newStr = parsed.new_string || parsed.content || parsed.patch || '';
+    const oldSnip = oldStr ? `old="${trimText(oldStr, 80)}" ` : '';
+    const newSnip = newStr ? `new="${trimText(newStr, 80)}"` : '';
+    return trimText(`${target} ${oldSnip}${newSnip}`.trim(), 400);
   }
   if (tool === 'Write') {
     const target = parsed.file_path || parsed.path || '';

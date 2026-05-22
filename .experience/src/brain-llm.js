@@ -149,16 +149,11 @@ async function brainRelevanceFilter(actionQuery, suggestionLines, signal, projec
   }
 }
 
-async function extractQA(mistake, opts = {}) {
-  // Lazy require to avoid circular deps (context.js imports utils which is fine,
-  // but brain-llm sits next to context and we don't want a top-level loop).
-  const { summarizeMistakeExcerpt } = require('./context');
-  const summary = summarizeMistakeExcerpt(mistake) || String(mistake?.excerpt || '').slice(0, 1500);
+async function extractQA(experience, opts = {}) {
+  const { summarizeExperienceExcerpt } = require('./context');
+  const summary = summarizeExperienceExcerpt(experience) || String(experience?.excerpt || '').slice(0, 1500);
+  const expType = experience?.type || 'unknown';
 
-  // Caller-supplied project context. Drives the 3-axis taxonomy:
-  //   - scope.lang        — universal language rules
-  //   - scope.framework   — framework/library-specific rules (use 'any' if generic)
-  //   - _projectSlug      — set elsewhere from projectPath
   const callerFw = typeof opts.framework === 'string' && opts.framework.trim()
     ? opts.framework.trim() : null;
   const callerLang = typeof opts.lang === 'string' && opts.lang.trim()
@@ -178,7 +173,46 @@ async function extractQA(mistake, opts = {}) {
     ? `- scope.framework must be either "any" or "${callerFw}". Use "${callerFw}" ONLY if the lesson references identifiers, types, packages, or conventions tied to that framework (e.g. types from its packages, attributes from its API). Use "any" when the lesson is a plain language rule that would apply to any project using the same language.`
     : `- scope.framework must be "any" when the lesson is not tied to a specific framework. Set a specific framework label only if the lesson explicitly mentions framework-bound identifiers/packages.`;
 
-  const prompt = `You are extracting ONE reusable lesson from a coding agent's failure. The summary below has already been pre-labelled.\n\n${summary}\n${ctxBlock}\nReturn JSON only (no markdown). Output a generalized PATTERN, not the literal log line.\n\nMandatory rules:\n- trigger MUST describe the failure PATTERN in the agent's own words. NEVER copy a ToolCall/ToolOutput/Bash line verbatim. NEVER start trigger with a path or filename. Bad: "ToolCall read_text_file: /mnt/d/.../config.json". Good: "config file read returns truncated content when output buffer is small".\n- question briefly names the mistake (one sentence).\n- solution is a concrete preventive action that another session would actually do — not "implement", "review", "debug" alone.\n- failureMode is the underlying class (e.g. "missing_validation", "wrong_lifetime_scope", "race_condition"), not the literal log.\n- why captures the root cause; evidence/symptoms go here, not in trigger.\n- judgment is the portable preventive judgment ("X must Y because Z"), reusable across files.\n- conditions: 2-4 short keywords for retrieval.\n- evidenceClass: one of log | test | runtime | review | user-correction | other.\n- category: one of "code" | "git" | "deploy" | "infra" | "security" | "review-meta" | "testing-meta" | "shell-meta". "code" means the lesson is tied to a specific language/framework. The rest are cross-stack and will be tagged with wildcard scope (lang:all, framework:any) regardless of caller context. Examples: git (force-push lost commits, bad rebase, missed hook), deploy (kubectl/docker/CI pipeline failure, env leak), infra (terraform/helm), security (secret in code, missing auth, SQL injection), review-meta (code-review process), testing-meta (TDD, fixture design — language-agnostic), shell-meta (POSIX vs bashism, quoting).\n- scope.lang must be one of: C# | JavaScript | TypeScript | Python | Go | Rust | Java | Shell | all. Use "all" when the lesson is language-agnostic.\n${frameworkRule}\n- Skip when nothing portable can be extracted:\n  - {"skip":true,"reason":"meta_workflow"} if the excerpt is workflow/scope/lock plumbing\n  - {"skip":true,"reason":"no_reusable_lesson"} if there is no clear failure pattern\n  - {"skip":true,"reason":"raw_log_only"} if the only signal is a tool call header with no diagnosable cause\n\nReturn exactly:\n{"trigger":"...","question":"...","reasoning":["step1","step2"],"solution":"...","why":"...","failureMode":"...","judgment":"...","conditions":["k1","k2"],"evidenceClass":"log|test|runtime|review|user-correction|other","category":"code|git|deploy|infra|security|review-meta|testing-meta|shell-meta","scope":{"lang":"all","framework":"any","repos":[],"filePattern":"*"}}`;
+  const TYPE_INSTRUCTIONS = {
+    recipe: `You are extracting a REUSABLE RECIPE — a successful multi-step pattern that another agent session should follow when facing a similar task. Focus on the SEQUENCE of steps, not the specific files.
+- trigger: describe WHEN this recipe applies (e.g. "adding a new service class in an Angular + .NET project")
+- question: what task does this recipe solve?
+- solution: the step-by-step recipe (numbered steps, each concrete and actionable)
+- failureMode: "none" (this is a success pattern)
+- judgment: the portable principle (e.g. "always register new services in ServiceRegistration.cs after creating them")`,
+
+    trap: `You are extracting a TRAP — something that looks right but fails, and what actually works. The agent tried the same operation, failed, then succeeded with a different approach.
+- trigger: describe the situation that triggers the trap (e.g. "editing a file without reading it first in Claude Code")
+- question: what trap did the agent fall into?
+- solution: what to do INSTEAD to avoid the trap
+- failureMode: the class of mistake (e.g. "stale_context", "wrong_tool_for_platform")
+- judgment: the portable rule (e.g. "always Read a file before Edit, even after Grep")`,
+
+    dependency: `You are extracting a hidden DEPENDENCY — editing file A broke file B, requiring a fix to B. This is about cross-file coupling that is not obvious.
+- trigger: describe what change triggers the dependency (e.g. "adding a new exported type to a module")
+- question: what hidden dependency exists?
+- solution: what files must be updated together
+- failureMode: "hidden_coupling"
+- judgment: the portable rule about what must change together`,
+
+    env_trap: `You are extracting an ENVIRONMENTAL TRAP — an OS/tool/platform error and its workaround. NOT a code logic bug.
+- trigger: describe the environment condition (e.g. "running TypeScript check via Bash shell on Windows")
+- question: what environmental trap exists?
+- solution: the workaround or correct approach
+- failureMode: "platform_mismatch" or "tool_limitation"
+- judgment: the portable rule for the platform`,
+
+    user_correction: `You are extracting a USER PREFERENCE — the user corrected the agent's approach. This captures what the user wants done differently.
+- trigger: describe what the agent did that the user corrected
+- question: what did the user want differently?
+- solution: the corrected approach
+- failureMode: "assumption_mismatch"
+- judgment: the portable preference rule`,
+  };
+
+  const typeInstr = TYPE_INSTRUCTIONS[expType] || TYPE_INSTRUCTIONS.trap;
+
+  const prompt = `${typeInstr}\n\nThe summary below has been pre-labelled as type "${expType}".\n\n${summary}\n${ctxBlock}\nReturn JSON only (no markdown). Output a generalized PATTERN, not the literal log line.\n\nMandatory rules:\n- trigger MUST describe the PATTERN. NEVER copy a ToolCall/ToolOutput/Bash line verbatim. NEVER start with a path or filename.\n- question briefly names the experience (one sentence).\n- solution is a concrete preventive/reusable action — not "implement", "review", "debug" alone.\n- why captures the root cause or rationale.\n- judgment is the portable reusable judgment ("X must Y because Z"), reusable across files.\n- conditions: 2-4 short keywords for retrieval.\n- evidenceClass: one of log | test | runtime | review | user-correction | recipe.\n- category: one of "code" | "git" | "deploy" | "infra" | "security" | "review-meta" | "testing-meta" | "shell-meta".\n- scope.lang must be one of: C# | JavaScript | TypeScript | Python | Go | Rust | Java | Shell | all.\n${frameworkRule}\n- Skip when nothing portable can be extracted:\n  - {"skip":true,"reason":"meta_workflow"}\n  - {"skip":true,"reason":"no_reusable_lesson"}\n  - {"skip":true,"reason":"raw_log_only"}\n\nReturn exactly:\n{"trigger":"...","question":"...","reasoning":["step1","step2"],"solution":"...","why":"...","failureMode":"...","judgment":"...","conditions":["k1","k2"],"evidenceClass":"...","category":"...","scope":{"lang":"all","framework":"any","repos":[],"filePattern":"*"}}`;
   const result = await callBrainWithFallback(prompt, { source: 'extract' });
   // Post-process: hard-set scope fields from caller context where available.
   // For "code" category, caller-derived hints (from on-disk markers) are

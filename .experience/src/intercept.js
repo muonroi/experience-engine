@@ -320,35 +320,66 @@ async function reconcileStalePromptSuggestions(state, nextPromptMeta = {}) {
   return result;
 }
 
+const _crypto = require('crypto');
+
+function _dedupHash(exp) {
+  const key = `${exp.type || ''}:${exp.context || ''}:${(exp.excerpt || '').slice(0, 200)}`;
+  return _crypto.createHash('sha1').update(key).digest('hex').slice(0, 12);
+}
+
+const _recentHashes = new Map();
+
+function _isDuplicate(hash) {
+  const now = Date.now();
+  const DEDUP_WINDOW = 24 * 60 * 60 * 1000;
+  for (const [k, ts] of _recentHashes) {
+    if (now - ts > DEDUP_WINDOW) _recentHashes.delete(k);
+  }
+  if (_recentHashes.has(hash)) return true;
+  _recentHashes.set(hash, now);
+  return false;
+}
+
+const MAX_EXTRACTIONS_PER_SESSION = 10;
+
 async function extractFromSession(transcript, projectPath, meta = {}) {
   if (!transcript || transcript.length < 100) return 0;
   const domain = _context.detectTranscriptDomain(transcript);
-  const mistakes = _context.detectMistakes(transcript);
-  _activity.logCostCall('extract', 'local', 'session-extract', _activity.estimateTextUnits(transcript, 12000), { project: projectPath || null, mistakes: mistakes.length });
-  if (mistakes.length === 0) {
-    _activity.activityLog({ op: 'extract', mistakes: 0, stored: 0, project: projectPath || null });
+  const experiences = _context.detectExperience
+    ? _context.detectExperience(transcript)
+    : _context.detectMistakes(transcript);
+  _activity.logCostCall('extract', 'local', 'session-extract', _activity.estimateTextUnits(transcript, 12000), { project: projectPath || null, experiences: experiences.length });
+  if (experiences.length === 0) {
+    _activity.activityLog({ op: 'extract', experiences: 0, stored: 0, project: projectPath || null });
     return 0;
   }
-  _activity.logMistakeSeen(mistakes, projectPath);
+  _activity.logMistakeSeen(experiences, projectPath);
   let stored = 0;
-  for (const mistake of mistakes.slice(0, 5)) {
+  const capped = experiences.slice(0, MAX_EXTRACTIONS_PER_SESSION);
+  for (const exp of capped) {
+    const hash = _dedupHash(exp);
+    if (_isDuplicate(hash)) {
+      _activity.activityLog({ op: 'extract-skip', reason: 'dedup', type: exp.type, hash, project: projectPath || null });
+      continue;
+    }
     try {
       const projectSlug = _utils.extractProjectSlug(projectPath);
-      const qa = await _brainllm.extractQA(mistake, {
+      const qa = await _brainllm.extractQA(exp, {
         framework: meta?.framework || null,
         lang: meta?.lang || null,
         projectSlug,
       });
-      if (!qa) { _activity.activityLog({ op: 'extract-skip', reason: 'brain_null', type: mistake.type, project: projectPath || null }); continue; }
-      if (qa.skip) { _activity.activityLog({ op: 'extract-skip', reason: qa.reason || 'brain_skip', type: mistake.type, project: projectPath || null }); continue; }
+      if (!qa) { _activity.activityLog({ op: 'extract-skip', reason: 'brain_null', type: exp.type, project: projectPath || null }); continue; }
+      if (qa.skip) { _activity.activityLog({ op: 'extract-skip', reason: qa.reason || 'brain_skip', type: exp.type, project: projectPath || null }); continue; }
       if (meta?.sourceSession && !qa.sourceSession) qa.sourceSession = meta.sourceSession;
+      if (exp.type) qa._experienceType = exp.type;
       const quality = _context.assessExtractedQaQuality(qa);
-      if (!quality.ok) { _activity.activityLog({ op: 'extract-skip', reason: quality.reason, type: mistake.type, project: projectPath || null }); continue; }
+      if (!quality.ok) { _activity.activityLog({ op: 'extract-skip', reason: quality.reason, type: exp.type, project: projectPath || null }); continue; }
       const result = await _evolution.storeExperience(qa, domain, projectSlug);
       if (result?.stored || result?.merged) stored++;
     } catch { /* skip */ }
   }
-  _activity.activityLog({ op: 'extract', mistakes: mistakes.length, stored, project: projectPath || null });
+  _activity.activityLog({ op: 'extract', experiences: experiences.length, capped: capped.length, stored, project: projectPath || null });
   return stored;
 }
 
