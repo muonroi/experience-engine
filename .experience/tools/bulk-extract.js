@@ -260,7 +260,7 @@ async function extractAndStore(transcript, projectPath, meta, dryRun) {
       if (meta?.lang) body.lang = meta.lang;
       if (meta?.framework) body.framework = meta.framework;
       try {
-        const result = await remote.postJson('/api/extract', body, { homeDir, config, timeoutMs: 30000 });
+        const result = await remote.postJson('/api/extract', body, { homeDir, config, timeoutMs: 90000 });
         return result?.stored || 0;
       } catch (err) {
         if (meta?.verbose) console.error(`    remote error:`, err.message);
