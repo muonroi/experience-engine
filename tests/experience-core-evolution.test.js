@@ -72,11 +72,12 @@ test.after(() => {
 });
 
 test('fresh high-scoring T2 can surface as one probationary suggestion without becoming high confidence', () => {
+  // confidence must be below getMinConfidence() (default 0.42) to be a probationary candidate
   const freshT2 = makeScoredPoint('experience-selfqa', 'fresh-t2', 0.92, {
     trigger: 'prompt-time hook guidance',
     question: 'fast path misses relevant prompt guidance',
     solution: 'Surface one high-score fresh T2 as probationary so it can receive feedback.',
-    confidence: 0.5,
+    confidence: 0.3,
     hitCount: 0,
     validatedCount: 0,
     surfaceCount: 0,
@@ -87,7 +88,7 @@ test('fresh high-scoring T2 can surface as one probationary suggestion without b
     trigger: 'second prompt-time hook guidance',
     question: 'second fresh hint',
     solution: 'Do not surface more than one probationary T2 in a single intercept.',
-    confidence: 0.5,
+    confidence: 0.3,
     hitCount: 0,
     validatedCount: 0,
     surfaceCount: 0,
@@ -107,11 +108,12 @@ test('fresh high-scoring T2 can surface as one probationary suggestion without b
 });
 
 test('probationary T2 does not surface after surface limit, debt, or low raw score', () => {
+  // confidence below minConfidence so entries are probationary candidates (when not blocked by debt/limit)
   const base = {
     trigger: 'prompt-time hook guidance',
     question: 'fresh hint',
     solution: 'Only fresh high-score T2 entries with clean debt can surface probationarily.',
-    confidence: 0.5,
+    confidence: 0.3,
     hitCount: 0,
     validatedCount: 0,
     surfaceCount: 0,
@@ -199,7 +201,7 @@ test('repeated organic extraction strengthens one matching T2 without manual see
 test('T1 and T0 keep normal confidence filtering and high-confidence formatting', () => {
   const lowConfidenceT1 = makeScoredPoint('experience-behavioral', 'low-t1', 0.95, {
     solution: 'Low-confidence T1 should not bypass the normal confidence floor.',
-    confidence: 0.5,
+    confidence: 0.3,
     hitCount: 0,
     tier: 1,
   });
