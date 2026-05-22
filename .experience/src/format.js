@@ -142,6 +142,11 @@ function normalizeEvidenceClass(value, qa = {}) {
 }
 
 function normalizeConditions(conditions, fallbackText = '') {
+  // Preserve structured conditions (object with filePattern/toolMatch/etc.)
+  if (conditions && typeof conditions === 'object' && !Array.isArray(conditions)) {
+    const hasStructured = conditions.filePattern || conditions.toolMatch || conditions.commandMatch || conditions.codePattern || conditions.errorMatch || conditions.userSaid;
+    if (hasStructured) return conditions;
+  }
   const fallbackTokens = String(fallbackText || '')
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, ' ')
