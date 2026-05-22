@@ -352,6 +352,21 @@ function findAllRecentSessions(homeDir = getHomeDir(), now = Date.now(), maxAgeM
     }
   }
 
+  // muonroi-cli native emit — JSONL written by src/ee/transcript-emit.ts
+  // First line is a session_meta record with the session's cwd; using it as
+  // projectPath lets detectFrameworkFromProject() resolve framework + lang
+  // correctly instead of defaulting to framework=any.
+  const muonRoot = path.join(homeDir, '.experience', 'muonroi-cli-sessions');
+  for (const f of walkAllJsonl(muonRoot, (_p, name) => name.endsWith('.jsonl'), now, maxAgeMs)) {
+    let cwd = null;
+    try {
+      const head = fs.readFileSync(f.file, 'utf8').split('\n', 1)[0];
+      const meta = head ? JSON.parse(head) : null;
+      if (meta && meta.type === 'session_meta' && typeof meta.cwd === 'string') cwd = meta.cwd;
+    } catch {}
+    sessions.push({ runtime: 'muonroi-cli', file: f.file, mtimeMs: f.mtimeMs, projectPath: cwd });
+  }
+
   sessions.sort((a, b) => b.mtimeMs - a.mtimeMs);
   return sessions;
 }
@@ -586,6 +601,7 @@ function buildSessionData(session, startLine) {
     data.projectPath = session.projectPath || null;
     return data;
   }
+  // muonroi-cli uses the same JSONL shape as Claude — same parser handles it.
   return buildClaudeSessionData(session.file, startLine);
 }
 
