@@ -213,7 +213,9 @@ async function extractQA(experience, opts = {}) {
   const typeInstr = TYPE_INSTRUCTIONS[expType] || TYPE_INSTRUCTIONS.trap;
 
   const evidence = experience?.evidence || {};
-  const evidenceBlock = Object.keys(evidence).length > 0
+  const hasEvidence = Object.keys(evidence).length > 0;
+  console.log(`[brain-llm] extractQA evidence: hasEvidence=${hasEvidence} keys=${Object.keys(evidence).join(',') || 'none'}`);
+  const evidenceBlock = hasEvidence
     ? `\nEVIDENCE (hard facts extracted from the session — use these to build conditions):\n${JSON.stringify(evidence, null, 2)}\n`
     : '';
 
