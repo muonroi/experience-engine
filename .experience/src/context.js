@@ -240,23 +240,83 @@ function isUserCorrectionLine(line) {
 // brain consistently copied the first ToolCall line as the trigger when fed
 // raw excerpts, producing path-specific noise. A labelled summary points at
 // the actual failure pattern.
-function summarizeMistakeExcerpt(mistake) {
-  const raw = String(mistake?.excerpt || '');
+function summarizeExperienceExcerpt(experience) {
+  const raw = String(experience?.excerpt || '');
   if (!raw) return '';
+  const type = experience?.type || 'unknown';
   const lines = raw.split('\n').slice(0, 60);
+
+  if (type === 'recipe') {
+    const steps = experience?.steps || [];
+    const files = experience?.files || [];
+    return [
+      `EXPERIENCE TYPE: recipe (successful pattern)`,
+      experience?.context ? `CONTEXT: ${experience.context}` : '',
+      steps.length ? `STEPS:\n${steps.map((s, i) => `  ${i + 1}. ${s}`).join('\n')}` : '',
+      files.length ? `FILES: ${files.join(', ')}` : '',
+      `RAW WINDOW (first 600 chars):\n${raw.slice(0, 600)}`,
+    ].filter(Boolean).join('\n\n').slice(0, 1500);
+  }
+
+  if (type === 'trap') {
+    return [
+      `EXPERIENCE TYPE: trap (same operation fail→succeed)`,
+      experience?.context ? `CONTEXT: ${experience.context}` : '',
+      experience?.failedApproach ? `FAILED APPROACH: ${experience.failedApproach}` : '',
+      experience?.successApproach ? `WORKING APPROACH: ${experience.successApproach}` : '',
+      `RAW WINDOW (first 600 chars):\n${raw.slice(0, 600)}`,
+    ].filter(Boolean).join('\n\n').slice(0, 1500);
+  }
+
+  if (type === 'dependency') {
+    return [
+      `EXPERIENCE TYPE: dependency (edit A breaks B)`,
+      experience?.context ? `CONTEXT: ${experience.context}` : '',
+      experience?.trigger ? `TRIGGER FILE: ${experience.trigger}` : '',
+      experience?.affected ? `AFFECTED FILE: ${experience.affected}` : '',
+      experience?.error ? `ERROR: ${experience.error}` : '',
+      `RAW WINDOW (first 600 chars):\n${raw.slice(0, 600)}`,
+    ].filter(Boolean).join('\n\n').slice(0, 1500);
+  }
+
+  if (type === 'env_trap') {
+    return [
+      `EXPERIENCE TYPE: environmental trap (OS/tool error → workaround)`,
+      experience?.context ? `CONTEXT: ${experience.context}` : '',
+      experience?.error ? `ENV ERROR: ${experience.error}` : '',
+      experience?.workaround ? `WORKAROUND: ${experience.workaround}` : '',
+      `RAW WINDOW (first 600 chars):\n${raw.slice(0, 600)}`,
+    ].filter(Boolean).join('\n\n').slice(0, 1500);
+  }
+
+  if (type === 'user_correction') {
+    return [
+      `EXPERIENCE TYPE: user correction (user said no/wrong → agent adapted)`,
+      experience?.context ? `CONTEXT: ${experience.context}` : '',
+      experience?.correction ? `USER SAID: ${experience.correction}` : '',
+      experience?.before ? `BEFORE: ${experience.before}` : '',
+      experience?.after ? `AFTER: ${experience.after}` : '',
+      `RAW WINDOW (first 600 chars):\n${raw.slice(0, 600)}`,
+    ].filter(Boolean).join('\n\n').slice(0, 1500);
+  }
+
+  // Fallback for unknown types
   const errors = lines.filter((l) => /^(ToolOutput:|Bash\s+exit)/i.test(l) && isTranscriptErrorSignal(l)).slice(0, 3);
   const userCorrections = lines.filter((l) => isUserCorrectionLine(l)).slice(0, 2);
   const fixes = lines.filter((l) => /^ToolCall\s+(Edit|Write|replace|write_file|replace_in_file)\b/i.test(l)).slice(0, 2);
-
-  const sections = [
-    `MISTAKE TYPE: ${mistake?.type || 'unknown'}`,
-    mistake?.context ? `CONTEXT: ${mistake.context}` : '',
+  return [
+    `EXPERIENCE TYPE: ${type}`,
+    experience?.context ? `CONTEXT: ${experience.context}` : '',
     errors.length ? `FAILURE OUTPUT:\n${errors.join('\n')}` : '',
     userCorrections.length ? `USER CORRECTION:\n${userCorrections.join('\n')}` : '',
     fixes.length ? `SUBSEQUENT MUTATION:\n${fixes.join('\n')}` : '',
     `RAW WINDOW (first 600 chars):\n${raw.slice(0, 600)}`,
-  ].filter(Boolean);
-  return sections.join('\n\n').slice(0, 1500);
+  ].filter(Boolean).join('\n\n').slice(0, 1500);
+}
+
+// Backward compat alias
+function summarizeMistakeExcerpt(mistake) {
+  return summarizeExperienceExcerpt(mistake);
 }
 
 // Parse a transcript into structured tool events with success flags.
@@ -307,88 +367,279 @@ function jaccardSimilarity(a, b) {
   return union === 0 ? 0 : intersection / union;
 }
 
-function detectMistakes(transcript) {
-  const mistakes = [];
-  const lines = transcript.split('\n');
+// ============================================================
+//  Environmental error detection
+// ============================================================
 
-  // Retry loops
-  const toolCalls = {};
-  for (const line of lines) {
-    if (!isMutatingTranscriptToolCall(line)) continue;
-    const key = extractRetryTarget(line);
-    if (!key) continue;
-    toolCalls[key] = (toolCalls[key] || 0) + 1;
-  }
-  for (const [key, count] of Object.entries(toolCalls)) {
-    if (count >= 3) {
-      mistakes.push({
-        type: 'retry_loop',
-        context: `Tool ${key} called ${count} times`,
-        excerpt: lines.filter(l => l.includes(key.split(':')[1])).slice(0, 10).join('\n')
-      });
+const ENV_ERROR_RE = /\b(EPERM|ENOENT|EACCES|EADDRINUSE|ETIMEDOUT|ECONNREFUSED|uv_spawn|UV_HANDLE_CLOSING|cannot find module|no such file or directory|not recognized as|is not a cmdlet|command not found|permission denied|access denied)\b/i;
+
+function isEnvError(line) {
+  const text = String(line || '');
+  return ENV_ERROR_RE.test(text);
+}
+
+// ============================================================
+//  Edit old_string extraction from transcript summary
+// ============================================================
+
+function extractEditOldString(summary) {
+  const m = String(summary || '').match(/\bold="([^"]*)"/);
+  return m ? m[1] : null;
+}
+
+function extractEditTarget(summary) {
+  const parts = String(summary || '').trim().split(/\s+/);
+  const first = parts[0] || '';
+  return first.includes('.') || first.includes('/') || first.includes('\\') ? first : null;
+}
+
+// ============================================================
+//  Detector 1: RECIPE — successful multi-step task
+// ============================================================
+
+function detectRecipes(events, lines) {
+  const recipes = [];
+  const sequences = [];
+  let current = [];
+
+  for (const ev of events) {
+    if (ev.success === false) {
+      if (current.length >= 3) sequences.push([...current]);
+      current = [];
+      continue;
     }
+    current.push(ev);
   }
+  if (current.length >= 3) sequences.push(current);
 
-  // Retry-similarity pattern (ported from muonroi-cli mistake-detector).
-  // Behavioral signal: a mutating tool call that failed, followed within 3
-  // turns by a similar mutating call that succeeded — the warning should have
-  // fired before the first attempt. This catches "first try wrong, second try
-  // right" cases that the count-only retry_loop above misses (it requires 3+
-  // calls on the same exact target).
-  const events = parseToolEvents(lines);
+  for (const seq of sequences) {
+    const toolTypes = new Set(seq.map(e => e.toolName.toLowerCase()));
+    if (toolTypes.size < 3) continue;
+
+    const hasRead = [...toolTypes].some(t => ['read', 'grep', 'glob', 'read_file', 'read_text_file'].includes(t));
+    const hasMutate = [...toolTypes].some(t => ['edit', 'write', 'write_file', 'replace'].includes(t));
+    if (!hasRead || !hasMutate) continue;
+
+    const files = new Set();
+    for (const ev of seq) {
+      const target = extractEditTarget(ev.summary);
+      if (target) files.add(target);
+    }
+
+    const startIdx = seq[0].lineIdx;
+    const endIdx = seq[seq.length - 1].lineIdx;
+    const window = lines.slice(Math.max(0, startIdx - 1), Math.min(lines.length, endIdx + 2));
+
+    recipes.push({
+      type: 'recipe',
+      context: `Successful ${seq.length}-step sequence using ${[...toolTypes].join(', ')} on ${files.size} file(s)`,
+      excerpt: window.join('\n').slice(0, 1500),
+      steps: seq.map(e => `${e.toolName}: ${e.summary.slice(0, 80)}`).slice(0, 8),
+      files: [...files].slice(0, 5),
+    });
+
+    if (recipes.length >= 3) break;
+  }
+  return recipes;
+}
+
+// ============================================================
+//  Detector 2: TRAP — same operation fail→succeed
+// ============================================================
+
+function detectTraps(events, lines) {
+  const traps = [];
+
   for (let i = 1; i < events.length; i++) {
     const cur = events[i];
     if (cur.success !== true) continue;
-    if (!isMutatingTranscriptToolCall(`ToolCall ${cur.toolName}: ${cur.summary}`)) continue;
-    const lookback = Math.max(0, i - 3);
+    const curTool = cur.toolName.toLowerCase();
+    if (!['edit', 'write', 'write_file', 'replace', 'bash', 'shell'].includes(curTool)) continue;
+
+    const lookback = Math.max(0, i - 5);
     for (let j = i - 1; j >= lookback; j--) {
       const prior = events[j];
       if (prior.success !== false) continue;
-      if (prior.toolName.toLowerCase() !== cur.toolName.toLowerCase()) continue;
-      const sim = jaccardSimilarity(tokenizeForSimilarity(prior.summary), tokenizeForSimilarity(cur.summary));
-      if (sim >= 0.7) {
-        const window = lines.slice(Math.max(0, prior.lineIdx - 1), Math.min(lines.length, cur.lineIdx + 2)).join('\n');
-        mistakes.push({
-          type: 'retry_similarity',
-          context: `${cur.toolName} retry succeeded after similar failed attempt (similarity=${sim.toFixed(2)}, ${i - j} turns apart)`,
-          excerpt: window,
-        });
-        break;
-      }
-    }
-  }
+      if (prior.toolName.toLowerCase() !== curTool) continue;
 
-  // Error → fix patterns (v2: require 2+ consecutive errors OR user correction nearby)
-  for (let i = 0; i < lines.length; i++) {
-    if (!isTranscriptErrorSignal(lines[i])) continue;
-    // Count consecutive error signals starting at i
-    let errorCount = 1;
-    let errorEnd = i;
-    for (let k = i + 1; k <= Math.min(i + 6, lines.length - 1); k++) {
-      if (isTranscriptErrorSignal(lines[k])) { errorCount++; errorEnd = k; }
-      else if (isMutatingTranscriptToolCall(lines[k])) break;
-    }
-    // Check for user correction between error and fix.
-    // v3: require corrective language ("no", "wrong", "fix this"...), not just
-    // any User: turn — agent transcripts have a User: line every turn, which
-    // made the previous filter no-op.
-    let hasUserCorrection = false;
-    for (let k = i + 1; k <= Math.min(errorEnd + 6, lines.length - 1); k++) {
-      if (isUserCorrectionLine(lines[k])) { hasUserCorrection = true; break; }
-    }
-    // Only count as mistake if repeated errors or user had to intervene
-    if (errorCount < 2 && !hasUserCorrection) continue;
-    for (let j = errorEnd + 1; j <= Math.min(errorEnd + 6, lines.length - 1); j++) {
-      if (!isMutatingTranscriptToolCall(lines[j])) continue;
-      mistakes.push({
-        type: 'error_fix',
-        context: `${errorCount} error(s) followed by correction${hasUserCorrection ? ' (user intervened)' : ''}`,
-        excerpt: lines.slice(Math.max(0, i - 2), j + 3).join('\n')
+      let isSameOp = false;
+
+      if (['edit', 'write', 'write_file', 'replace'].includes(curTool)) {
+        const priorTarget = extractEditTarget(prior.summary);
+        const curTarget = extractEditTarget(cur.summary);
+        if (priorTarget !== curTarget) continue;
+
+        const priorOld = extractEditOldString(prior.summary);
+        const curOld = extractEditOldString(cur.summary);
+        if (priorOld && curOld) {
+          isSameOp = priorOld === curOld;
+        } else {
+          const sim = jaccardSimilarity(tokenizeForSimilarity(prior.summary), tokenizeForSimilarity(cur.summary));
+          isSameOp = sim >= 0.8;
+        }
+      } else {
+        const sim = jaccardSimilarity(tokenizeForSimilarity(prior.summary), tokenizeForSimilarity(cur.summary));
+        isSameOp = sim >= 0.8;
+      }
+
+      if (!isSameOp) continue;
+
+      const window = lines.slice(Math.max(0, prior.lineIdx - 1), Math.min(lines.length, cur.lineIdx + 2));
+      traps.push({
+        type: 'trap',
+        context: `${cur.toolName} on same target: failed then succeeded (${i - j} turns apart)`,
+        excerpt: window.join('\n').slice(0, 1500),
+        failedApproach: prior.summary.slice(0, 200),
+        successApproach: cur.summary.slice(0, 200),
       });
       break;
     }
   }
-  return mistakes;
+  return traps;
+}
+
+// ============================================================
+//  Detector 3: DEPENDENCY — edit A → break B → fix B
+// ============================================================
+
+function detectDependencies(events, lines) {
+  const deps = [];
+
+  for (let i = 0; i < events.length - 2; i++) {
+    const editA = events[i];
+    if (!['edit', 'write', 'write_file'].includes(editA.toolName.toLowerCase())) continue;
+    if (editA.success === false) continue;
+
+    const fileA = extractEditTarget(editA.summary);
+    if (!fileA) continue;
+
+    for (let j = i + 1; j <= Math.min(i + 4, events.length - 1); j++) {
+      const errEv = events[j];
+      if (errEv.success !== false) continue;
+
+      const errText = lines.slice(errEv.lineIdx, Math.min(lines.length, errEv.lineIdx + 3)).join(' ');
+
+      for (let k = j + 1; k <= Math.min(j + 4, events.length - 1); k++) {
+        const fixB = events[k];
+        if (!['edit', 'write', 'write_file'].includes(fixB.toolName.toLowerCase())) continue;
+        if (fixB.success === false) continue;
+
+        const fileB = extractEditTarget(fixB.summary);
+        if (!fileB || fileB === fileA) continue;
+
+        const window = lines.slice(Math.max(0, editA.lineIdx), Math.min(lines.length, fixB.lineIdx + 2));
+        deps.push({
+          type: 'dependency',
+          context: `Edit ${fileA} → error → fix ${fileB}`,
+          excerpt: window.join('\n').slice(0, 1500),
+          trigger: fileA,
+          affected: fileB,
+          error: errText.slice(0, 200),
+        });
+        break;
+      }
+      if (deps.length > 0 && deps[deps.length - 1]?.trigger === fileA) break;
+    }
+    if (deps.length >= 5) break;
+  }
+  return deps;
+}
+
+// ============================================================
+//  Detector 4: ENV_TRAP — environmental error → workaround
+// ============================================================
+
+function detectEnvTraps(events, lines) {
+  const envTraps = [];
+
+  for (let i = 0; i < events.length; i++) {
+    const ev = events[i];
+    if (ev.success !== false) continue;
+
+    const errLines = lines.slice(ev.lineIdx, Math.min(lines.length, ev.lineIdx + 3)).join(' ');
+    if (!isEnvError(errLines)) continue;
+
+    for (let j = i + 1; j <= Math.min(i + 6, events.length - 1); j++) {
+      const fix = events[j];
+      if (fix.success !== true) continue;
+      if (!['bash', 'shell', 'edit', 'write', 'write_file'].includes(fix.toolName.toLowerCase())) continue;
+
+      const window = lines.slice(Math.max(0, ev.lineIdx - 1), Math.min(lines.length, fix.lineIdx + 2));
+      envTraps.push({
+        type: 'env_trap',
+        context: `Environmental error → workaround via ${fix.toolName}`,
+        excerpt: window.join('\n').slice(0, 1500),
+        error: errLines.slice(0, 200),
+        workaround: fix.summary.slice(0, 200),
+      });
+      break;
+    }
+    if (envTraps.length >= 3) break;
+  }
+  return envTraps;
+}
+
+// ============================================================
+//  Detector 5: USER_CORRECTION — user says no/wrong → agent adapts
+// ============================================================
+
+function detectUserCorrections(lines) {
+  const corrections = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    if (!isUserCorrectionLine(lines[i])) continue;
+
+    const before = [];
+    for (let k = Math.max(0, i - 4); k < i; k++) {
+      if (isMutatingTranscriptToolCall(lines[k]) || /^Assistant:/i.test(lines[k])) {
+        before.push(lines[k]);
+      }
+    }
+
+    let after = null;
+    for (let k = i + 1; k <= Math.min(i + 8, lines.length - 1); k++) {
+      if (isMutatingTranscriptToolCall(lines[k])) {
+        after = lines[k];
+        break;
+      }
+    }
+    if (!after) continue;
+
+    const window = lines.slice(Math.max(0, i - 3), Math.min(lines.length, i + 10));
+    corrections.push({
+      type: 'user_correction',
+      context: `User correction: "${lines[i].replace(/^User:\s*/i, '').slice(0, 100)}"`,
+      excerpt: window.join('\n').slice(0, 1500),
+      correction: lines[i].replace(/^User:\s*/i, '').slice(0, 200),
+      before: before.map(l => l.slice(0, 100)).join(' | ').slice(0, 300),
+      after: after.slice(0, 200),
+    });
+
+    if (corrections.length >= 3) break;
+  }
+  return corrections;
+}
+
+// ============================================================
+//  Main: detectExperience (replaces detectMistakes)
+// ============================================================
+
+function detectExperience(transcript) {
+  const lines = transcript.split('\n');
+  const events = parseToolEvents(lines);
+
+  const recipes = detectRecipes(events, lines);
+  const traps = detectTraps(events, lines);
+  const dependencies = detectDependencies(events, lines);
+  const envTraps = detectEnvTraps(events, lines);
+  const userCorrections = detectUserCorrections(lines);
+
+  return [...recipes, ...traps, ...dependencies, ...envTraps, ...userCorrections];
+}
+
+// Deprecated alias — callers should migrate to detectExperience
+function detectMistakes(transcript) {
+  return detectExperience(transcript);
 }
 
 module.exports = {
@@ -398,7 +649,10 @@ module.exports = {
   detectNaturalLang,
   parseTranscriptToolCall, isTranscriptReadOnlyToolCall,
   isMutatingTranscriptToolCall, extractRetryTarget,
-  isTranscriptErrorSignal, isUserCorrectionLine, summarizeMistakeExcerpt,
+  isTranscriptErrorSignal, isUserCorrectionLine,
+  summarizeExperienceExcerpt, summarizeMistakeExcerpt,
   parseToolEvents, tokenizeForSimilarity, jaccardSimilarity,
-  detectMistakes,
+  detectExperience, detectMistakes,
+  isEnvError, extractEditOldString, extractEditTarget,
+  detectRecipes, detectTraps, detectDependencies, detectEnvTraps, detectUserCorrections,
 };
