@@ -220,6 +220,18 @@ const DOMAIN_TO_LANG = {
   'PowerShell': 'Shell',
 };
 
+// Framework → expected lang family. Used to fix conflicts when transcript
+// has mixed extensions (e.g. hybrid C# backend + JS frontend project).
+const FW_EXPECTED_LANG = {
+  dotnet: 'C#',
+  rust: 'Rust',
+  go: 'Go',
+  python: 'Python',
+  java: 'Java',
+  ruby: 'Ruby',
+};
+const JS_FRAMEWORKS = new Set(['react', 'next', 'nest', 'nuxt', 'angular', 'vue', 'svelte', 'solid', 'remix', 'expo', 'electron', 'astro', 'react-native']);
+
 function detectMetaFromTranscript(transcript) {
   const out = {};
   if (!transcript) return out;
@@ -231,13 +243,25 @@ function detectMetaFromTranscript(transcript) {
   }
 
   // Framework from content patterns
-  const sample = transcript.slice(0, 30000); // first 30KB enough for detection
+  const sample = transcript.slice(0, 30000);
   for (const entry of TRANSCRIPT_FW_PATTERNS) {
     if (entry.pattern.test(sample)) {
       if (entry.framework) {
         out.framework = entry.framework;
         break;
       }
+    }
+  }
+
+  // Consistency: fix lang/fw conflicts in hybrid projects.
+  // If fw=dotnet but lang=JavaScript → override lang to C# (the .csproj is authoritative).
+  // If fw=react/next but lang=C# → override lang to TypeScript.
+  if (out.framework && out.lang) {
+    const expectedLang = FW_EXPECTED_LANG[out.framework];
+    if (expectedLang && out.lang !== expectedLang) {
+      out.lang = expectedLang;
+    } else if (JS_FRAMEWORKS.has(out.framework) && !['TypeScript', 'JavaScript'].includes(out.lang)) {
+      out.lang = 'TypeScript';
     }
   }
 
