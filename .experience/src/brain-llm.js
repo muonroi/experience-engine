@@ -356,7 +356,8 @@ async function brainDeepSeek(prompt, opts = {}) {
       signal: opts.signal || AbortSignal.timeout(15000),
     });
     if (!res.ok) {
-      console.error(`[brain-deepseek] HTTP ${res.status} ${res.statusText} from ${endpoint}`);
+      const errBody = await res.text().catch(() => '');
+      console.error(`[brain-deepseek] HTTP ${res.status} ${res.statusText} from ${endpoint} body=${errBody.slice(0, 500)}`);
       return null;
     }
     const text = (await res.json()).choices?.[0]?.message?.content || '{}';
