@@ -762,29 +762,22 @@ function detectRepeatedErrors(events, lines) {
 // Groups: path errors, permission errors, syntax errors, module errors
 function _extractErrorSignature(text) {
   const s = String(text || '');
-  // ENOENT/EACCES with path → signature is the error type + path
-  const pathErr = s.match(/(ENOENT|EACCES|EPERM).*?['"](/[^'"]+)['"]/);
-  if (pathErr) return pathErr[1] + ':' + pathErr[2];
-  // Generic "no such file" with path
-  const noFile = s.match(/no such file or directory.*?['"](/[^'"]+)['"]/i);
-  if (noFile) return 'ENOENT:' + noFile[1];
-  // Permission denied with path
-  const perm = s.match(/permission denied.*?['"](/[^'"]+)['"]/i);
-  if (perm) return 'EACCES:' + perm[1];
-  // Syntax error (bash/python/node)
-  const syntax = s.match(/syntax error near unexpected token ['"]`?([^'"]+)/i);
-  if (syntax) return 'SYNTAX:' + syntax[1];
-  const pySyntax = s.match(/SyntaxError:s*(.{1,40})/);
-  if (pySyntax) return 'SYNTAX:' + pySyntax[1].trim();
-  // Heredoc / unterminated
-  if (/heredoc.*?delimited by end-of-file/i.test(s)) return 'HEREDOC:unterminated';
+  const m1 = s.match(/(ENOENT|EACCES|EPERM)[^\n]{0,60}/);
+  if (m1) return m1[1] + ':' + m1[0].slice(m1[1].length).trim().slice(0, 60);
+  const m2 = s.match(/no such file or directory[^\n]{0,80}/i);
+  if (m2) return 'ENOENT:' + m2[0].slice(25).trim().slice(0, 60);
+  const m3 = s.match(/permission denied[^\n]{0,80}/i);
+  if (m3) return 'EACCES:' + m3[0].slice(17).trim().slice(0, 60);
+  const m4 = s.match(/syntax error near unexpected token[^\n]{0,40}/i);
+  if (m4) return 'SYNTAX:' + m4[0].slice(0, 50);
+  const m5 = s.match(/SyntaxError:\s*[^\n]{1,40}/);
+  if (m5) return 'SYNTAX:' + m5[0].trim().slice(0, 50);
+  if (/heredoc.*delimited by end-of-file/i.test(s)) return 'HEREDOC:unterminated';
   if (/unterminated string/i.test(s)) return 'SYNTAX:unterminated_string';
-  // Module not found
-  const modErr = s.match(/cannot find module ['"](.*?)['"]/i);
-  if (modErr) return 'MODULE:' + modErr[1];
-  // Exit code repeated
-  const exitErr = s.match(/exit code (d+)/i);
-  if (exitErr && exitErr[1] !== '0') return 'EXIT:' + exitErr[1];
+  const m6 = s.match(/cannot find module[^\n]{1,60}/i);
+  if (m6) return 'MODULE:' + m6[0].slice(18).trim().slice(0, 50);
+  const m7 = s.match(/exit code (\d+)/i);
+  if (m7 && m7[1] !== '0') return 'EXIT:' + m7[1];
   return null;
 }
 
