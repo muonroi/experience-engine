@@ -55,7 +55,7 @@ function getCore() {
 function parseArgs() {
   const args = {
     max: 50, dryRun: false, minSize: 5000, project: null,
-    runtime: null, resetMarker: false, verbose: false,
+    runtime: null, excludeRuntime: null, resetMarker: false, verbose: false,
     maxAge: '365d',
   };
   const argv = process.argv.slice(2);
@@ -64,6 +64,7 @@ function parseArgs() {
     if (argv[i] === '--min-size' && argv[i + 1]) args.minSize = parseInt(argv[++i], 10);
     if (argv[i] === '--project' && argv[i + 1]) args.project = argv[++i].toLowerCase();
     if (argv[i] === '--runtime' && argv[i + 1]) args.runtime = argv[++i].toLowerCase();
+    if (argv[i] === '--exclude-runtime' && argv[i + 1]) args.excludeRuntime = argv[++i].toLowerCase();
     if (argv[i] === '--max-age' && argv[i + 1]) args.maxAge = argv[++i];
     if (argv[i] === '--dry-run') args.dryRun = true;
     if (argv[i] === '--reset-marker') args.resetMarker = true;
@@ -290,12 +291,21 @@ async function extractAndStore(transcript, projectPath, meta, dryRun) {
       if (meta?._preDetectedExperiences) {
         body.preDetectedExperiences = meta._preDetectedExperiences;
       }
-      try {
-        const result = await remote.postJson('/api/extract', body, { homeDir, config, timeoutMs: 90000 });
-        return result?.stored || 0;
-      } catch (err) {
-        if (meta?.verbose) console.error(`    remote error:`, err.message);
-        return 0;
+      if (meta?.project_slug) body.project_slug = meta.project_slug;
+      const MAX_RETRIES = 2;
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          const result = await remote.postJson('/api/extract', body, { homeDir, config, timeoutMs: 90000 });
+          return result?.stored || 0;
+        } catch (err) {
+          const isTimeout = /timeout|aborted/i.test(err.message);
+          if (isTimeout && attempt < MAX_RETRIES) {
+            if (meta?.verbose) console.error(`    remote timeout (attempt ${attempt + 1}/${MAX_RETRIES + 1}), retrying...`);
+            continue;
+          }
+          if (meta?.verbose) console.error(`    remote error:`, err.message);
+          return 0;
+        }
       }
     }
   }
@@ -369,6 +379,10 @@ async function main() {
   // Filter by runtime
   if (args.runtime) {
     sessions = sessions.filter(s => s.runtime === args.runtime);
+  }
+  if (args.excludeRuntime) {
+    const excluded = args.excludeRuntime.split(',');
+    sessions = sessions.filter(s => !excluded.includes(s.runtime));
   }
 
   // Filter by project
