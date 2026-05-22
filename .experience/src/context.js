@@ -111,6 +111,16 @@ function assessExtractedQaQuality(qa) {
   if (isMetaWorkflowExtract(qa)) return { ok: false, reason: 'meta_workflow_extract' };
   if (trigger.length < 8) return { ok: false, reason: 'trigger_too_short' };
   if (solution.length < 12) return { ok: false, reason: 'solution_too_short' };
+  if (qa.conditions && typeof qa.conditions === 'object' && !Array.isArray(qa.conditions)) {
+    const conds = qa.conditions;
+    const hasStructured = conds.filePattern || conds.toolMatch || conds.commandMatch || conds.codePattern || conds.errorMatch;
+    if (!hasStructured && conds.keywords) {
+      const kw = Array.isArray(conds.keywords) ? conds.keywords : [];
+      const GENERIC_KW = new Set(['fix', 'error', 'bug', 'code', 'file', 'test', 'run', 'build', 'update', 'change', 'edit', 'shell', 'readme', 'demo', 'project']);
+      const allGeneric = kw.length > 0 && kw.every(k => GENERIC_KW.has(String(k).toLowerCase()));
+      if (allGeneric) return { ok: false, reason: 'conditions_too_generic' };
+    }
+  }
   return { ok: true, reason: null };
 }
 
@@ -394,6 +404,48 @@ function extractEditTarget(summary) {
 }
 
 // ============================================================
+//  Evidence extraction helpers — parse structured facts from raw text
+// ============================================================
+
+function _extractErrorInfo(text) {
+  const s = String(text || '');
+  const out = { type: null, message: null, file: null };
+  const tsMatch = s.match(/error (TS\d+):\s*(.+?)(?:\n|$)/i);
+  if (tsMatch) { out.type = tsMatch[1]; out.message = tsMatch[2].trim(); }
+  const nodeMatch = s.match(/\b(Error|TypeError|RangeError|SyntaxError|ReferenceError):\s*(.+?)(?:\n|$)/);
+  if (!out.type && nodeMatch) { out.type = nodeMatch[1]; out.message = nodeMatch[2].trim(); }
+  const envMatch = s.match(/(EPERM|ENOENT|EACCES|EADDRINUSE|ETIMEDOUT|ECONNREFUSED|command not found|permission denied|cannot find module)\b[:\s]*(.{0,80})/i);
+  if (!out.type && envMatch) { out.type = envMatch[1]; out.message = envMatch[2]?.trim() || null; }
+  const exitMatch = s.match(/exit code (\d+)/i);
+  if (!out.type && exitMatch && exitMatch[1] !== '0') { out.type = 'exit_' + exitMatch[1]; }
+  const fileMatch = s.match(/(?:in |at |file )([^\s:]+\.\w{1,6})(?:[:\s(]|$)/);
+  if (fileMatch) out.file = fileMatch[1];
+  return out;
+}
+
+function _extractCommandInfo(summary) {
+  const s = String(summary || '').trim();
+  const bashMatch = s.match(/^(?:Bash|Shell|PowerShell)?:?\s*(.+)/i);
+  const cmd = bashMatch ? bashMatch[1] : s;
+  const parts = cmd.split(/\s+/);
+  const name = parts[0] || null;
+  const args = parts.slice(1).filter(a => a.startsWith('-') || a.startsWith('--')).slice(0, 5);
+  return { full: cmd, name, args };
+}
+
+function _deriveFilePatterns(files) {
+  const patterns = new Set();
+  for (const f of files) {
+    const s = String(f || '');
+    const ext = s.match(/\.(\w{1,6})$/);
+    if (ext) patterns.add('*.' + ext[1]);
+    const dirMatch = s.replace(/\\/g, '/').match(/\/([^/]+)\/[^/]+$/);
+    if (dirMatch) patterns.add(dirMatch[1] + '/*');
+  }
+  return [...patterns];
+}
+
+// ============================================================
 //  Detector 1: RECIPE — successful multi-step task
 // ============================================================
 
@@ -430,12 +482,21 @@ function detectRecipes(events, lines) {
     const endIdx = seq[seq.length - 1].lineIdx;
     const window = lines.slice(Math.max(0, startIdx - 1), Math.min(lines.length, endIdx + 2));
 
+    const toolsUsed = [...toolTypes];
+    const fileList = [...files].slice(0, 5);
+    const commands = seq.filter(e => ['bash','shell'].includes(e.toolName.toLowerCase())).map(e => e.summary.slice(0, 80)).slice(0, 5);
     recipes.push({
       type: 'recipe',
-      context: `Successful ${seq.length}-step sequence using ${[...toolTypes].join(', ')} on ${files.size} file(s)`,
+      context: `Successful ${seq.length}-step sequence using ${toolsUsed.join(', ')} on ${files.size} file(s)`,
       excerpt: window.join('\n').slice(0, 1500),
       steps: seq.map(e => `${e.toolName}: ${e.summary.slice(0, 80)}`).slice(0, 8),
-      files: [...files].slice(0, 5),
+      files: fileList,
+      evidence: {
+        files_touched: fileList,
+        tools_used: toolsUsed,
+        commands_run: commands,
+        file_patterns: _deriveFilePatterns(fileList),
+      },
     });
 
     if (recipes.length >= 3) break;
@@ -485,12 +546,20 @@ function detectTraps(events, lines) {
       if (!isSameOp) continue;
 
       const window = lines.slice(Math.max(0, prior.lineIdx - 1), Math.min(lines.length, cur.lineIdx + 2));
+      const trapFile = extractEditTarget(cur.summary);
       traps.push({
         type: 'trap',
         context: `${cur.toolName} on same target: failed then succeeded (${i - j} turns apart)`,
         excerpt: window.join('\n').slice(0, 1500),
         failedApproach: prior.summary.slice(0, 200),
         successApproach: cur.summary.slice(0, 200),
+        evidence: {
+          files_touched: trapFile ? [trapFile] : [],
+          tools_used: [cur.toolName.toLowerCase()],
+          failed_approach: _extractCommandInfo(prior.summary),
+          success_approach: _extractCommandInfo(cur.summary),
+          file_patterns: trapFile ? _deriveFilePatterns([trapFile]) : [],
+        },
       });
       break;
     }
@@ -535,6 +604,12 @@ function detectDependencies(events, lines) {
           trigger: fileA,
           affected: fileB,
           error: errText.slice(0, 200),
+          evidence: {
+            files_touched: [fileA, fileB],
+            tools_used: ['edit'],
+            error_info: _extractErrorInfo(errText),
+            file_patterns: _deriveFilePatterns([fileA, fileB]),
+          },
         });
         break;
       }
@@ -571,6 +646,11 @@ function detectEnvTraps(events, lines) {
         excerpt: window.join('\n').slice(0, 1500),
         error: errLines.slice(0, 200),
         workaround: fix.summary.slice(0, 200),
+        evidence: {
+          tools_used: [fix.toolName.toLowerCase()],
+          error_info: _extractErrorInfo(errLines),
+          workaround_command: ['bash', 'shell'].includes(fix.toolName.toLowerCase()) ? _extractCommandInfo(fix.summary) : null,
+        },
       });
       break;
     }
@@ -606,6 +686,11 @@ function detectUserCorrections(lines) {
     if (!after) continue;
 
     const window = lines.slice(Math.max(0, i - 3), Math.min(lines.length, i + 10));
+    const corrFiles = [];
+    for (const l of [...before, after]) {
+      const f = extractEditTarget(l);
+      if (f) corrFiles.push(f);
+    }
     corrections.push({
       type: 'user_correction',
       context: `User correction: "${lines[i].replace(/^User:\s*/i, '').slice(0, 100)}"`,
@@ -613,6 +698,13 @@ function detectUserCorrections(lines) {
       correction: lines[i].replace(/^User:\s*/i, '').slice(0, 200),
       before: before.map(l => l.slice(0, 100)).join(' | ').slice(0, 300),
       after: after.slice(0, 200),
+      evidence: {
+        files_touched: corrFiles,
+        user_said: lines[i].replace(/^User:\s*/i, ''),
+        agent_did_before: before.length ? before[before.length - 1] : null,
+        agent_did_after: after || null,
+        file_patterns: _deriveFilePatterns(corrFiles),
+      },
     });
 
     if (corrections.length >= 3) break;
