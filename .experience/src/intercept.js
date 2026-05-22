@@ -343,7 +343,7 @@ function _isDuplicate(hash) {
 const MAX_EXTRACTIONS_PER_SESSION = 10;
 
 async function extractFromSession(transcript, projectPath, meta = {}) {
-  const _log = (msg, data) => _activity.activityLog({ op: 'extract-debug', msg, ...data });
+  const _log = (msg, data) => { console.log(`[extract] ${msg}`, JSON.stringify(data || {})); _activity.activityLog({ op: 'extract-debug', msg, ...data }); };
   if (!transcript || transcript.length < 100) {
     _log('transcript too short', { len: transcript?.length || 0, project: projectPath });
     return 0;
