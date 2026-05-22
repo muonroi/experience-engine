@@ -176,51 +176,40 @@ function writeBulkMarker(marker) {
   fs.writeFileSync(MARKER_PATH, JSON.stringify(marker, null, 2), 'utf8');
 }
 
-async function extractAndStoreLocal(experiences, projectPath, meta, dryRun) {
-  if (dryRun || experiences.length === 0) return 0;
+async function extractAndStore(transcript, projectPath, meta, dryRun) {
+  if (dryRun || !transcript) return 0;
 
-  const core = getCore();
+  // Use remote API if configured (thin client → VPS brain)
   const remote = getRemote();
-  const isRemote = remote && remote.isRemoteEnabled(remote.loadConfig(homeDir));
-
-  const { extractQA } = require(path.join(expDir, 'src/brain-llm.js'));
-  const { detectTranscriptDomain, assessExtractedQaQuality } = require(path.join(expDir, 'src/context.js'));
-  const { extractProjectSlug: extractSlug } = require(path.join(expDir, 'src/utils.js'));
-  const { storeExperience } = require(path.join(expDir, 'src/evolution.js'));
-
-  const domain = 'general';
-  const projectSlug = extractSlug(projectPath) || meta?.projectSlug || null;
-
-  let stored = 0;
-  const MAX_PER_SESSION = 10;
-
-  for (const exp of experiences.slice(0, MAX_PER_SESSION)) {
-    const hash = dedupHash(exp);
-    if (seenHashes.has(hash)) continue;
-    seenHashes.add(hash);
-
-    try {
-      const qa = await extractQA(exp, {
-        framework: meta?.framework || null,
-        lang: meta?.lang || null,
-        projectSlug,
-      });
-      if (!qa || qa.skip) continue;
-      if (exp.type) qa._experienceType = exp.type;
-
-      const quality = assessExtractedQaQuality(qa);
-      if (!quality.ok) {
-        if (meta?.verbose) console.log(`    skip: ${quality.reason}`);
-        continue;
+  if (remote) {
+    const config = remote.loadConfig(homeDir);
+    if (remote.isRemoteEnabled(config)) {
+      const body = {
+        transcript,
+        projectPath,
+        sourceKind: 'bulk-extract',
+        sourceRuntime: 'claude',
+      };
+      if (meta?.lang) body.lang = meta.lang;
+      if (meta?.framework) body.framework = meta.framework;
+      try {
+        const result = await remote.postJson('/api/extract', body, { homeDir, config, timeoutMs: 30000 });
+        return result?.stored || 0;
+      } catch (err) {
+        if (meta?.verbose) console.error(`    remote error:`, err.message);
+        return 0;
       }
-
-      const result = await storeExperience(qa, domain, projectSlug);
-      if (result?.stored || result?.merged) stored++;
-    } catch (err) {
-      if (meta?.verbose) console.error(`    error:`, err.message);
     }
   }
-  return stored;
+
+  // Local path — requires brain LLM + Qdrant accessible locally
+  try {
+    const { extractFromSession } = getCore();
+    return await extractFromSession(transcript, projectPath, meta);
+  } catch (err) {
+    if (meta?.verbose) console.error(`    local error:`, err.message);
+    return 0;
+  }
 }
 
 function enrichMeta(projectPath) {
@@ -277,7 +266,7 @@ async function main() {
 
       if (experiences.length > 0) {
         const meta = enrichMeta(session.path);
-        const stored = await extractAndStoreLocal(experiences, session.path, {
+        const stored = await extractAndStore(transcript, session.path, {
           ...meta,
           projectSlug: session.projectSlug,
           verbose: args.verbose,
