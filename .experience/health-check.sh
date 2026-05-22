@@ -407,6 +407,32 @@ run_checks() {
       check "Portable Backup" "warn" "Missing: ${missing_tools[*]}" "Update the repo checkout so VPS maintenance/backup scripts are available"
     fi
   fi
+
+  # 11. Session Sync staleness
+  #
+  # Checks .last-sync.json written by upgrade.sh after bulk-extract runs.
+  # Warns if no sync has happened in >7 days — brain may be missing recent
+  # experiences from local Claude/Codex/Gemini sessions.
+  local sync_file="$EXP_DIR/.last-sync.json"
+  if [ -f "$sync_file" ]; then
+    local sync_ts; sync_ts=$(node -e "try{const d=JSON.parse(require('fs').readFileSync('$(_to_node_path "$sync_file")','utf8'));process.stdout.write(d.ts||'')}catch{}" 2>/dev/null)
+    if [ -n "$sync_ts" ]; then
+      local sync_epoch; sync_epoch=$(node -e "console.log(Math.floor(new Date('$sync_ts').getTime()/1000))" 2>/dev/null || echo "0")
+      local now_epoch; now_epoch=$(date +%s)
+      local sync_age_days=$(( (now_epoch - sync_epoch) / 86400 ))
+      if [ "$sync_age_days" -lt 7 ]; then
+        check "Session Sync" "ok" "Last sync ${sync_age_days}d ago ($sync_ts)"
+      elif [ "$sync_age_days" -lt 30 ]; then
+        check "Session Sync" "warn" "Last sync ${sync_age_days}d ago — brain may be stale" "Run: bash upgrade.sh --sync-only"
+      else
+        check "Session Sync" "warn" "Last sync ${sync_age_days}d ago — brain is stale" "Run: bash upgrade.sh --sync-only"
+      fi
+    else
+      check "Session Sync" "warn" "Sync file exists but timestamp unreadable" "Run: bash upgrade.sh --sync-only"
+    fi
+  else
+    check "Session Sync" "warn" "Never synced — brain has no local session data" "Run: bash upgrade.sh --sync-only"
+  fi
 }
 
 check_agent_hooks() {
@@ -471,6 +497,7 @@ print_dashboard() {
   print_check "Model Routing"
   print_check "Offline Queue"
   print_check "Portable Backup"
+  print_check "Session Sync"
   echo ""
 
   # Summary
