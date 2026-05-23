@@ -215,8 +215,6 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     return hasAny ? extra : undefined;
   })();
 
-  console.error('[INTERCEPT] query=' + query.slice(0,60) + ' vector=' + (vector?vector.length:'null') + ' callerLang=' + (sourceMeta?.lang||'null') + ' slug=' + (sourceMeta?.project_slug||'null') + ' filePath=' + (filePath||'null'));
-  console.error('[INTERCEPT] queryFilter=' + JSON.stringify(queryFilter||null).slice(0,300));
   const [t0, t1, t2, routeResult] = await Promise.all([
     _qdrant.searchCollection(COLLECTIONS[0].name, vector, COLLECTIONS[0].topK, signal, queryFilter),
     _qdrant.searchCollection(COLLECTIONS[1].name, vector, COLLECTIONS[1].topK, signal, queryFilter),
@@ -349,13 +347,11 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     });
   }
 
-  console.error('[INTERCEPT] raw: t0=' + (t0||[]).length + ' t1=' + (t1||[]).length + ' t2=' + (t2||[]).length);
   let r0 = _utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t0, COLLECTIONS[0].name), queryDomain, queryProjectSlug, query), COLLECTIONS[0].name);
   let r1 = _utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t1, COLLECTIONS[1].name), queryDomain, queryProjectSlug, query), COLLECTIONS[1].name);
   let r2 = _scoring.selectProbationaryT2Points(_utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t2, COLLECTIONS[2].name), queryDomain, queryProjectSlug, query), COLLECTIONS[2].name));
 
   let promptPrecisionRemoved = 0;
-  console.error('[INTERCEPT] after scope+rerank: r0=' + r0.length + ' r1=' + r1.length + ' r2=' + r2.length + ' r2prob=' + r2.filter(p=>p._probationaryT2).length);
   if (_intercept.isPromptHookPrecisionGate(toolName, sourceMeta)) {
     const g0 = _intercept.filterPromptHookPoints(r0, toolName, sourceMeta);
     const g1 = _intercept.filterPromptHookPoints(r1, toolName, sourceMeta);
@@ -365,13 +361,11 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   }
 
   const suppressionContext = { queryProjectSlug, queryDomain, actionKind };
-  console.error("[INTERCEPT] pre-noise: r0=" + r0.length + " r1=" + r1.length + " r2=" + r2.length);
   const s0 = _noise.filterNoiseSuppressedPoints(r0, suppressionContext);
   const s1 = _noise.filterNoiseSuppressedPoints(r1, suppressionContext);
   const s2 = _noise.filterNoiseSuppressedPoints(r2, suppressionContext);
   r0 = s0.kept; r1 = s1.kept; r2 = s2.kept;
   const noiseSuppressed = [...s0.suppressed, ...s1.suppressed, ...s2.suppressed];
-  console.error("[INTERCEPT] post-noise: r0=" + r0.length + " r1=" + r1.length + " r2=" + r2.length + " suppressed=" + noiseSuppressed.length);
   if (noiseSuppressed.length > 0) {
     for (const [reason, count] of Object.entries(noiseSuppressed.reduce((acc, item) => { acc[item.reason] = (acc[item.reason] || 0) + 1; return acc; }, {}))) {
       _activity.activityLog({ op: 'noise-suppressed', reason, count, actionKind, tool: toolName, project: filePath || null, ...sourceMeta });
@@ -408,7 +402,6 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     }
   } catch { /* never block intercept on graph failures */ }
 
-  console.error('[INTERCEPT] final lines=' + lines.length + ' before brainFilter');
   const allReranked = _utils.dedupePointsBySource([...r0, ...r1, ...r2]);
   const surfaced = allReranked.filter(p => {
     try {
@@ -442,12 +435,9 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
 
   if (!hookRealtimeFastPath && lines.length > 0 && _config.getConfig().brainFilter !== false) {
     try {
-      console.error("[BRAIN-INPUT] query=" + query.slice(0,80) + " lines=" + lines.length + " slug=" + queryProjectSlug);
-    for (let li=0; li<lines.length; li++) console.error("[BRAIN-INPUT] line" + li + ": " + lines[li].slice(0,200));
-    console.error("[INTERCEPT] calling brainFilter with " + lines.length + " lines"); const rawAction = toolInput?.command || toolInput?.file_path || query;
       const brainQuery = rawAction.length > query.length ? rawAction.slice(0, 300) : query;
       const kept = await _brainllm.brainRelevanceFilter(brainQuery, lines, signal, queryProjectSlug);
-      console.error("[INTERCEPT] brainFilter result: " + (kept === null ? "null" : kept.length + " kept")); if (kept !== null) {
+      if (kept !== null) {
         const removed = lines.length - kept.length;
         lines.length = 0; lines.push(...kept);
         if (removed > 0) _activity.activityLog({ op: 'brain-filter', removed, kept: kept.length, ...sourceMeta });

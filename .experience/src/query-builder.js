@@ -304,7 +304,7 @@ function buildSemanticQuery(toolName, toolInput, opts = {}) {
   if (intentKeywords.length > 0) parts.push(intentKeywords.join(', '));
   if (symbols.length > 0) parts.push('using ' + symbols.join(', '));
 
-  const query = parts.join(' ').replace(/\s+/g, ' ').trim();
+  const query = '[tool:' + toolName + '] ' + parts.join(' ').replace(/\s+/g, ' ').trim();
 
   // Fallback: if intent extraction yielded nothing, append truncated raw content
   if (intentKeywords.length === 0 && symbols.length === 0 && rawContent) {
