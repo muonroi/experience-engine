@@ -442,8 +442,12 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
 
   if (!hookRealtimeFastPath && lines.length > 0 && _config.getConfig().brainFilter !== false) {
     try {
-      const kept = await _brainllm.brainRelevanceFilter(query, lines, signal, queryProjectSlug);
-      if (kept !== null) {
+      console.error("[BRAIN-INPUT] query=" + query.slice(0,80) + " lines=" + lines.length + " slug=" + queryProjectSlug);
+    for (let li=0; li<lines.length; li++) console.error("[BRAIN-INPUT] line" + li + ": " + lines[li].slice(0,200));
+    console.error("[INTERCEPT] calling brainFilter with " + lines.length + " lines"); const rawAction = toolInput?.command || toolInput?.file_path || query;
+      const brainQuery = rawAction.length > query.length ? rawAction.slice(0, 300) : query;
+      const kept = await _brainllm.brainRelevanceFilter(brainQuery, lines, signal, queryProjectSlug);
+      console.error("[INTERCEPT] brainFilter result: " + (kept === null ? "null" : kept.length + " kept")); if (kept !== null) {
         const removed = lines.length - kept.length;
         lines.length = 0; lines.push(...kept);
         if (removed > 0) _activity.activityLog({ op: 'brain-filter', removed, kept: kept.length, ...sourceMeta });

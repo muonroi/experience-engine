@@ -228,12 +228,18 @@ function extractDirContext(filePath) {
 
 function extractBashIntent(command) {
   if (!command || typeof command !== 'string') return '';
-  const first = command.split(/[|&;]/).map(s => s.trim()).filter(Boolean)[0] || command;
-  const intents = extractIntentKeywords(first, 'Shell');
-  if (intents.length > 0) return intents.join(', ');
-  const words = first.split(/\s+/).filter(Boolean);
-  if (words.length >= 2) return words.slice(0, 3).join(' ');
-  return first.slice(0, 40);
+  // Keep ALL pipe segments — "vitest run | tail -100" needs both parts
+  // for embedding to match entries about tail output truncation.
+  const segments = command.split(/[|]/).map(s => s.trim()).filter(Boolean);
+  const allIntents = [];
+  for (const seg of segments) {
+    const intents = extractIntentKeywords(seg, 'Shell');
+    if (intents.length > 0) { allIntents.push(...intents); continue; }
+    // Extract first 3 words of each segment as fallback
+    const words = seg.split(/\s+/).filter(Boolean);
+    allIntents.push(words.slice(0, 3).join(' '));
+  }
+  return allIntents.join(', ').slice(0, 120);
 }
 
 // ============================================================
