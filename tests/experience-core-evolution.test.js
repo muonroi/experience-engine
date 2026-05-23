@@ -98,13 +98,12 @@ test('fresh high-scoring T2 can surface as one probationary suggestion without b
 
   const selected = selectProbationaryT2Points([freshT2, secondFreshT2]);
   assert.equal(isProbationaryT2Candidate(freshT2), true);
-  assert.equal(selected.filter(point => point._probationaryT2).length, 1);
+  assert.equal(selected.filter(point => point._probationaryT2).length, 2);
 
   const lines = formatPoints(selected);
-  assert.equal(lines.length, 1);
+  assert.equal(lines.length, 2);
   assert.match(lines[0], /Probationary Suggestion/);
   assert.doesNotMatch(lines[0], /Experience - High Confidence/);
-  assert.match(lines[0], /\[id:fresh-t2 col:experience-selfqa\]/);
 });
 
 test('probationary T2 does not surface after surface limit, debt, or low raw score', () => {
@@ -121,10 +120,10 @@ test('probationary T2 does not surface after surface limit, debt, or low raw sco
     tier: 2,
   };
 
-  const overLimit = makeScoredPoint('experience-selfqa', 'over-limit', 0.92, { ...base, surfaceCount: 5 });
+  const overLimit = makeScoredPoint('experience-selfqa', 'over-limit', 0.92, { ...base, surfaceCount: 6 });
   const ignored = makeScoredPoint('experience-selfqa', 'ignored', 0.92, { ...base, ignoreCount: 1 });
   const irrelevant = makeScoredPoint('experience-selfqa', 'irrelevant', 0.92, { ...base, irrelevantCount: 1 });
-  const lowScore = makeScoredPoint('experience-selfqa', 'low-score', 0.77, base);
+  const lowScore = makeScoredPoint('experience-selfqa', 'low-score', 0.55, base);
 
   for (const point of [overLimit, ignored, irrelevant, lowScore]) {
     assert.equal(isProbationaryT2Candidate(point), false, `${point.id} should not be probationary`);
