@@ -105,12 +105,42 @@ function computeEffectiveScore(point, data, queryDomain, queryProjectSlug, query
     else if (daysSinceConfirm > 60) temporalAdj = -0.08;  // stale — penalty
   }
   let conditionAdj = 0;
-  if (Array.isArray(data.conditions) && data.conditions.length > 0) {
-    const normalizedConditions = data.conditions
+  const conditions = data.conditions;
+  if (conditions && typeof conditions === 'object' && !Array.isArray(conditions)) {
+    // Structured conditions: {toolMatch, commandMatch, filePattern, errorMatch, codePattern}
+    let matched = 0;
+    let total = 0;
+    if (Array.isArray(conditions.toolMatch)) {
+      total += conditions.toolMatch.length;
+      matched += conditions.toolMatch.filter(t => normalizedQuery.includes(String(t).toLowerCase())).length;
+    }
+    if (Array.isArray(conditions.commandMatch)) {
+      total += conditions.commandMatch.length;
+      matched += conditions.commandMatch.filter(c => normalizedQuery.includes(String(c).toLowerCase())).length;
+    }
+    if (Array.isArray(conditions.errorMatch)) {
+      total += conditions.errorMatch.length;
+      matched += conditions.errorMatch.filter(e => normalizedQuery.includes(String(e).toLowerCase())).length;
+    }
+    if (Array.isArray(conditions.filePattern)) {
+      total += conditions.filePattern.length;
+      // File patterns match against filePath, not query
+      const fp = String(filePath || '').toLowerCase();
+      matched += conditions.filePattern.filter(p => {
+        const pat = String(p).toLowerCase().replace(/\*\*/g, '').replace(/\*/g, '');
+        return pat && (fp.includes(pat) || normalizedQuery.includes(pat));
+      }).length;
+    }
+    if (total > 0) {
+      conditionAdj = matched > 0 ? Math.min(0.12, matched * 0.04) : -0.06;
+    }
+    // No conditions at all = neutral (0), not penalty
+  } else if (Array.isArray(conditions) && conditions.length > 0) {
+    const normalizedConditions = conditions
       .map((condition) => String(condition || '').trim().toLowerCase())
       .filter(Boolean);
     const matchedConditions = normalizedConditions.filter((condition) => normalizedQuery.includes(condition));
-    if (matchedConditions.length === 0) conditionAdj = -0.14;
+    if (matchedConditions.length === 0) conditionAdj = -0.06;
     else conditionAdj = Math.min(0.12, matchedConditions.length * 0.04);
   }
   // Phase 108: superseded experience penalty
@@ -118,6 +148,7 @@ function computeEffectiveScore(point, data, queryDomain, queryProjectSlug, query
   // Wave 3: Confidence weighting — low-confidence entries rank lower
   const confWeight = computeEffectiveConfidence(data);
   const rawScore = cosine + hitBoost - recencyPenalty - ignorePenalty - irrelevantPenalty - unusedPenalty - noiseReasonPenalty - domainPenalty - projectPenalty + temporalAdj + conditionAdj - supersededPenalty;
+  console.error("[SCORE-DUMP] cosine=" + cosine.toFixed(3) + " hitBoost=" + hitBoost.toFixed(3) + " recency=" + recencyPenalty.toFixed(3) + " ignore=" + ignorePenalty.toFixed(3) + " irrelevant=" + irrelevantPenalty.toFixed(3) + " unused=" + unusedPenalty.toFixed(3) + " noiseReason=" + noiseReasonPenalty.toFixed(3) + " domain=" + domainPenalty.toFixed(3) + " project=" + projectPenalty.toFixed(3) + " temporal=" + temporalAdj.toFixed(3) + " condition=" + conditionAdj.toFixed(3) + " superseded=" + supersededPenalty.toFixed(3) + " confWeight=" + confWeight.toFixed(3) + " rawScore=" + rawScore.toFixed(3) + " FINAL=" + (rawScore * (0.6 + 0.4 * confWeight)).toFixed(3));
   return rawScore * (0.6 + 0.4 * confWeight); // scale: 0.6 floor to avoid zeroing out
 }
 
