@@ -3,8 +3,8 @@ name: Deploy VPS
 on:
   push:
     branches:
-      - main
-      - develop
+      - disabled-main
+      - disabled-develop
   workflow_dispatch:
 
 permissions:
