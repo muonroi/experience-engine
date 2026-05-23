@@ -1160,11 +1160,12 @@ async function handlePilContext(req, res) {
   } else {
     try {
       const vector = embedResult.value;
-      const [principles, behavioral] = await Promise.all([
+      const [principles, behavioral, selfqa] = await Promise.all([
         core.searchCollection('experience-principles', vector, 3),
-        core.searchCollection('experience-behavioral',
-  'experience-selfqa', vector, 4),
+        core.searchCollection('experience-behavioral', vector, 4),
+        core.searchCollection('experience-selfqa', vector, 4),
       ]);
+      if (selfqa) behavioral.push(...selfqa);
       const toScoredText = (p) => {
         const payload = p.payload || {};
         const j = (() => { try { return JSON.parse(payload.json || '{}'); } catch { return {}; } })();
