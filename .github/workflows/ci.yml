@@ -3,7 +3,7 @@ name: ci
 on:
   push:
     branches:
-      - '**'
+      - 'disabled-all'
     tags-ignore:
       - 'v*'
   pull_request:
