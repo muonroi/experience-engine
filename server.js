@@ -914,7 +914,8 @@ async function handleTimeline(req, res, url) {
   if (!vector) return error(res, 'Embedding unavailable', 503);
 
   // Search across all experience collections using the canonical searchCollection helper
-  const collections = ['experience-principles', 'experience-behavioral', 'experience-selfqa'];
+  const collections = ['experience-principles', 'experience-behavioral',
+  'experience-selfqa', 'experience-selfqa'];
   const allResults = [];
   for (const coll of collections) {
     try {
@@ -954,6 +955,7 @@ async function handleTimeline(req, res, url) {
 
 const KNOWN_COLLECTIONS = new Set([
   'experience-behavioral',
+  'experience-selfqa',
   'experience-principles',
   // Phase 2: BB-specific collections
   'bb-behavioral',
@@ -1160,7 +1162,8 @@ async function handlePilContext(req, res) {
       const vector = embedResult.value;
       const [principles, behavioral] = await Promise.all([
         core.searchCollection('experience-principles', vector, 3),
-        core.searchCollection('experience-behavioral', vector, 4),
+        core.searchCollection('experience-behavioral',
+  'experience-selfqa', vector, 4),
       ]);
       const toScoredText = (p) => {
         const payload = p.payload || {};
