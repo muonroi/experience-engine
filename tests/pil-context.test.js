@@ -52,12 +52,12 @@ async function startStub(overrides = {}) {
   const samplePattern = {
     id: 'b1',
     score: 0.82,
-    payload: { text: 'When stack trace shows NullReferenceException, dump locals first.' },
+    payload: { text: 'When stack trace shows NullReferenceException, dump locals first.', json: JSON.stringify({ solution: 'When stack trace shows NullReferenceException, dump locals first.', confidence: 0.75, hitCount: 2, surfaceCount: 1 }) },
   };
   const samplePattern2 = {
     id: 'b2',
     score: 0.60,
-    payload: { json: JSON.stringify({ solution: 'Add a regression test that reproduces the bug.' }) },
+    payload: { json: JSON.stringify({ solution: 'Add a regression test that reproduces the bug.', confidence: 0.70, hitCount: 1, surfaceCount: 1 }) },
   };
 
   const defaultClassifier = 'debug, balanced';
