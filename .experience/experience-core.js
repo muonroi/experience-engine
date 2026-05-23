@@ -150,7 +150,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   const query = _utils.buildQuery(toolName, toolInput);
   const filePath = toolInput?.file_path || toolInput?.path || _utils.extractProjectPath(toolInput) || '';
   const queryDomain = _utils.detectContext(filePath);
-  const queryProjectSlug = _utils.extractProjectSlug(filePath) || (sourceMeta && typeof sourceMeta.project_slug === 'string' ? sourceMeta.project_slug.toLowerCase().trim() : null);
+  const queryProjectSlug = (sourceMeta && typeof sourceMeta.project_slug === 'string' && sourceMeta.project_slug.trim() ? sourceMeta.project_slug.toLowerCase().trim() : null) || _utils.extractProjectSlug(filePath) || null;
   const actionKind = _intercept.classifyActionKind(toolName, toolInput || {}, filePath);
   const vector = await _embedding.getEmbedding(query, signal);
   if (!vector) return null;
