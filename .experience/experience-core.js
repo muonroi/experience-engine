@@ -150,7 +150,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   const query = _utils.buildQuery(toolName, toolInput);
   const filePath = toolInput?.file_path || toolInput?.path || _utils.extractProjectPath(toolInput) || '';
   const queryDomain = _utils.detectContext(filePath);
-  const queryProjectSlug = _utils.extractProjectSlug(filePath);
+  const queryProjectSlug = _utils.extractProjectSlug(filePath) || (sourceMeta && typeof sourceMeta.project_slug === 'string' ? sourceMeta.project_slug.toLowerCase().trim() : null);
   const actionKind = _intercept.classifyActionKind(toolName, toolInput || {}, filePath);
   const vector = await _embedding.getEmbedding(query, signal);
   if (!vector) return null;
@@ -365,11 +365,13 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   }
 
   const suppressionContext = { queryProjectSlug, queryDomain, actionKind };
+  console.error("[INTERCEPT] pre-noise: r0=" + r0.length + " r1=" + r1.length + " r2=" + r2.length);
   const s0 = _noise.filterNoiseSuppressedPoints(r0, suppressionContext);
   const s1 = _noise.filterNoiseSuppressedPoints(r1, suppressionContext);
   const s2 = _noise.filterNoiseSuppressedPoints(r2, suppressionContext);
   r0 = s0.kept; r1 = s1.kept; r2 = s2.kept;
   const noiseSuppressed = [...s0.suppressed, ...s1.suppressed, ...s2.suppressed];
+  console.error("[INTERCEPT] post-noise: r0=" + r0.length + " r1=" + r1.length + " r2=" + r2.length + " suppressed=" + noiseSuppressed.length);
   if (noiseSuppressed.length > 0) {
     for (const [reason, count] of Object.entries(noiseSuppressed.reduce((acc, item) => { acc[item.reason] = (acc[item.reason] || 0) + 1; return acc; }, {}))) {
       _activity.activityLog({ op: 'noise-suppressed', reason, count, actionKind, tool: toolName, project: filePath || null, ...sourceMeta });

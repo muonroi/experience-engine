@@ -62,13 +62,13 @@ function formatPoints(points) {
     try { exp = JSON.parse(point.payload?.json || '{}'); } catch { continue; }
     if (!exp.solution) continue;
     const effConf = computeEffectiveConfidence(exp);
-    if (effConf < getMinConfidence() && !point._probationaryT2) continue;
+    const mc = getMinConfidence(); if (effConf < mc && !point._probationaryT2) { console.error("[FORMAT] REJECT conf: effConf=" + effConf.toFixed(3) + " < minConf=" + mc + " prob=" + !!point._probationaryT2); continue; }
     const displayScore = point._effectiveScore ?? point.score ?? 0;
     // Suppress anti-recommendations: when query-time effective score (which
     // factors in ignore/hit ratio + scope mismatch penalties) falls below
     // the min threshold, surfacing it as 💡 [Suggestion] tells the agent the
     // opposite of what the score actually says.
-    if (!point._probationaryT2 && displayScore < getMinSearchScore()) continue; // GATE 2: search relevance (separate from confidence quality)
+    const mss = getMinSearchScore(); if (!point._probationaryT2 && displayScore < mss) { console.error("[FORMAT] REJECT score: displayScore=" + displayScore.toFixed(3) + " < minSearch=" + mss); continue; } // GATE 2: search relevance (separate from confidence quality)
     // Probationary entries are intentionally low-confidence (new, untested),
     // but never surface if score is clearly negative — that's a stronger
     // signal than "untested": penalties exceeded similarity, meaning the
@@ -79,7 +79,7 @@ function formatPoints(points) {
     // the hourly evolve cycle to mark it superseded. This closes the loop
     // where an agent reports the same hint as noise repeatedly because the
     // feedback signal hasn't yet decayed into the score.
-    if ((exp.irrelevantCount || 0) >= 3) continue;
+    if ((exp.irrelevantCount || 0) >= 3) { console.error("[FORMAT] REJECT irrelevant: count=" + exp.irrelevantCount); continue; }
     let line;
     if (point._probationaryT2) {
       line = `💡 [Probationary Suggestion (${displayScore.toFixed(2)})]: ${exp.solution}`;
