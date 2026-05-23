@@ -88,8 +88,19 @@ function formatPoints(points) {
     } else {
       line = `💡 [Suggestion (${displayScore.toFixed(2)})]: ${exp.solution}`;
     }
+    if (exp.trigger) {
+      line += `\n   When: ${exp.trigger.slice(0, 120)}`;
+    }
     if (exp.why) {
       line += `\n   Why: ${exp.why}`;
+    }
+    if (exp.conditions && typeof exp.conditions === 'object' && !Array.isArray(exp.conditions)) {
+      const conds = [];
+      if (exp.conditions.toolMatch) conds.push('tools: ' + exp.conditions.toolMatch.join(', '));
+      if (exp.conditions.commandMatch) conds.push('commands: ' + exp.conditions.commandMatch.slice(0, 3).join(', '));
+      if (exp.conditions.errorMatch) conds.push('errors: ' + exp.conditions.errorMatch.slice(0, 2).join(', '));
+      if (exp.conditions.filePattern) conds.push('files: ' + exp.conditions.filePattern.slice(0, 2).join(', '));
+      if (conds.length > 0) line += `\n   Fires when: ${conds.join(' | ')}`;
     }
     const pid = String(point.id).slice(0, 8);
     const coll = point._collection || 'experience-behavioral';

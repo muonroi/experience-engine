@@ -95,7 +95,28 @@ async function brainRelevanceFilter(actionQuery, suggestionLines, signal, projec
   });
 
   const projectCtx = projectSlug ? `\nPROJECT: ${projectSlug} — warnings about OTHER projects are NOT relevant.` : '';
-  const prompt = `You are a relevance filter. An AI coding agent is about to perform this action:\n\nACTION: ${actionQuery.slice(0, 300)}${projectCtx}\n\nThese warnings were retrieved from past experience:\n${warnings.join('\n')}\n\nWhich warnings could help prevent a mistake in THIS SPECIFIC action?\nRules:\n- A warning is relevant ONLY if the action could actually trigger the mistake the warning describes\n- Generic advice that doesn't match the specific action is NOT relevant\n- Warnings about a DIFFERENT project/codebase than the current one are NOT relevant\n- "ls", "git log", "cat" commands reading files NEVER need warnings about code patterns\n\nReply with ONLY the relevant warning numbers separated by commas (e.g. "1,3"), or "none" if none are relevant.`;
+  const prompt = `You are an experience-hint relevance filter for an AI coding agent.
+
+ACTION the agent is about to take:
+  ${actionQuery.slice(0, 300)}${projectCtx}
+
+Past experience hints retrieved from the brain:
+${warnings.join('\n')}
+
+Each hint has: what it advises (solution), WHEN it fires (trigger/conditions), and WHY (root cause).
+
+Task: select which hints COULD help the agent avoid a mistake or follow a better pattern for THIS action.
+
+Selection criteria:
+- A hint is relevant if the action involves the SAME TOOL, COMMAND TYPE, or FILE PATTERN described in the hint's "Fires when" line
+- A hint about "tail" output is relevant when the action pipes to "tail"
+- A hint about "ssh" or "heredoc" is relevant when the action uses ssh
+- A hint about "dotnet build" is relevant when building .NET projects
+- A hint about test patterns is relevant when running tests
+- When unsure, INCLUDE the hint — false negatives (missing a useful warning) are worse than false positives (showing an extra hint)
+- Only reject hints that are clearly about a COMPLETELY DIFFERENT operation (e.g., a database hint when the action is git-only)
+
+Reply with the relevant warning numbers separated by commas (e.g. "1,3"), or "none" ONLY if you are confident NO hint relates to this action.`;
 
   try {
     const brainProvider = getBrainProvider();
@@ -134,14 +155,18 @@ async function brainRelevanceFilter(actionQuery, suggestionLines, signal, projec
 
     const text = response.trim().toLowerCase();
     if (text === 'none' || text === '0' || text === '') {
-      return hasClearHighConfidenceWarning ? null : [];
+      // Safe default: when brain says "none", KEEP all hints (return null)
+      // rather than deleting them (return []). The vector search + scope
+      // filter already selected relevant entries — brain filter should only
+      // remove clearly wrong hits, not act as a second rejection gate.
+      return null;
     }
 
     const nums = text.match(/\d+/g);
     if (!nums) return null;
     const validIndices = nums.map(n => parseInt(n, 10) - 1).filter(i => i >= 0 && i < suggestionLines.length);
     if (validIndices.length === 0) {
-      return hasClearHighConfidenceWarning ? null : [];
+      return null; // keep all hints when brain response is ambiguous
     }
     return validIndices.map(i => suggestionLines[i]);
   } catch {
