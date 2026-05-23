@@ -15,3 +15,4 @@ health-check.sh
 .quick-codex-flow/
 .quick-codex-lock/
 fixtures/config-vps.json
+.experience/.bulk-extract-marker.json
