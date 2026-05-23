@@ -72,7 +72,7 @@ test.after(() => {
 });
 
 test('fresh high-scoring T2 can surface as one probationary suggestion without becoming high confidence', () => {
-  // confidence must be below getMinConfidence() (default 0.42) to be a probationary candidate
+  // confidence must be below getMinConfidence() after bootstrap grace ends (surfaceCount > 3)
   const freshT2 = makeScoredPoint('experience-selfqa', 'fresh-t2', 0.92, {
     trigger: 'prompt-time hook guidance',
     question: 'fast path misses relevant prompt guidance',
@@ -80,7 +80,7 @@ test('fresh high-scoring T2 can surface as one probationary suggestion without b
     confidence: 0.3,
     hitCount: 0,
     validatedCount: 0,
-    surfaceCount: 0,
+    surfaceCount: 4,
     signalVersion: 2,
     tier: 2,
   });
@@ -91,7 +91,7 @@ test('fresh high-scoring T2 can surface as one probationary suggestion without b
     confidence: 0.3,
     hitCount: 0,
     validatedCount: 0,
-    surfaceCount: 0,
+    surfaceCount: 4,
     signalVersion: 2,
     tier: 2,
   });
@@ -108,7 +108,7 @@ test('fresh high-scoring T2 can surface as one probationary suggestion without b
 });
 
 test('probationary T2 does not surface after surface limit, debt, or low raw score', () => {
-  // confidence below minConfidence so entries are probationary candidates (when not blocked by debt/limit)
+  // confidence below minConfidence after grace ends (surfaceCount > 3)
   const base = {
     trigger: 'prompt-time hook guidance',
     question: 'fresh hint',
@@ -116,12 +116,12 @@ test('probationary T2 does not surface after surface limit, debt, or low raw sco
     confidence: 0.3,
     hitCount: 0,
     validatedCount: 0,
-    surfaceCount: 0,
+    surfaceCount: 4,
     signalVersion: 2,
     tier: 2,
   };
 
-  const overLimit = makeScoredPoint('experience-selfqa', 'over-limit', 0.92, { ...base, surfaceCount: 2 });
+  const overLimit = makeScoredPoint('experience-selfqa', 'over-limit', 0.92, { ...base, surfaceCount: 5 });
   const ignored = makeScoredPoint('experience-selfqa', 'ignored', 0.92, { ...base, ignoreCount: 1 });
   const irrelevant = makeScoredPoint('experience-selfqa', 'irrelevant', 0.92, { ...base, irrelevantCount: 1 });
   const lowScore = makeScoredPoint('experience-selfqa', 'low-score', 0.77, base);
@@ -203,6 +203,7 @@ test('T1 and T0 keep normal confidence filtering and high-confidence formatting'
     solution: 'Low-confidence T1 should not bypass the normal confidence floor.',
     confidence: 0.3,
     hitCount: 0,
+    surfaceCount: 5,
     tier: 1,
   });
   const highConfidenceT0 = makeScoredPoint('experience-principles', 'high-t0', 0.9, {

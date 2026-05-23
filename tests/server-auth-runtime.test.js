@@ -262,6 +262,7 @@ test('POST /api/extract forwards source metadata to core extraction', async () =
       framework: null,
       lang: null,
       project_slug: null,
+      _preDetectedExperiences: null,
     });
     return 1;
   };
