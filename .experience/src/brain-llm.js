@@ -141,14 +141,14 @@ Reply with the relevant warning numbers separated by commas (e.g. "1,3"), or "no
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getBrainKey()}` },
-        body: JSON.stringify({ model: getBrainModel(), messages: [{ role: 'user', content: prompt }], temperature: 0.1, max_tokens: 20 }),
+        body: JSON.stringify({ model: getBrainModel(), messages: [{ role: "user", content: prompt }], temperature: 0.1, max_tokens: 120 }),
         signal: signal || AbortSignal.timeout(3000),
       });
       if (!res.ok) {
         logCostCall('brain', brainProvider, 'brain-filter', units, { ok: false, durationMs: Date.now() - startedAt });
         return null;
       }
-      response = (await res.json()).choices?.[0]?.message?.content || '';
+      const brainJson = await res.json(); response = brainJson.choices?.[0]?.message?.content || brainJson.choices?.[0]?.message?.reasoning_content?.slice(-50) || '';
     }
 
     logCostCall('brain', brainProvider, 'brain-filter', units, { ok: true, durationMs: Date.now() - startedAt });
@@ -433,7 +433,9 @@ async function brainDeepSeek(prompt, opts = {}) {
       console.error(`[brain-deepseek] HTTP ${res.status} ${res.statusText} from ${endpoint} body=${errBody.slice(0, 500)}`);
       return null;
     }
-    const text = (await res.json()).choices?.[0]?.message?.content || '{}';
+    const dsResp = await res.json();
+    const dsMsg = dsResp.choices?.[0]?.message || {};
+    const text = dsMsg.content || '{}';
     try { return JSON.parse(text); } catch {}
     const m = text.match(/\{[\s\S]*\}/);
     return m ? JSON.parse(m[0]) : null;
