@@ -125,7 +125,7 @@ function computeEffectiveScore(point, data, queryDomain, queryProjectSlug, query
     if (Array.isArray(conditions.filePattern)) {
       total += conditions.filePattern.length;
       // File patterns match against filePath, not query
-      const fp = String(filePath || '').toLowerCase();
+      const fp = normalizedQuery;
       matched += conditions.filePattern.filter(p => {
         const pat = String(p).toLowerCase().replace(/\*\*/g, '').replace(/\*/g, '');
         return pat && (fp.includes(pat) || normalizedQuery.includes(pat));
