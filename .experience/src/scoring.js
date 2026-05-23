@@ -8,8 +8,8 @@ const { getValidatedHitCount } = require('./utils');
 const { COLLECTIONS, getMinConfidence } = require('./config');
 
 const SELFQA_COLLECTION = 'experience-selfqa';
-const PROBATIONARY_T2_RAW_SCORE_THRESHOLD = 0.78;
-const PROBATIONARY_T2_SURFACE_LIMIT = 2;
+const PROBATIONARY_T2_RAW_SCORE_THRESHOLD = 0.60;
+const PROBATIONARY_T2_SURFACE_LIMIT = 5;
 const SEEDED_BEHAVIORAL_TO_PRINCIPLE_HIT_THRESHOLD = 5;
 
 // hitBoost cap: organic entries with many hits previously got unbounded boost
@@ -159,10 +159,11 @@ function isProbationaryT2Candidate(point) {
 }
 
 function selectProbationaryT2Points(points) {
-  let selected = false;
+  let selected = false; let probCount = 0;
   return (points || []).map(point => {
     if (selected || !isProbationaryT2Candidate(point)) return point;
-    selected = true;
+    // Allow up to 3 probationary entries per intercept
+    if (++probCount >= 3) selected = true;
     return { ...point, _probationaryT2: true };
   });
 }
