@@ -39,7 +39,7 @@ function computeEffectiveConfidence(data) {
   // Without this, the circular death spiral kills entries: no surface -> no hits
   // -> ageFactor 0.7 -> effConf drops below minConfidence -> never surfaces.
   const surfaceCount = data.surfaceCount || 0;
-  if (surfaceCount === 0 && hits === 0) return base;
+  if (surfaceCount <= 3 && hits === 0) return base;
   const ageFactor = Math.min(1.0, 0.7 + (hits * 0.06));
   return base * ageFactor;
 }
