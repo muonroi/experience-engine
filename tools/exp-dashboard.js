@@ -32,6 +32,7 @@ const {
   computeGateStatus,
   computeSessions,
   exportSessionsToCsv,
+  computeStoreDistribution,
 } = require('./dashboard/aggregators');
 const { renderHtml } = require('./dashboard/render-html');
 
@@ -143,6 +144,7 @@ async function main() {
   const precision = computePrecision(events, qdrantIdx);
   const funnel = computeFunnel(events);
   const topOffenders = computeTopOffenders(qdrantIdx, { minSurfaceCount: 5, limit: 20 });
+  const store = computeStoreDistribution(payloads);
   const sessions = computeSessions(events, qdrantIdx, { limit: 50, windowDays: Math.round((Date.now() - new Date(events[0]?.ts || Date.now()).getTime()) / 86_400_000) });
   const gates = gatesJson
     ? computeGateStatus(gatesJson)
@@ -170,6 +172,7 @@ async function main() {
     precision,
     funnel,
     topOffenders,
+    store,
     sessions,
     meta: {
       sourceFiles: logFiles,

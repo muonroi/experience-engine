@@ -739,8 +739,61 @@ function exportSessionsToCsv(sessions) {
   return lines.join('\n') + '\n';
 }
 
+
+/**
+ * Section D — Store distribution by tier, type, collection, quality.
+ * Reads directly from Qdrant payloads (not activity log).
+ *
+ * @param {Map<string, object[]>} payloadsByCollection
+ */
+function computeStoreDistribution(payloadsByCollection) {
+  const collections = {};
+  const tiers = { t0_new: 0, t1_bootstrap: 0, t2_active: 0, t3_dying: 0 };
+  const types = {};
+  const quality = { withSlug: 0, withStructuredCond: 0, withLang: 0, withJudgment: 0 };
+  let total = 0;
+
+  for (const [collection, points] of payloadsByCollection.entries()) {
+    const colStats = { total: points.length, tiers: { t0_new: 0, t1_bootstrap: 0, t2_active: 0, t3_dying: 0 }, types: {} };
+
+    for (const p of points) {
+      total++;
+      const pl = p.payload || {};
+      let j = pl.json;
+      if (typeof j === 'string') { try { j = JSON.parse(j); } catch { j = {}; } }
+      j = j || {};
+
+      const sc = j.surfaceCount || 0;
+      const hits = j.hits || j.hitCount || 0;
+
+      let tier;
+      if (sc === 0) { tier = 't0_new'; }
+      else if (sc <= 3 && hits <= sc) { tier = 't1_bootstrap'; }
+      else if (sc > 3 && hits === 0) { tier = 't3_dying'; }
+      else { tier = 't2_active'; }
+      tiers[tier]++;
+      colStats.tiers[tier]++;
+
+      const t = j.evidenceClass || j.type || 'unknown';
+      types[t] = (types[t] || 0) + 1;
+      colStats.types[t] = (colStats.types[t] || 0) + 1;
+
+      const scope = j.scope || {};
+      if (scope.project_slug) quality.withSlug++;
+      if (j.conditions && typeof j.conditions === 'object' && !Array.isArray(j.conditions)) quality.withStructuredCond++;
+      if (scope.lang && scope.lang !== 'all') quality.withLang++;
+      if (j.judgment) quality.withJudgment++;
+    }
+
+    collections[collection] = colStats;
+  }
+
+  return { total, tiers, types, quality, collections };
+}
+
 module.exports = {
   CONF_BANDS,
+  computeStoreDistribution,
   NOISE_REASONS,
   bandLabel,
   emptyBucket,
