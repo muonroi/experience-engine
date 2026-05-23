@@ -692,34 +692,14 @@ function shouldExtractDelta(sessionData, startLine, minNewLines) {
 }
 
 async function runStopExtractor(options = {}) {
+  // Auto-extraction disabled — user syncs manually via bulk-extract.
+  // Only evolve is kept so cron-triggered evolution still works.
   const homeDir = options.homeDir || getHomeDir();
-  const now = options.now || Date.now();
-  const minNewLines = options.minNewLines || MIN_NEW_LINES;
-  const session = findCurrentSession(homeDir, now);
-  if (!session) {
-    return { session: null, extracted: 0, skipped: 'no-session' };
-  }
-
-  const marker = readMarker(homeDir);
-  const startLine = marker.files[session.file]?.line || 0;
-  const sessionData = buildSessionData(session, startLine);
-  const { ok, newLines } = shouldExtractDelta(sessionData, startLine, minNewLines);
-  if (!ok) {
-    return { session, extracted: 0, skipped: 'not-enough-new-lines', newLines };
-  }
-
-  const { count, transcript, projectPath } = await extractAndStore(homeDir, session, sessionData, 'stop-hook');
-  if (!transcript) {
-    return { session, extracted: 0, skipped: 'empty-transcript', newLines };
-  }
-  marker.files[session.file] = { line: sessionData.totalLines, extractedAt: new Date().toISOString() };
-  writeMarker(homeDir, marker);
-
   const remote = getRemoteClient(homeDir);
   const evolveResult = (remote && remote.isRemoteEnabled(remote.loadConfig(homeDir)))
     ? null
     : await maybeEvolve(homeDir);
-  return { session, extracted: count, transcript, projectPath, evolveResult };
+  return { session: null, extracted: 0, skipped: 'auto-extract-disabled', evolveResult };
 }
 
 // Backfill mode — process every session newer than its marker entry, up to
@@ -727,67 +707,8 @@ async function runStopExtractor(options = {}) {
 // so sessions a STOP hook missed (X-close, /clear, /compact, crash) are
 // still extracted on the next agent boot.
 async function runBackfillExtractor(options = {}) {
-  const homeDir = options.homeDir || getHomeDir();
-  const now = options.now || Date.now();
-  const maxAgeMs = options.maxAgeMs || BACKFILL_MAX_AGE_MS;
-  const maxSessions = options.maxSessions || BACKFILL_MAX_SESSIONS;
-  const minNewLines = options.minNewLines || MIN_NEW_LINES;
-
-  const marker = readMarker(homeDir);
-  const sessions = findAllRecentSessions(homeDir, now, maxAgeMs);
-  // Prioritise untracked sessions so the historical backlog (e.g. 380 Claude
-  // files left behind by X-close on the terminal) actually drains. Without
-  // this, the 5 newest active files keep consuming the entire batch budget
-  // forever and older sessions never get a turn.
-  const untracked = sessions.filter((s) => !marker.files[s.file]);
-  const tracked = sessions.filter((s) => marker.files[s.file]);
-  const candidates = [...untracked, ...tracked].slice(0, maxSessions);
-
-  const result = { mode: 'backfill', processed: 0, skipped: 0, errors: 0, extracted: 0, sessions: [] };
-  const stamp = () => new Date().toISOString();
-  for (const session of candidates) {
-    const startLine = marker.files[session.file]?.line || 0;
-    let sessionData;
-    try { sessionData = buildSessionData(session, startLine); } catch (e) {
-      // Mark unparseable files so the same broken file doesn't reblock the
-      // next backfill batch.
-      marker.files[session.file] = { line: startLine, extractedAt: stamp(), error: true };
-      result.errors++; continue;
-    }
-    if (sessionData.totalLines <= startLine) {
-      marker.files[session.file] = { line: sessionData.totalLines, extractedAt: stamp() };
-      result.skipped++; continue;
-    }
-    const { ok, newLines } = shouldExtractDelta(sessionData, startLine, minNewLines);
-    if (!ok) {
-      // Session is too short to be worth an extraction call. Advance the
-      // marker so we don't reconsider it every backfill run (otherwise short
-      // files stick at the top of the queue forever and starve longer ones).
-      marker.files[session.file] = { line: sessionData.totalLines, extractedAt: stamp() };
-      result.skipped++; continue;
-    }
-
-    try {
-      const { count, transcript } = await extractAndStore(homeDir, session, sessionData, 'session-start-backfill');
-      // Always advance the marker — even when transcript is empty or count
-      // is 0 — so a non-yielding session does not block the queue.
-      marker.files[session.file] = { line: sessionData.totalLines, extractedAt: stamp() };
-      if (!transcript) { result.skipped++; continue; }
-      result.processed++;
-      result.extracted += count;
-      result.sessions.push({ runtime: session.runtime, file: session.file, newLines, extracted: count });
-    } catch (e) {
-      result.errors++;
-    }
-  }
-  writeMarker(homeDir, marker);
-
-  // Evolve once at the end of the loop, not per session.
-  const remote = getRemoteClient(homeDir);
-  if (result.processed > 0 && !(remote && remote.isRemoteEnabled(remote.loadConfig(homeDir)))) {
-    result.evolveResult = await maybeEvolve(homeDir);
-  }
-  return result;
+  // Auto-extraction disabled — user syncs manually via bulk-extract.
+  return { mode: 'backfill', processed: 0, skipped: 0, errors: 0, extracted: 0, sessions: [] };
 }
 
 async function main() {
