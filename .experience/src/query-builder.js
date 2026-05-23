@@ -164,6 +164,18 @@ const INTENT_EXTRACTORS = {
     if (/\bsed\b|\bawk\b|\bgrep\b/i.test(content)) kw.push('text processing');
     if (/\bmkdir\b|\bcp\b|\bmv\b|\brm\b/i.test(content)) kw.push('file system operations');
     if (/\bsystemctl\b|\bservice\b/i.test(content)) kw.push('service management');
+    // Test runners
+    if (/\bvitest\b|\bjest\b|\bmocha\b|\bpytest\b/i.test(content)) kw.push('running tests');
+    if (/\bdotnet\s+test\b/i.test(content)) kw.push('running tests');
+    // Output piping — tail/head with output truncation risk
+    if (/\|\s*tail\b/i.test(content)) kw.push('tail output pipe');
+    if (/\|\s*head\b/i.test(content)) kw.push('head output pipe');
+    if (/\|\s*(grep|wc|sort|uniq)\b/i.test(content)) kw.push('output filtering');
+    // Heredoc
+    if (/<<\s*['"]?\w+['"]?/i.test(content)) kw.push('heredoc input');
+    if (/\bscp\b/i.test(content)) kw.push('file transfer');
+    // Python/Node inline
+    if (/\bpython3?\s+-[ce]\b|\bnode\s+-e\b/i.test(content)) kw.push('inline script execution');
     return kw;
   },
   python(content) {
