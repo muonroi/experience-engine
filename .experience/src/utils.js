@@ -623,11 +623,16 @@ function filterNoiseSuppressedPoints(points, context = {}) {
 // ============================================================
 
 function normalizeSourceMeta(meta) {
+  // IMPORTANT: preserve lang/framework/project_slug for scope filtering
   if (!meta || typeof meta !== 'object') return {};
   return {
     ...(meta.sourceKind ? { sourceKind: meta.sourceKind } : {}),
     ...(meta.sourceRuntime ? { sourceRuntime: meta.sourceRuntime } : {}),
     ...(meta.sourceSession ? { sourceSession: meta.sourceSession } : {}),
+    ...(meta.lang ? { lang: meta.lang } : {}),
+    ...(meta.framework ? { framework: meta.framework } : {}),
+    ...(meta.project_slug ? { project_slug: meta.project_slug } : {}),
+    ...(meta.cwd ? { cwd: meta.cwd } : {}),
   };
 }
 
