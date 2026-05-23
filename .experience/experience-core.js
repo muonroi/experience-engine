@@ -169,7 +169,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     const fileIsOrgStack = orgName ? _utils.isOrgStackRepo(filePath, orgCfg) : false;
     const extra = { must: [], must_not: [], should: [] };
     if (orgName && filePath && filePath.length > 1 && !fileIsOrgStack && !filePath.startsWith("/tmp")) {
-      extra.must_not.push({ key: 'scope_org', match: { value: orgName } });
+      // org filter removed — single-org brain
     }
     const callerFw = sourceMeta && typeof sourceMeta.framework === 'string'
       ? sourceMeta.framework.toLowerCase().trim() : null;
@@ -304,11 +304,11 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
       try {
         const exp = JSON.parse(p.payload?.json || '{}');
         const pointOrg = exp.scope?.org ? String(exp.scope.org).toLowerCase() : '';
-        if (pointOrg && !orgName && !globalScopeOptIn) return false;
+        // fail-closed org check removed — single-org brain
         // Org-stack gate: org-tagged knowledge only applies inside the configured org's repos.
         // Prevents org-specific hints from leaking into unrelated projects.
         // Disabled entirely when no org configured (global mode).
-        if (orgName && pointOrg === orgName && filePath && !fileIsOrgStack) return false;
+        // org post-filter removed — single-org brain
         // Framework gate (opt-in): when caller asserts a framework AND the hint is tagged
         // to a different specific framework, drop. 'any' / undefined on the hint passes.
         if (callerFramework && exp.scope?.framework) {
