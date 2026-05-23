@@ -102,6 +102,12 @@ function formatPoints(points) {
       if (exp.conditions.filePattern) conds.push('files: ' + exp.conditions.filePattern.slice(0, 2).join(', '));
       if (conds.length > 0) line += `\n   Fires when: ${conds.join(' | ')}`;
     }
+    if (exp.evidenceClass) {
+      line += `\n   Evidence: ${exp.evidenceClass}`;
+    }
+    if (exp.judgment) {
+      line += `\n   Rule: ${exp.judgment.slice(0, 120)}`;
+    }
     const pid = String(point.id).slice(0, 8);
     const coll = point._collection || 'experience-behavioral';
     line += `\n   [id:${pid} col:${coll}]`;
