@@ -168,7 +168,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     const orgName = orgCfg && typeof orgCfg.name === 'string' ? orgCfg.name.trim().toLowerCase() : '';
     const fileIsOrgStack = orgName ? _utils.isOrgStackRepo(filePath, orgCfg) : false;
     const extra = { must: [], must_not: [], should: [] };
-    if (orgName && filePath && !fileIsOrgStack) {
+    if (orgName && filePath && filePath.length > 1 && !fileIsOrgStack && !filePath.startsWith("/tmp")) {
       extra.must_not.push({ key: 'scope_org', match: { value: orgName } });
     }
     const callerFw = sourceMeta && typeof sourceMeta.framework === 'string'
