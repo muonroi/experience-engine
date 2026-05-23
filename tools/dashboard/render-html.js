@@ -442,6 +442,91 @@ const CSS = `
  * @param {object} snapshot — matches schema.md top-level shape
  * @returns {string} self-contained HTML document
  */
+
+function renderStore(store) {
+  if (!store || !store.total) {
+    return '<section><h2>D. Store Distribution</h2><p class="muted">No store data available.</p></section>';
+  }
+
+  const tierLabels = {
+    t0_new: 'T0 \u2014 New (never surfaced)',
+    t1_bootstrap: 'T1 \u2014 Bootstrap (surfaced 1-3x)',
+    t2_active: 'T2 \u2014 Active (has follows)',
+    t3_dying: 'T3 \u2014 Dying (surfaced >3x, 0 follows)',
+  };
+
+  const tierRows = Object.entries(store.tiers)
+    .map(function(pair) {
+      var k = pair[0], v = pair[1];
+      var label = tierLabels[k] || k;
+      var pctVal = store.total > 0 ? ((v / store.total) * 100).toFixed(1) + '%' : '\u2014';
+      var cls = k === 't0_new' ? 'muted' : k === 't2_active' ? 'good' : k === 't3_dying' ? 'bad' : '';
+      return '<tr><td>' + escapeHtml(label) + '</td><td class="num ' + cls + '">' + v + '</td><td class="num muted">' + pctVal + '</td></tr>';
+    }).join('');
+
+  var typeRows = Object.entries(store.types)
+    .sort(function(a, b) { return b[1] - a[1]; })
+    .map(function(pair) {
+      var k = pair[0], v = pair[1];
+      var pctVal = store.total > 0 ? ((v / store.total) * 100).toFixed(1) + '%' : '\u2014';
+      return '<tr><td>' + escapeHtml(k) + '</td><td class="num">' + v + '</td><td class="num muted">' + pctVal + '</td></tr>';
+    }).join('');
+
+  var q = store.quality;
+  var qualityItems = [
+    ['project_slug', q.withSlug],
+    ['structured conditions', q.withStructuredCond],
+    ['lang (not "all")', q.withLang],
+    ['judgment', q.withJudgment],
+  ];
+  var qualityRows = qualityItems.map(function(item) {
+    var label = item[0], v = item[1];
+    var pctVal = store.total > 0 ? ((v / store.total) * 100).toFixed(1) + '%' : '\u2014';
+    var cls = store.total > 0 && v / store.total >= 0.95 ? 'good' : store.total > 0 && v / store.total >= 0.7 ? 'warn' : 'bad';
+    return '<tr><td>' + escapeHtml(label) + '</td><td class="num">' + v + '/' + store.total + '</td><td class="num ' + cls + '">' + pctVal + '</td></tr>';
+  }).join('');
+
+  var colRows = Object.entries(store.collections)
+    .map(function(pair) {
+      var col = pair[0], cs = pair[1];
+      var topType = Object.entries(cs.types).sort(function(a, b) { return b[1] - a[1]; })[0];
+      return '<tr><td>' + escapeHtml(col.replace('experience-', '')) + '</td><td class="num">' + cs.total + '</td><td class="num">' + cs.tiers.t0_new + '</td><td class="num">' + cs.tiers.t1_bootstrap + '</td><td class="num">' + cs.tiers.t2_active + '</td><td class="num">' + cs.tiers.t3_dying + '</td><td class="muted">' + (topType ? escapeHtml(topType[0]) + ' (' + topType[1] + ')' : '\u2014') + '</td></tr>';
+    }).join('');
+
+  return '<section>'
+    + '<h2>D. Store Distribution</h2>'
+    + '<div class="kpi">'
+    + '<div class="kpi-label">Total entries in brain</div>'
+    + '<div class="kpi-value">' + store.total + '</div>'
+    + '<div class="kpi-sub">across ' + Object.keys(store.collections).length + ' collections</div>'
+    + '</div>'
+    + '<div class="grid-2">'
+    + '<div>'
+    + '<h3>By Lifecycle Tier</h3>'
+    + '<table><thead><tr><th>Tier</th><th class="num">Count</th><th class="num">%</th></tr></thead>'
+    + '<tbody>' + tierRows + '</tbody></table>'
+    + '</div>'
+    + '<div>'
+    + '<h3>By Evidence Type</h3>'
+    + '<table><thead><tr><th>Type</th><th class="num">Count</th><th class="num">%</th></tr></thead>'
+    + '<tbody>' + typeRows + '</tbody></table>'
+    + '</div>'
+    + '</div>'
+    + '<div class="grid-2">'
+    + '<div>'
+    + '<h3>Entry Quality</h3>'
+    + '<table><thead><tr><th>Metric</th><th class="num">Coverage</th><th class="num">%</th></tr></thead>'
+    + '<tbody>' + qualityRows + '</tbody></table>'
+    + '</div>'
+    + '<div>'
+    + '<h3>By Collection</h3>'
+    + '<table><thead><tr><th>Collection</th><th class="num">Total</th><th class="num">T0</th><th class="num">T1</th><th class="num">T2</th><th class="num">T3</th><th>Top type</th></tr></thead>'
+    + '<tbody>' + colRows + '</tbody></table>'
+    + '</div>'
+    + '</div>'
+    + '</section>';
+}
+
 function renderHtml(snapshot) {
   const generated = snapshot.generatedAt || new Date().toISOString();
   const win = snapshot.dataWindow || {};
@@ -459,6 +544,7 @@ function renderHtml(snapshot) {
 <p class="muted">Generated <strong>${escapeHtml(generated)}</strong> · window ${escapeHtml(win.days || '?')}d (${escapeHtml(win.since || '?')} → ${escapeHtml(win.until || '?')}) · schema v${escapeHtml(snapshot.version || '?')}</p>
 
 ${renderGates(snapshot.gates || {})}
+${renderStore(snapshot.store || {})}
 ${renderPrecision(snapshot.precision || {})}
 ${renderFunnel(snapshot.funnel || {})}
 ${renderOffenders(snapshot.topOffenders || [])}
