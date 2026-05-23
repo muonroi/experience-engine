@@ -1,442 +1,122 @@
 {
   "files": {
-    "C:\\Users\\phila\\.gemini\\tmp\\muonroi-cli\\chats\\session-2026-05-04T07-14-f43d4638.json": {
-      "ts": 1779430148934,
+    "/home/phila/.codex/sessions/2026/04/28/rollout-2026-04-28T06-44-16-019dd2d4-d1f2-7581-9866-968dbbc2b48d.jsonl": {
+      "ts": 1779451423582,
+      "runtime": "codex",
+      "experiences": 3
+    },
+    "/home/phila/.codex/sessions/2026/04/28/rollout-2026-04-28T05-36-44-019dd296-ff96-7950-91a2-cebcfb5594a2.jsonl": {
+      "ts": 1779451451215,
+      "runtime": "codex",
+      "experiences": 5
+    },
+    "/home/phila/.codex/sessions/2026/04/28/rollout-2026-04-28T02-34-10-019dd1ef-da72-7db0-87ab-4103f7639810.jsonl": {
+      "ts": 1779451489119,
+      "runtime": "codex",
+      "experiences": 7
+    },
+    "/home/phila/.codex/sessions/2026/04/28/rollout-2026-04-28T02-19-48-019dd1e2-b2db-7f61-97d5-ba19578ba0a1.jsonl": {
+      "ts": 1779451489120,
+      "runtime": "codex",
+      "experiences": 0
+    },
+    "/home/phila/.gemini/tmp/phila/chats/session-2026-04-08T12-21-c843af9b.json": {
+      "ts": 1779451489121,
       "runtime": "gemini",
       "experiences": 0
     },
-    "C:\\Users\\phila\\.gemini\\tmp\\eberth\\chats\\session-2026-05-20T02-25-838c297f.jsonl": {
-      "ts": 1779430165356,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\eberth\\chats\\session-2026-05-19T01-41-db014291.jsonl": {
-      "ts": 1779430181509,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\eberth\\chats\\session-2026-05-19T01-32-105f8307.jsonl": {
-      "ts": 1779430190206,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\eberth\\chats\\session-2026-05-08T04-22-72943b8c.jsonl": {
-      "ts": 1779430200666,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\muonroi-cli\\chats\\session-2026-05-08T05-09-30d40318.jsonl": {
-      "ts": 1779430200672,
-      "runtime": "gemini",
+    "/home/phila/.codex/sessions/2026/04/28/rollout-2026-04-28T02-17-58-019dd1e1-0774-7a10-ba31-bd440d8ba2cc.jsonl": {
+      "ts": 1779451489122,
+      "runtime": "codex",
       "experiences": 0
     },
-    "C:\\Users\\phila\\.gemini\\tmp\\muonroi-cli\\chats\\session-2026-05-04T08-08-085c20b9.json": {
-      "ts": 1779430200673,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\eberth\\chats\\session-2026-05-08T03-52-8aa6f798.jsonl": {
-      "ts": 1779430207942,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\muonroi-cli\\chats\\session-2026-05-07T06-35-7b560a67.jsonl": {
-      "ts": 1779430207943,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\muonroi-cli\\chats\\session-2026-05-04T06-05-3ca43695.json": {
-      "ts": 1779430207967,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\tcis-igate-billing-services\\chats\\session-2026-04-10T09-55-ca9c98c4.json": {
-      "ts": 1779430207976,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\tcis-libraries-1\\chats\\session-2026-04-10T06-18-8dfa321b.json": {
-      "ts": 1779430207983,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\tcis-libraries-1\\chats\\session-2026-04-09T01-15-989dc587.json": {
-      "ts": 1779430208012,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\tcis-libraries-1\\chats\\session-2026-04-10T02-52-3eb5f359.json": {
-      "ts": 1779430208024,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\tcis-libraries-1\\chats\\session-2026-04-09T09-48-71d70c8a.json": {
-      "ts": 1779430208031,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\tcis-libraries-1\\chats\\session-2026-04-08T08-45-4a3f8d46.json": {
-      "ts": 1779430208039,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\core\\chats\\session-2026-04-08T09-45-93e07901.json": {
-      "ts": 1779430208048,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\core\\chats\\session-2026-04-08T08-55-a5317f8d.json": {
-      "ts": 1779430238357,
-      "runtime": "gemini",
-      "experiences": 4
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\tcis-libraries-1\\chats\\session-2026-04-08T07-28-200413cb.json": {
-      "ts": 1779430238379,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\tcis-libraries-1\\chats\\session-2026-04-08T06-48-9eb722aa.json": {
-      "ts": 1779430252860,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\core\\chats\\session-2026-04-08T07-30-f11796fa.json": {
-      "ts": 1779430252869,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\tcis-igate-billing-services\\chats\\session-2026-04-08T06-17-c9abfd2f.json": {
-      "ts": 1779430252885,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\core\\chats\\session-2026-04-01T15-20-cfde61c7.json": {
-      "ts": 1779430263120,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\core\\chats\\session-2026-04-01T10-21-fcb660d8.json": {
-      "ts": 1779430268452,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\core\\chats\\session-2026-04-01T05-59-4ac1b24d.json": {
-      "ts": 1779430283597,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\core\\chats\\session-2026-04-01T02-05-cfbc18e3.json": {
-      "ts": 1779430298915,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\core\\chats\\session-2026-03-31T10-26-906dacc7.json": {
-      "ts": 1779430298978,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\core\\chats\\session-2026-03-31T09-48-1f5c9a96.json": {
-      "ts": 1779430329002,
-      "runtime": "gemini",
-      "experiences": 4
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\core\\chats\\session-2026-03-31T08-14-d5cc4e3f.json": {
-      "ts": 1779430329042,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\core\\chats\\session-2026-03-31T08-05-b26d474f.json": {
-      "ts": 1779430344125,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\core\\chats\\session-2026-03-31T01-35-00cb62fb.json": {
-      "ts": 1779430344165,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\core\\chats\\session-2026-03-20T07-09-cd19da25.json": {
-      "ts": 1779430354227,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\muonroi-building-block\\chats\\session-2026-03-24T07-17-6a6f72fd.json": {
-      "ts": 1779430366063,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\muonroi-building-block\\chats\\session-2026-03-24T07-21-6a6f72fd.json": {
-      "ts": 1779430366071,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\muonroi-building-block\\chats\\session-2026-03-23T08-26-8ce6a16d.json": {
-      "ts": 1779430381220,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\core\\chats\\session-2026-03-11T03-34-b81e22f9.json": {
-      "ts": 1779430404658,
-      "runtime": "gemini",
-      "experiences": 2
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\tcis-libraries\\chats\\session-2026-02-27T01-49-c24be8c9.json": {
-      "ts": 1779430434927,
+    "/home/phila/.gemini/tmp/projects/chats/session-2026-04-09T07-20-ffdc150b.json": {
+      "ts": 1779451529298,
       "runtime": "gemini",
       "experiences": 6
     },
-    "C:\\Users\\phila\\.gemini\\tmp\\tcis-libraries\\chats\\session-2026-02-26T06-31-c5ceeaf8.json": {
-      "ts": 1779430450107,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\3134482f5cc3a83790f54409bee6c1f4436c5ca8dfae26047cad424c0b33ac34\\chats\\session-2026-02-11T01-54-ba5288b3.json": {
-      "ts": 1779430450129,
+    "/home/phila/.gemini/tmp/projects/chats/session-2026-04-08T12-47-1f9a5cd4.json": {
+      "ts": 1779451529299,
       "runtime": "gemini",
       "experiences": 0
     },
-    "C:\\Users\\phila\\.gemini\\tmp\\3134482f5cc3a83790f54409bee6c1f4436c5ca8dfae26047cad424c0b33ac34\\chats\\session-2026-02-05T07-44-5ea4c77c.json": {
-      "ts": 1779430466971,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\3134482f5cc3a83790f54409bee6c1f4436c5ca8dfae26047cad424c0b33ac34\\chats\\session-2026-02-06T09-37-0b6f252c.json": {
-      "ts": 1779430466979,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\3134482f5cc3a83790f54409bee6c1f4436c5ca8dfae26047cad424c0b33ac34\\chats\\session-2026-02-05T06-30-48d9efcd.json": {
-      "ts": 1779430481845,
-      "runtime": "gemini",
-      "experiences": 2
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2026-01-30T08-46-bb9ab84e.json": {
-      "ts": 1779430497055,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2026-01-30T03-46-55bb16d3.json": {
-      "ts": 1779430505238,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2026-01-28T06-40-5f40c257.json": {
-      "ts": 1779430505297,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2026-01-28T06-28-c61a0539.json": {
-      "ts": 1779430520403,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2026-01-28T01-53-3a1f001e.json": {
-      "ts": 1779430535560,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2026-01-27T08-26-b699c6b5.json": {
-      "ts": 1779430565601,
+    "/home/phila/.gemini/tmp/projects/chats/session-2026-04-08T01-58-ec7c5dd6.json": {
+      "ts": 1779451545452,
       "runtime": "gemini",
       "experiences": 3
     },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2026-01-23T08-18-0be07c50.json": {
-      "ts": 1779430580744,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\7d91cd606dcb9c09f806dd673b1277cb129c860d7cbfc16fd24dfcdfbde04bff\\chats\\session-2026-01-26T06-24-53320212.json": {
-      "ts": 1779430588515,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\f44f1d3fdeae57efe7738989b24e65b9c15a5b71f436ad264a091a338a1f0e6e\\chats\\session-2026-01-26T03-23-969434e1.json": {
-      "ts": 1779430618126,
+    "/home/phila/.gemini/tmp/a341685f8f5e4a826227fe99155f8921bf4b58aaf5c3c696072afe75e4aa24d0/chats/session-2026-04-08T01-58-ec7c5dd6.json": {
+      "ts": 1779451545457,
       "runtime": "gemini",
       "experiences": 3
     },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2026-01-22T10-00-c0c3859b.json": {
-      "ts": 1779430630320,
+    "/home/phila/.gemini/tmp/a341685f8f5e4a826227fe99155f8921bf4b58aaf5c3c696072afe75e4aa24d0/chats/session-2026-02-12T04-06-bb0ba69f.json": {
+      "ts": 1779451597057,
       "runtime": "gemini",
-      "experiences": 1
+      "experiences": 16
     },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2026-01-22T07-25-be6076c1.json": {
-      "ts": 1779430650266,
+    "/home/phila/.gemini/tmp/a341685f8f5e4a826227fe99155f8921bf4b58aaf5c3c696072afe75e4aa24d0/chats/session-2026-02-12T01-48-00489392.json": {
+      "ts": 1779451655004,
       "runtime": "gemini",
-      "experiences": 2
+      "experiences": 11
     },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2026-01-22T01-33-c4147c4c.json": {
-      "ts": 1779430680345,
-      "runtime": "gemini",
-      "experiences": 4
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2026-01-21T14-58-765775ee.json": {
-      "ts": 1779430700457,
+    "/home/phila/.gemini/tmp/a341685f8f5e4a826227fe99155f8921bf4b58aaf5c3c696072afe75e4aa24d0/chats/session-2026-02-11T01-24-6f84d7f4.json": {
+      "ts": 1779451664947,
       "runtime": "gemini",
       "experiences": 2
     },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2026-01-21T13-09-0fd97921.json": {
-      "ts": 1779430719310,
+    "/home/phila/.gemini/tmp/a341685f8f5e4a826227fe99155f8921bf4b58aaf5c3c696072afe75e4aa24d0/chats/session-2026-02-02T03-38-de98a239.json": {
+      "ts": 1779451720557,
       "runtime": "gemini",
-      "experiences": 2
+      "experiences": 13
     },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2026-01-21T09-01-f8746c4e.json": {
-      "ts": 1779430730566,
+    "/home/phila/.gemini/tmp/a341685f8f5e4a826227fe99155f8921bf4b58aaf5c3c696072afe75e4aa24d0/chats/session-2026-01-31T04-37-c97a97aa.json": {
+      "ts": 1779451779705,
       "runtime": "gemini",
-      "experiences": 1
+      "experiences": 19
     },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2026-01-21T12-42-fd905ae9.json": {
-      "ts": 1779430740698,
+    "/home/phila/.gemini/tmp/a341685f8f5e4a826227fe99155f8921bf4b58aaf5c3c696072afe75e4aa24d0/chats/session-2026-01-29T06-06-a3f3cfe5.json": {
+      "ts": 1779451838984,
       "runtime": "gemini",
-      "experiences": 1
+      "experiences": 16
     },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2026-01-21T07-52-95c68dfe.json": {
-      "ts": 1779430764672,
+    "/home/phila/.gemini/tmp/a341685f8f5e4a826227fe99155f8921bf4b58aaf5c3c696072afe75e4aa24d0/chats/session-2026-01-29T02-09-5bb6c7f6.json": {
+      "ts": 1779451891647,
       "runtime": "gemini",
-      "experiences": 2
+      "experiences": 17
     },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2026-01-21T06-59-e5f82fe5.json": {
-      "ts": 1779430794689,
-      "runtime": "gemini",
-      "experiences": 2
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2026-01-21T04-24-e5f82fe5.json": {
-      "ts": 1779430807849,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2026-01-21T03-24-b2bd3a43.json": {
-      "ts": 1779430822969,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2026-01-21T01-30-2950278d.json": {
-      "ts": 1779430822991,
+    "/home/phila/.gemini/tmp/8a5edab282632443219e051e4ade2d1d5bbc671c781051bf1437897cbdfea0f1/chats/session-2026-01-13T07-20-280e42e0.json": {
+      "ts": 1779451891647,
       "runtime": "gemini",
       "experiences": 0
     },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2026-01-20T03-07-2950278d.json": {
-      "ts": 1779430848918,
-      "runtime": "gemini",
-      "experiences": 3
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2026-01-19T10-06-4752e42a.json": {
-      "ts": 1779430868755,
-      "runtime": "gemini",
-      "experiences": 2
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2025-12-05T02-16-0e0aad06.json": {
-      "ts": 1779430898783,
-      "runtime": "gemini",
-      "experiences": 4
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\b5acbe2762b5ecd81396e86a71622859581ab4b8193ec5cea2c6a6c7b315161e\\chats\\session-2026-01-19T06-58-a911b2b4.json": {
-      "ts": 1779430923829,
-      "runtime": "gemini",
-      "experiences": 2
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\b5acbe2762b5ecd81396e86a71622859581ab4b8193ec5cea2c6a6c7b315161e\\chats\\session-2026-01-19T07-11-a911b2b4.json": {
-      "ts": 1779430923834,
+    "/home/phila/.gemini/tmp/8a5edab282632443219e051e4ade2d1d5bbc671c781051bf1437897cbdfea0f1/chats/session-2026-01-13T06-23-9fbea767.json": {
+      "ts": 1779451891647,
       "runtime": "gemini",
       "experiences": 0
     },
-    "C:\\Users\\phila\\.gemini\\tmp\\ac1f9606546a4fd09c7cc1ed8731889fa7ee5da1b1034baede932ab3cf7b0d5a\\chats\\session-2025-12-12T07-10-0c67e5f5.json": {
-      "ts": 1779430939181,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\726679bec193492c6ad9e0a4e92f9fcbb0a4fdf2d9eb14354d189bdf7219b6d9\\chats\\session-2025-12-11T10-19-883e5e07.json": {
-      "ts": 1779430950965,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\726679bec193492c6ad9e0a4e92f9fcbb0a4fdf2d9eb14354d189bdf7219b6d9\\chats\\session-2025-12-08T02-31-44f25f89.json": {
-      "ts": 1779430960699,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\b5acbe2762b5ecd81396e86a71622859581ab4b8193ec5cea2c6a6c7b315161e\\chats\\session-2025-11-24T10-12-0e792eb5.json": {
-      "ts": 1779430971861,
-      "runtime": "gemini",
-      "experiences": 1
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\30c06ec7cd187a19abfcb4fa0e84622d8495d31f6603f3f1ee367161e5a74f52\\chats\\session-2025-11-24T10-01-392e4070.json": {
-      "ts": 1779430993388,
-      "runtime": "gemini",
-      "experiences": 2
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\30c06ec7cd187a19abfcb4fa0e84622d8495d31f6603f3f1ee367161e5a74f52\\chats\\session-2025-11-24T09-52-23982c33.json": {
-      "ts": 1779430993410,
+    "/home/phila/.gemini/tmp/8a5edab282632443219e051e4ade2d1d5bbc671c781051bf1437897cbdfea0f1/chats/session-2026-01-13T06-17-1e7217b9.json": {
+      "ts": 1779451891657,
       "runtime": "gemini",
       "experiences": 0
     },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2025-10-14T07-50-9bc6c022.json": {
-      "ts": 1779430993419,
+    "/home/phila/.gemini/tmp/8a5edab282632443219e051e4ade2d1d5bbc671c781051bf1437897cbdfea0f1/chats/session-2026-01-13T06-16-6c51dad3.json": {
+      "ts": 1779451891659,
       "runtime": "gemini",
       "experiences": 0
     },
-    "C:\\Users\\phila\\.gemini\\tmp\\ac7a523ec852e5282b1c63ebae11998a3272ed0440412402a0e9c15d9489212f\\chats\\session-2025-10-06T07-43-95c8fe3b.json": {
-      "ts": 1779430993430,
+    "/home/phila/.gemini/tmp/8a5edab282632443219e051e4ade2d1d5bbc671c781051bf1437897cbdfea0f1/chats/session-2026-01-13T06-05-5e439673.json": {
+      "ts": 1779451891659,
       "runtime": "gemini",
       "experiences": 0
     },
-    "C:\\Users\\phila\\.gemini\\tmp\\ac7a523ec852e5282b1c63ebae11998a3272ed0440412402a0e9c15d9489212f\\chats\\session-2025-10-06T07-38-087add57.json": {
-      "ts": 1779430993437,
+    "/home/phila/.gemini/tmp/8a5edab282632443219e051e4ade2d1d5bbc671c781051bf1437897cbdfea0f1/chats/session-2026-01-13T06-03-5e439673.json": {
+      "ts": 1779451891685,
       "runtime": "gemini",
       "experiences": 0
     },
-    "C:\\Users\\phila\\.gemini\\tmp\\a1009d2e816a39856ab9737aef42833a039a2b34131a0f89bb25ffa7016857c2\\chats\\session-2025-09-24T02-24-6da2738e.json": {
-      "ts": 1779430993449,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\a1009d2e816a39856ab9737aef42833a039a2b34131a0f89bb25ffa7016857c2\\chats\\session-2025-09-23T04-11-95fb45a2.json": {
-      "ts": 1779430993458,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\a1009d2e816a39856ab9737aef42833a039a2b34131a0f89bb25ffa7016857c2\\chats\\session-2025-09-23T03-24-f06278d1.json": {
-      "ts": 1779430993475,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2025-09-22T08-39-3b091fc0.json": {
-      "ts": 1779430993482,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\a1009d2e816a39856ab9737aef42833a039a2b34131a0f89bb25ffa7016857c2\\chats\\session-2025-09-22T08-02-86cdef81.json": {
-      "ts": 1779430993490,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2025-09-19T08-55-52922d3d.json": {
-      "ts": 1779430993498,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2025-09-19T06-18-c5a1f3e9.json": {
-      "ts": 1779430993503,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\ac7a523ec852e5282b1c63ebae11998a3272ed0440412402a0e9c15d9489212f\\chats\\session-2025-09-19T04-27-f521aa87.json": {
-      "ts": 1779430993507,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\6ef3e63e1b651433e4700010fa5753d9476404e31855585d8fa5787b1142de44\\chats\\session-2025-09-19T02-29-cd456288.json": {
-      "ts": 1779430993520,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2025-09-18T03-04-530666f9.json": {
-      "ts": 1779430993537,
-      "runtime": "gemini",
-      "experiences": 0
-    },
-    "C:\\Users\\phila\\.gemini\\tmp\\6c4a8259ba1f0672b576fa508852e30f4125fd4f17c305d170b8bf39bbe95e11\\chats\\session-2025-09-18T02-46-b7ece86f.json": {
-      "ts": 1779430993546,
+    "/home/phila/.gemini/tmp/8a5edab282632443219e051e4ade2d1d5bbc671c781051bf1437897cbdfea0f1/chats/session-2026-01-13T06-03-968c766e.json": {
+      "ts": 1779451891686,
       "runtime": "gemini",
       "experiences": 0
     }
