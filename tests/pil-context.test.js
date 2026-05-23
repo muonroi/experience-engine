@@ -79,6 +79,8 @@ async function startStub(overrides = {}) {
       if (req.method === 'POST' && /^\/collections\/[^/]+\/points\/query$/.test(req.url)) {
         const points = req.url.includes('experience-principles')
           ? principlesPoints
+          : req.url.includes('experience-selfqa')
+          ? []
           : behavioralPoints;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ result: { points } }));
