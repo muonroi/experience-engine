@@ -17,19 +17,19 @@ const {
 // never invoked anywhere in the tree — relic from a half-finished modular
 // refactor. Importing from ./activity matches hittrack.js / intercept.js.
 const { activityLog } = require('./activity');
-const { getEmbedding, estimateTextUnits } = require('./embedding');
+const { getEmbedding } = require('./embedding');
 const {
   searchCollection, fileStoreRead, fileStoreUpsert,
   cosineSimilarity, checkQdrant, setQdrantAvailable, buildQdrantUserFilter, deleteEntry,
 } = require('./qdrant');
 const { normalizeExtractText, assessExtractedQaQuality } = require('./context');
 const {
-  ensureSignalMetrics, ensureNovelCaseEvidence, isPrincipleLikeEntry,
-  buildPrincipleText, buildStorePayload, applyBudget,
+  ensureSignalMetrics, ensureNovelCaseEvidence,
+  buildPrincipleText, buildStorePayload,
   normalizeFailureMode, normalizeJudgment, normalizeEvidenceClass,
 } = require('./format');
 const { computeEffectiveConfidence } = require('./scoring');
-const { getValidatedHitCount, dedupePointsBySource, shortPointId } = require('./utils');
+const { getValidatedHitCount } = require('./utils');
 const { callBrainWithFallback } = require('./brain-llm');
 const { createEdge } = require('./graph');
 

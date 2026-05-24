@@ -5,7 +5,6 @@
 'use strict';
 
 const { detectContext, extractPathFromCommand } = require('./utils');
-const { QUERY_MAX_CHARS } = require('./config');
 
 // ============================================================
 //  Transcript domain detection
@@ -550,7 +549,6 @@ function detectTraps(events, lines) {
         const sim = jaccardSimilarity(tokenizeForSimilarity(prior.summary), tokenizeForSimilarity(cur.summary));
         // Lower threshold for bash — same error signature counts as same op
         const priorErr = lines.slice(prior.lineIdx, Math.min(lines.length, prior.lineIdx + 4)).join(' ');
-        const curErr = lines.slice(cur.lineIdx, Math.min(lines.length, cur.lineIdx + 4)).join(' ');
         const priorSig = _extractErrorSignature ? _extractErrorSignature(priorErr) : null;
         const curContext = lines.slice(cur.lineIdx, Math.min(lines.length, cur.lineIdx + 4)).join(' ');
         isSameOp = sim >= 0.75 || (priorSig && curContext.includes(priorSig.split(':').pop()));
@@ -727,14 +725,12 @@ function detectRepeatedErrors(events, lines) {
     if (!resolution) continue; // No resolution found = unresolved, skip
 
     const firstFail = run.events[0];
-    const lastFail = run.events[run.events.length - 1];
     const windowStart = Math.max(0, firstFail.lineIdx - 1);
     const windowEnd = Math.min(lines.length, resolution.lineIdx + 2);
     const window = lines.slice(windowStart, windowEnd);
 
     const failSummaries = run.events.map(e => e.summary.slice(0, 100));
     const failTools = [...new Set(run.events.map(e => e.toolName.toLowerCase()))];
-    const resFile = extractEditTarget(resolution.summary);
     const files = [];
     for (const ev of [...run.events, resolution]) {
       const f = extractEditTarget(ev.summary);

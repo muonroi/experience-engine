@@ -32,80 +32,9 @@ const _hittrack = require('./src/hittrack');
 const _intercept = require('./src/intercept');
 
 // --- Constants ---
-const { COLLECTIONS, ROUTES_COLLECTION, SELFQA_COLLECTION, EDGE_COLLECTION } = _intercept;
-
-const CODEX_ALLOWED_MODEL_REASONING = {
-  'gpt-5.4': new Set(['low', 'medium', 'high', 'extra_high']),
-  'gpt-5.4-mini': new Set(['low', 'medium', 'high', 'extra_high']),
-  'gpt-5.3-codex': new Set(['low', 'medium', 'high', 'extra_high']),
-  'gpt-5.3-codex-spark': new Set(['low', 'medium', 'high', 'extra_high']),
-};
+const { COLLECTIONS, EDGE_COLLECTION } = _intercept;
 
 const EXP_USER = _config.EXP_USER;
-const VALID_FEEDBACK_VERDICTS = new Set(['FOLLOWED', 'IGNORED', 'IRRELEVANT']);
-const VALID_NOISE_REASONS = new Set(['wrong_repo', 'wrong_language', 'wrong_task', 'stale_rule']);
-
-// --- Embed providers (kept here for backward compat with embed* functions) ---
-const EMBED_PROVIDERS = {
-  ollama:       { get fn() { return embedOllama; } },
-  openai:       { get fn() { return embedOpenAI; } },
-  gemini:       { get fn() { return embedGemini; } },
-  voyageai:     { get fn() { return embedVoyageAI; } },
-  siliconflow:  { get fn() { return embedOpenAI; } },
-  custom:       { get fn() { return embedOpenAI; } },
-};
-
-async function embedOllama(text, signal) {
-  try {
-    const res = await fetch(_config.getOllamaEmbedUrl(), {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: _config.getEmbedModel(), input: text }),
-      signal: signal || AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return null;
-    return (await res.json()).embeddings?.[0] || null;
-  } catch { return null; }
-}
-
-async function embedOpenAI(text, signal) {
-  const endpoint = _config.getEmbedEndpoint() || 'https://api.openai.com/v1/embeddings';
-  try {
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_config.getEmbedKey()}` },
-      body: JSON.stringify({ model: _config.getEmbedModel() || 'text-embedding-3-small', input: text.slice(0, 8000) }),
-      signal: signal || AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return null;
-    return (await res.json()).data?.[0]?.embedding || null;
-  } catch { return null; }
-}
-
-async function embedGemini(text, signal) {
-  try {
-    const model = _config.getEmbedModel() || 'text-embedding-004';
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${_config.getEmbedKey()}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: { parts: [{ text: text.slice(0, 8000) }] } }),
-      signal: signal || AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return null;
-    return (await res.json()).embedding?.values || null;
-  } catch { return null; }
-}
-
-async function embedVoyageAI(text, signal) {
-  try {
-    const res = await fetch('https://api.voyageai.com/v1/embeddings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_config.getEmbedKey()}` },
-      body: JSON.stringify({ model: _config.getEmbedModel() || 'voyage-code-3', input: [text.slice(0, 8000)] }),
-      signal: signal || AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return null;
-    return (await res.json()).data?.[0]?.embedding || null;
-  } catch { return null; }
-}
 
 // --- Brain fallback chain ---
 const BRAIN_FNS = {
@@ -282,31 +211,15 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
       }
       return true;
     }
-    const orgCfg = _config.getConfig().org;
-    const orgName = orgCfg && typeof orgCfg.name === 'string' ? orgCfg.name.trim().toLowerCase() : '';
-    const fileIsOrgStack = orgName ? _utils.isOrgStackRepo(filePath, orgCfg) : false;
     // Caller-provided framework hint (e.g. PreToolUse hook that inspected csproj/package.json).
     // Filter is opt-in: when absent, framework dimension passes through. Avoids fragile
     // path-pattern detection inside the hot path while still letting future callers narrow.
     const callerFramework = sourceMeta && typeof sourceMeta.framework === 'string'
       ? sourceMeta.framework.toLowerCase().trim() : null;
-    // Fail-closed default: when the local install has no org configured, but a
-    // point IS org-tagged (legacy data from a prior org-bound install), drop it
-    // unless config explicitly opts into global mode. Prevents the
-    // post-`1b184df` org-agnostic refactor from silently leaking org-doc hints
-    // (MControllerBase, IAuthenticateInfoContext, etc.) into unrelated projects
-    // that simply share the same Qdrant brain.
-    const globalScopeOptIn = orgCfg && orgCfg.globalScope === true;
     const isStrict = STRICT_SCOPE_COLLECTIONS.has(collectionName || '');
     return points.filter(p => {
       try {
         const exp = JSON.parse(p.payload?.json || '{}');
-        const pointOrg = exp.scope?.org ? String(exp.scope.org).toLowerCase() : '';
-        // fail-closed org check removed — single-org brain
-        // Org-stack gate: org-tagged knowledge only applies inside the configured org's repos.
-        // Prevents org-specific hints from leaking into unrelated projects.
-        // Disabled entirely when no org configured (global mode).
-        // org post-filter removed — single-org brain
         // Framework gate (opt-in): when caller asserts a framework AND the hint is tagged
         // to a different specific framework, drop. 'any' / undefined on the hint passes.
         if (callerFramework && exp.scope?.framework) {

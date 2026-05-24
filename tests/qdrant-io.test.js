@@ -120,6 +120,26 @@ test('searchCollection returns empty array for empty/nonexistent collection', as
   assert.equal(results.length, 0, 'empty collection → empty results');
 });
 
+test('config accepts nested qdrant url/key as aliases for legacy flat fields', () => {
+  const CONFIG_PATH = path.join(__dirname, '..', '.experience', 'src', 'config.js');
+  const config = require(CONFIG_PATH);
+  writeConfig(testHome, {
+    qdrantUrl: undefined,
+    qdrantKey: undefined,
+    qdrant: {
+      url: 'http://nested-qdrant:6333',
+      key: 'nested-key',
+    },
+  });
+  config.refreshConfig();
+
+  assert.equal(config.getQdrantBase(), 'http://nested-qdrant:6333');
+  assert.equal(config.getQdrantApiKey(), 'nested-key');
+
+  writeConfig(testHome);
+  config.refreshConfig();
+});
+
 // ============================================================
 //  Test: fetchPointById
 // ============================================================

@@ -315,3 +315,36 @@ test('read auth token only unlocks observability endpoints', async () => {
     await runtime.stop();
   }
 });
+
+test('GET /api/timeline searches each experience collection once', async () => {
+  const serverModule = require(path.join(REPO_ROOT, 'server.js'));
+  const core = serverModule.loadExperienceCore();
+  const originalGetEmbeddingRaw = core.getEmbeddingRaw;
+  const originalSearchCollection = core.searchCollection;
+  const originalGetEdgesOfType = core.getEdgesOfType;
+  const searched = [];
+
+  core.getEmbeddingRaw = async () => [0.1, 0.2, 0.3];
+  core.searchCollection = async (collection) => {
+    searched.push(collection);
+    return [];
+  };
+  core.getEdgesOfType = () => [];
+
+  try {
+    const req = { headers: {}, socket: { remoteAddress: '127.0.0.1' } };
+    const res = makeJsonResponse();
+    await serverModule.handleTimeline(req, res, new URL('http://localhost/api/timeline?topic=test'));
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(searched, [
+      'experience-principles',
+      'experience-behavioral',
+      'experience-selfqa',
+    ]);
+  } finally {
+    core.getEmbeddingRaw = originalGetEmbeddingRaw;
+    core.searchCollection = originalSearchCollection;
+    core.getEdgesOfType = originalGetEdgesOfType;
+  }
+});

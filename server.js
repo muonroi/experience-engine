@@ -39,12 +39,13 @@ const os = require('node:os');
 const { parseSince, loadEvents, filterEvents, computeStats, loadTop5 } = require('./tools/exp-stats');
 const { checkGates } = require('./tools/exp-gates');
 const { validateBody } = require('./.experience/src/validate');
+const runtimeConfig = require('./.experience/src/config');
+const logger = require('./.experience/src/logger');
 const { canonicalizeProjectSlug } = require('./lib/path-canonical');
 
 // --- Structured logger (zero-dep) ---
 function slog(level, msg, meta = {}) {
-  const entry = JSON.stringify({ ts: new Date().toISOString(), level, msg, ...meta });
-  process[level === 'error' ? 'stderr' : 'stdout'].write(entry + '\n');
+  logger.log(level, msg, meta);
 }
 
 // --- Config ---
@@ -57,8 +58,8 @@ const _cfg = (() => {
 })();
 
 const PORT = _cfg.server?.port || parseInt(process.env.EXP_SERVER_PORT, 10) || 8082;
-const QDRANT_BASE = _cfg.qdrantUrl || process.env.EXPERIENCE_QDRANT_URL || 'http://localhost:6333';
-const QDRANT_API_KEY = _cfg.qdrantKey || process.env.EXPERIENCE_QDRANT_KEY || '';
+const QDRANT_BASE = runtimeConfig.getQdrantBase();
+const QDRANT_API_KEY = runtimeConfig.getQdrantApiKey();
 const AUTH_TOKEN = _cfg.server?.authToken || _cfg.serverAuthToken || null;
 const READ_AUTH_TOKEN = _cfg.server?.readAuthToken || _cfg.serverReadAuthToken || process.env.EXPERIENCE_SERVER_READ_AUTH_TOKEN || null;
 const VALID_FEEDBACK_VERDICTS = new Set(['FOLLOWED', 'IGNORED', 'IRRELEVANT']);
@@ -132,6 +133,10 @@ function loadExperienceCore({ fresh = false } = {}) {
   return require(RUNTIME_CORE_PATH);
 }
 
+function qdrantHeaders(extra = {}) {
+  return { ...extra, ...(QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {}) };
+}
+
 // Derive caller scope (lang/framework/project_slug) for clients that don't
 // pre-flatten them at the top level. Claude Code's hook script runs
 // source-meta-enrich.js client-side and spreads ...sourceMeta into the body;
@@ -187,10 +192,7 @@ async function resolvePointIdPrefix(collection, pointId) {
 
     const scrollRes = await fetch(`${QDRANT_BASE}/collections/${collection}/points/scroll`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {}),
-      },
+      headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(5000),
     });
@@ -287,14 +289,11 @@ function _maybeLogStaleClient(req) {
     const sorted = [..._staleClientLogMap.entries()].sort((a, b) => a[1] - b[1]);
     for (const [k] of sorted.slice(0, _staleClientLogMap.size / 2)) _staleClientLogMap.delete(k);
   }
-  console.log(JSON.stringify({
-    ts: new Date().toISOString(),
-    level: 'warn',
-    msg: 'stale_client',
+  slog('warn', 'stale_client', {
     clientCommit: key,
     serverCommit,
     path: url.split('?')[0],
-  }));
+  });
 }
 
 function handleVersion(req, res) {
@@ -308,7 +307,7 @@ async function handleHealth(req, res) {
   let qdrant = { status: 'unknown' };
   try {
     const r = await fetch(`${QDRANT_BASE}/collections`, {
-      headers: QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {},
+      headers: qdrantHeaders(),
       signal: AbortSignal.timeout(3000),
     });
     qdrant = { status: r.ok ? 'ok' : 'error', code: r.status };
@@ -640,13 +639,27 @@ async function handleExtract(req, res) {
     project_slug: body.project_slug || derived.project_slug || null,
     _preDetectedExperiences: Array.isArray(body.preDetectedExperiences) ? body.preDetectedExperiences : null,
   };
-  console.log(`[extract-api] project=${body.projectPath || 'none'} transcriptLen=${(body.transcript || '').length} lang=${meta.lang} fw=${meta.framework} slug=${meta.project_slug} runtime=${meta.sourceRuntime}`);
+  slog('info', 'extract_api_start', {
+    project: body.projectPath || null,
+    transcriptLen: (body.transcript || '').length,
+    lang: meta.lang,
+    framework: meta.framework,
+    projectSlug: meta.project_slug,
+    sourceRuntime: meta.sourceRuntime,
+  });
   try {
     const stored = await extractFromSession(body.transcript, body.projectPath || null, meta);
-    console.log(`[extract-api] done project=${body.projectPath || 'none'} stored=${stored}`);
+    slog('info', 'extract_api_done', {
+      project: body.projectPath || null,
+      stored,
+      sourceRuntime: meta.sourceRuntime,
+    });
     json(res, { stored, success: true });
   } catch (err) {
-    console.error(`[extract-api] ERROR project=${body.projectPath || 'none'}:`, err?.message, err?.stack?.split('\n').slice(0, 3).join(' | '));
+    slog('error', 'extract_api_error', {
+      project: body.projectPath || null,
+      error: logger.serializeError(err),
+    });
     json(res, { stored: 0, success: false, error: err?.message });
   }
 }
@@ -684,10 +697,9 @@ async function handleIngestPoint(req, res) {
       vector,
       payload: { ...(body.payload || {}), text: body.text },
     };
-    const qdrantBase = _cfg.qdrant?.url || 'http://localhost:6333';
-    const upsert = await fetch(`${qdrantBase}/collections/${body.collection}/points?wait=true`, {
+    const upsert = await fetch(`${QDRANT_BASE}/collections/${body.collection}/points?wait=true`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ points: [point] }),
     });
     if (!upsert.ok) {
@@ -710,7 +722,6 @@ async function handleHintStats(req, res, url) {
   const topN = Math.min(Number(url.searchParams.get('topN') || 20), 100);
   const cols = (url.searchParams.get('collections') || 'experience-behavioral,experience-principles,experience-selfqa').split(',');
 
-  const qdrantBase = _cfg.qdrant?.url || 'http://localhost:6333';
   const stats = {};
 
   for (const col of cols) {
@@ -722,9 +733,9 @@ async function handleHintStats(req, res, url) {
     const unscopedHigh = [];
 
     while (true) {
-      const r = await fetch(`${qdrantBase}/collections/${col}/points/scroll`, {
+      const r = await fetch(`${QDRANT_BASE}/collections/${col}/points/scroll`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ limit: 200, offset, with_payload: true }),
       }).catch(() => null);
       if (!r || !r.ok) break;
@@ -914,8 +925,7 @@ async function handleTimeline(req, res, url) {
   if (!vector) return error(res, 'Embedding unavailable', 503);
 
   // Search across all experience collections using the canonical searchCollection helper
-  const collections = ['experience-principles', 'experience-behavioral',
-  'experience-selfqa', 'experience-selfqa'];
+  const collections = ['experience-principles', 'experience-behavioral', 'experience-selfqa'];
   const allResults = [];
   for (const coll of collections) {
     try {
@@ -963,15 +973,14 @@ const KNOWN_COLLECTIONS = new Set([
 ]);
 
 // ensureCollections — creates bb-* Qdrant collections at server startup if absent.
-// Vector dims must match experience-behavioral (1024 — verified empirically against
-// the live Qdrant instance; this is the embedding model used for principles/behavioral).
+// Vector dims must match the configured embedding model.
 async function ensureCollections() {
   const BB_COLLECTIONS = ['bb-behavioral', 'bb-recipes'];
-  const VECTOR_SIZE = 1024;
+  const VECTOR_SIZE = Number(runtimeConfig.getEmbedDim()) || 768;
   for (const col of BB_COLLECTIONS) {
     try {
       const check = await fetch(`${QDRANT_BASE}/collections/${col}`, {
-        headers: { 'Content-Type': 'application/json', ...(QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {}) },
+        headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
         signal: AbortSignal.timeout(5000),
       });
       if (check.status === 200) {
@@ -980,7 +989,7 @@ async function ensureCollections() {
       }
       const create = await fetch(`${QDRANT_BASE}/collections/${col}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...(QDRANT_API_KEY ? { 'api-key': QDRANT_API_KEY } : {}) },
+        headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ vectors: { size: VECTOR_SIZE, distance: 'Cosine' } }),
         signal: AbortSignal.timeout(10000),
       });
@@ -1174,7 +1183,7 @@ async function handlePilContext(req, res) {
       const SCORE_FLOOR = 0.55;
       t0_principles = (principles || []).map(toScoredText).filter((p) => p.score >= 0.40 && p.text);
       t2_patterns = (behavioral || []).map(toScoredText).filter((p) => p.score >= SCORE_FLOOR && p.text);
-    } catch (_e) { retrieval_skipped_reason = 'retrieval_error'; }
+    } catch { retrieval_skipped_reason = 'retrieval_error'; }
   }
 
   // 3. T1 rules: high-score behavioral patterns (>=0.75) treated as "proven" proxy.

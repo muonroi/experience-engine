@@ -6,6 +6,7 @@
 
 const _config = require('./config');
 const { estimateTextUnits, logCostCall } = require('./embedding');
+const { log, serializeError } = require('./logger');
 
 const cfgValue = _config.cfgValue;
 const getBrainProvider = _config.getBrainProvider;
@@ -87,7 +88,6 @@ async function callBrainWithFallback(prompt, meta = {}) {
 // Timeout: 3s (tight — fail-open if brain is slow). Cost: ~80 tokens input, ~5 tokens output.
 async function brainRelevanceFilter(actionQuery, suggestionLines, signal, projectSlug) {
   if (!suggestionLines || suggestionLines.length === 0) return null;
-  const hasClearHighConfidenceWarning = suggestionLines.some(line => /Experience - High Confidence \(([-\d.]+)\)/.test(line));
 
   const warnings = suggestionLines.map((line, i) => {
     const clean = line.replace(/^.*?\]:\s*/, '');
@@ -239,7 +239,10 @@ async function extractQA(experience, opts = {}) {
 
   const evidence = experience?.evidence || {};
   const hasEvidence = Object.keys(evidence).length > 0;
-  console.log(`[brain-llm] extractQA evidence: hasEvidence=${hasEvidence} keys=${Object.keys(evidence).join(',') || 'none'}`);
+  log('debug', 'brain_extract_evidence', {
+    hasEvidence,
+    evidenceKeys: Object.keys(evidence),
+  });
   const evidenceBlock = hasEvidence
     ? `\nEVIDENCE (hard facts extracted from the session — use these to build conditions):\n${JSON.stringify(evidence, null, 2)}\n`
     : '';
@@ -295,7 +298,11 @@ async function extractQA(experience, opts = {}) {
     // Evidence is authoritative — LLM keywords are fallback only.
     const condIsArray = Array.isArray(result.conditions);
     const condMissing = !result.conditions || typeof result.conditions !== 'object';
-    console.log(`[brain-llm] conditions post-process: isArray=${condIsArray} missing=${condMissing} evidenceKeys=${Object.keys(evidence).join(',') || 'none'}`);
+    log('debug', 'brain_conditions_post_process', {
+      conditionsIsArray: condIsArray,
+      conditionsMissing: condMissing,
+      evidenceKeys: Object.keys(evidence),
+    });
     if (condIsArray || condMissing) {
       const ev = evidence;
       const structured = {};
@@ -376,7 +383,11 @@ async function brainOpenAI(prompt, opts = {}) {
     });
     if (!res.ok) {
       const errBody = await res.text().catch(() => '');
-      console.error(`[brain-openai] HTTP ${res.status}: ${errBody.slice(0, 200)}`);
+      log('warn', 'brain_openai_http_error', {
+        status: res.status,
+        endpoint,
+        bodyPreview: errBody.slice(0, 200),
+      });
       return null;
     }
     const text = (await res.json()).choices?.[0]?.message?.content || '';
@@ -384,7 +395,10 @@ async function brainOpenAI(prompt, opts = {}) {
     const m = text.match(/\{[\s\S]*\}/);
     return m ? JSON.parse(m[0]) : null;
   } catch (err) {
-    console.error(`[brain-openai] ${err?.message}`);
+    log('warn', 'brain_openai_error', {
+      endpoint,
+      error: serializeError(err),
+    });
     return null;
   }
 }
@@ -430,7 +444,12 @@ async function brainDeepSeek(prompt, opts = {}) {
     });
     if (!res.ok) {
       const errBody = await res.text().catch(() => '');
-      console.error(`[brain-deepseek] HTTP ${res.status} ${res.statusText} from ${endpoint} body=${errBody.slice(0, 500)}`);
+      log('warn', 'brain_deepseek_http_error', {
+        status: res.status,
+        statusText: res.statusText,
+        endpoint,
+        bodyPreview: errBody.slice(0, 500),
+      });
       return null;
     }
     const dsResp = await res.json();
@@ -440,7 +459,9 @@ async function brainDeepSeek(prompt, opts = {}) {
     const m = text.match(/\{[\s\S]*\}/);
     return m ? JSON.parse(m[0]) : null;
   } catch (err) {
-    console.error(`[brain-deepseek] error: ${err?.message}`);
+    log('warn', 'brain_deepseek_error', {
+      error: serializeError(err),
+    });
     return null;
   }
 }

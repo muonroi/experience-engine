@@ -9,8 +9,7 @@ const pathMod = require('path');
 
 const {
   getQdrantBase, getQdrantApiKey,
-  getStoreDir, getExpUser, COLLECTIONS, getEmbedDim,
-  activityLog,
+  getStoreDir, getExpUser, COLLECTIONS,
 } = require('./config');
 
 // ============================================================
@@ -18,9 +17,14 @@ const {
 // ============================================================
 
 let qdrantAvailable = null; // null = unchecked, true/false = checked
+let qdrantCheckedAt = 0;
+const QDRANT_OK_CACHE_MS = 30_000;
+const QDRANT_FAIL_CACHE_MS = 5_000;
 
 async function checkQdrant() {
-  if (qdrantAvailable !== null) return qdrantAvailable;
+  const now = Date.now();
+  const ttl = qdrantAvailable ? QDRANT_OK_CACHE_MS : QDRANT_FAIL_CACHE_MS;
+  if (qdrantAvailable !== null && now - qdrantCheckedAt < ttl) return qdrantAvailable;
   try {
     const apiKey = getQdrantApiKey();
     const res = await fetch(`${getQdrantBase()}/collections`, {
@@ -29,15 +33,18 @@ async function checkQdrant() {
     });
     qdrantAvailable = res.ok;
   } catch { qdrantAvailable = false; }
+  qdrantCheckedAt = now;
   return qdrantAvailable;
 }
 
 function resetQdrantCheck() {
   qdrantAvailable = null;
+  qdrantCheckedAt = 0;
 }
 
 function setQdrantAvailable(value) {
   qdrantAvailable = !!value;
+  qdrantCheckedAt = Date.now();
 }
 
 // ============================================================
@@ -89,25 +96,45 @@ function releaseLock(collection) {
   try { fs.unlinkSync(fileStorePath(collection) + '.lock'); } catch {}
 }
 
-function fileStoreWrite(collection, entries) {
+function withFileStoreLock(collection, fn) {
   const dir = getStoreDir();
   fs.mkdirSync(dir, { recursive: true });
   const locked = acquireLock(collection);
+  if (!locked) throw new Error(`Failed to acquire FileStore lock for ${collection}`);
   try {
-    const tmp = fileStorePath(collection) + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(entries, null, 2));
-    fs.renameSync(tmp, fileStorePath(collection));
+    return fn();
   } finally {
-    if (locked) releaseLock(collection);
+    releaseLock(collection);
   }
 }
 
+function fileStoreWriteUnlocked(collection, entries) {
+  const tmp = fileStorePath(collection) + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(entries, null, 2));
+  fs.renameSync(tmp, fileStorePath(collection));
+}
+
+function fileStoreWrite(collection, entries) {
+  return withFileStoreLock(collection, () => fileStoreWriteUnlocked(collection, entries));
+}
+
 function fileStoreUpsert(collection, id, vector, payload) {
-  const entries = fileStoreRead(collection);
-  const idx = entries.findIndex(e => e.id === id);
-  const entry = { id, vector, payload };
-  if (idx >= 0) entries[idx] = entry; else entries.push(entry);
-  fileStoreWrite(collection, entries);
+  return withFileStoreLock(collection, () => {
+    const entries = fileStoreRead(collection);
+    const idx = entries.findIndex(e => e.id === id);
+    const entry = { id, vector, payload };
+    if (idx >= 0) entries[idx] = entry; else entries.push(entry);
+    fileStoreWriteUnlocked(collection, entries);
+  });
+}
+
+function fileStoreUpdate(collection, updateFn) {
+  return withFileStoreLock(collection, () => {
+    const entries = fileStoreRead(collection);
+    const result = updateFn(entries);
+    fileStoreWriteUnlocked(collection, entries);
+    return result;
+  });
 }
 
 function cosineSimilarity(a, b) {
@@ -144,6 +171,11 @@ function buildQdrantUserFilter() {
   };
 }
 
+function qdrantHeaders(extra = {}) {
+  const apiKey = getQdrantApiKey();
+  return { ...extra, ...(apiKey ? { 'api-key': apiKey } : {}) };
+}
+
 async function fetchPointById(collection, pointId) {
   if (!(await checkQdrant())) {
     const entries = fileStoreRead(collection);
@@ -151,9 +183,8 @@ async function fetchPointById(collection, pointId) {
     return found ? { id: found.id, score: 1.0, payload: found.payload } : null;
   }
   try {
-    const apiKey = getQdrantApiKey();
     const res = await fetch(`${getQdrantBase()}/collections/${collection}/points/${pointId}`, {
-      headers: { 'Content-Type': 'application/json', ...(apiKey ? { 'api-key': apiKey } : {}) },
+      headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
       signal: AbortSignal.timeout(3000),
     });
     if (!res.ok) return null;
@@ -180,7 +211,7 @@ async function searchCollection(name, vector, topK, signal, extraFilter) {
     }
     const res = await fetch(`${getQdrantBase()}/collections/${name}/points/query`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+      headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ query: vector, limit: topK, with_payload: true, filter }),
       signal,
     });
@@ -195,19 +226,19 @@ async function searchCollection(name, vector, topK, signal, extraFilter) {
 
 async function updatePointPayload(collection, pointId, updateFn) {
   if (!(await checkQdrant())) {
-    const entries = fileStoreRead(collection);
-    const entry = entries.find(e => e.id === pointId);
-    if (entry && entry.payload?.json) {
-      const data = JSON.parse(entry.payload.json);
-      updateFn(data);
-      entry.payload.json = JSON.stringify(data);
-      fileStoreWrite(collection, entries);
-    }
+    fileStoreUpdate(collection, (entries) => {
+      const entry = entries.find(e => e.id === pointId);
+      if (entry && entry.payload?.json) {
+        const data = JSON.parse(entry.payload.json);
+        updateFn(data);
+        entry.payload.json = JSON.stringify(data);
+      }
+    });
     return;
   }
   try {
     const res = await fetch(`${getQdrantBase()}/collections/${collection}/points/${pointId}`, {
-      headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+      headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return;
@@ -217,7 +248,7 @@ async function updatePointPayload(collection, pointId, updateFn) {
     updateFn(data);
     await fetch(`${getQdrantBase()}/collections/${collection}/points/payload`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+      headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ points: [pointId], payload: { json: JSON.stringify(data) } }),
       signal: AbortSignal.timeout(5000),
     });
@@ -230,13 +261,16 @@ async function updatePointPayload(collection, pointId, updateFn) {
 
 async function deleteEntry(collection, id) {
   if (!(await checkQdrant())) {
-    const entries = fileStoreRead(collection);
-    fileStoreWrite(collection, entries.filter(e => e.id !== id));
+    fileStoreUpdate(collection, (entries) => {
+      const kept = entries.filter(e => e.id !== id);
+      entries.length = 0;
+      entries.push(...kept);
+    });
     return;
   }
   await fetch(`${getQdrantBase()}/collections/${collection}/points/delete`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+    headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ points: [id] }),
     signal: AbortSignal.timeout(5000),
   });
@@ -260,7 +294,7 @@ async function syncToQdrant() {
       }));
       await fetch(`${getQdrantBase()}/collections/${coll}/points`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+        headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ points: batch }),
         signal: AbortSignal.timeout(30000),
       });
@@ -277,6 +311,7 @@ async function syncToQdrant() {
 module.exports = {
   checkQdrant, resetQdrantCheck, setQdrantAvailable, qdrantAvailable,
   fileStoreRead, fileStoreWrite, fileStoreSearch, fileStoreUpsert, fileStorePath,
+  fileStoreUpdate,
   updatePointPayload,
   searchCollection,
   fetchPointById,

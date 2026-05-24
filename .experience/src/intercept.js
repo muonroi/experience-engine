@@ -4,25 +4,17 @@
  */
 'use strict';
 
-const fs = require('fs');
-const pathMod = require('path');
-const os = require('os');
-
 const _config = require('./config');
-const _embedding = require('./embedding');
 const _utils = require('./utils');
 const _qdrant = require('./qdrant');
 const _session = require('./session');
 const _context = require('./context');
-const _scoring = require('./scoring');
 const _noise = require('./noise');
 const _brainllm = require('./brain-llm');
-const _format = require('./format');
-const _graph = require('./graph');
 const _evolution = require('./evolution');
-const _router = require('./router');
 const _activity = require('./activity');
 const _hittrack = require('./hittrack');
+const _logger = require('./logger');
 
 // --- Constants ---
 const COLLECTIONS = [
@@ -343,7 +335,11 @@ function _isDuplicate(hash) {
 const MAX_EXTRACTIONS_PER_SESSION = 10;
 
 async function extractFromSession(transcript, projectPath, meta = {}) {
-  const _log = (msg, data) => { console.log(`[extract] ${msg}`, JSON.stringify(data || {})); _activity.activityLog({ op: 'extract-debug', msg, ...data }); };
+  const _log = (msg, data) => {
+    const metaData = data || {};
+    _logger.log('debug', 'extract_debug', { detail: msg, ...metaData });
+    _activity.activityLog({ op: 'extract-debug', msg, ...metaData });
+  };
   if (!transcript || transcript.length < 100) {
     _log('transcript too short', { len: transcript?.length || 0, project: projectPath });
     return 0;

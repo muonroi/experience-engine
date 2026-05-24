@@ -5,9 +5,9 @@
 'use strict';
 
 const {
-  getOllamaEmbedUrl, getOllamaBase,
+  getOllamaEmbedUrl,
   getEmbedProvider, getEmbedModel, getEmbedEndpoint, getEmbedKey,
-  getEmbedDim, activityLog,
+  activityLog,
 } = require('./config');
 
 // ============================================================
