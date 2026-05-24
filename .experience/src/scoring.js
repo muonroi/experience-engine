@@ -5,7 +5,7 @@
 'use strict';
 
 const { getValidatedHitCount } = require('./utils');
-const { COLLECTIONS, getMinConfidence } = require('./config');
+const { getMinConfidence } = require('./config');
 
 const SELFQA_COLLECTION = 'experience-selfqa';
 const PROBATIONARY_T2_RAW_SCORE_THRESHOLD = 0.60;

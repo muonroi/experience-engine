@@ -34,6 +34,7 @@
     ".experience/setup-thin-client.sh",
     ".experience/setup.ps1",
     ".experience/setup.sh",
+    ".experience/src/",
     ".experience/stop-extractor.js",
     ".experience/sync-install.sh",
     "tools/exp-demote.js",

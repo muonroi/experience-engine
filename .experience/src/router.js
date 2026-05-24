@@ -540,7 +540,7 @@ async function routeModel(task, context, runtime) {
   activityLog({ op: 'route', task: taskText.slice(0, 100), tier: fallbackTier, model, source: 'default', confidence: 0 });
   return { tier: fallbackTier, model, reasoningEffort, confidence: 0, source: 'default', reason: 'fallback — classification unavailable', taskHash };
 }
-async function routeTask(task, context, runtime) { // runtime reserved for future routing variants
+async function routeTask(task, context, _runtime) { // runtime reserved for future routing variants
   const taskText = (task || '').slice(0, 500);
   if (!taskText) {
     return {

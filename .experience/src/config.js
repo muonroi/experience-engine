@@ -64,9 +64,18 @@ function cfgValue(key, envKey, fallback) {
   return _tryDecrypt(raw);
 }
 
+function cfgNestedValue(key, nestedPath, envKey, fallback) {
+  const cfg = getConfig();
+  const nested = nestedPath.reduce((value, part) => (
+    value && typeof value === 'object' ? value[part] : undefined
+  ), cfg);
+  const raw = cfg[key] ?? nested ?? process.env[envKey] ?? fallback;
+  return _tryDecrypt(raw);
+}
+
 // --- Config accessors ---
-function getQdrantBase()     { return cfgValue('qdrantUrl', 'EXPERIENCE_QDRANT_URL', 'http://localhost:6333'); }
-function getQdrantApiKey()   { return cfgValue('qdrantKey', 'EXPERIENCE_QDRANT_KEY', ''); }
+function getQdrantBase()     { return cfgNestedValue('qdrantUrl', ['qdrant', 'url'], 'EXPERIENCE_QDRANT_URL', 'http://localhost:6333'); }
+function getQdrantApiKey()   { return cfgNestedValue('qdrantKey', ['qdrant', 'key'], 'EXPERIENCE_QDRANT_KEY', ''); }
 function getOllamaBase()     { return cfgValue('ollamaUrl', 'EXPERIENCE_OLLAMA_URL', 'http://localhost:11434'); }
 function getEmbedProvider()  { return cfgValue('embedProvider', 'EXPERIENCE_EMBED_PROVIDER', 'ollama'); }
 function getBrainProvider()  { return cfgValue('brainProvider', 'EXPERIENCE_BRAIN_PROVIDER', 'ollama'); }
@@ -155,7 +164,7 @@ function activityLog(event) {
 }
 
 module.exports = {
-  getConfig, refreshConfig, cfgValue,
+  getConfig, refreshConfig, cfgValue, cfgNestedValue,
   getQdrantBase, getQdrantApiKey,
   getOllamaBase, getOllamaEmbedUrl, getOllamaGenerateUrl,
   getEmbedProvider, getEmbedModel, getEmbedEndpoint, getEmbedKey, getEmbedDim,
