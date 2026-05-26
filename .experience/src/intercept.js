@@ -236,6 +236,17 @@ async function reconcilePendingHints(surfacedPoints, toolName, toolInput, meta =
         pointId: _session.shortPointId(pending.id), reason: assessment.reason,
         tool: toolName, ..._utils.normalizeSourceMeta(meta),
       });
+      // Emit explicit feedback event so dashboard precision aggregator counts
+      // this deterministic touch as FOLLOWED. Payload already updated above
+      // via applyHitUpdateWithContext — this is a metric-visibility signal
+      // only, no double-write.
+      _activity.activityLog({
+        op: 'feedback', source: 'implicit',
+        collection: pending.collection,
+        pointId: _session.shortPointId(pending.id),
+        verdict: 'FOLLOWED', reason: assessment.reason,
+        tool: toolName, ..._utils.normalizeSourceMeta(meta),
+      });
       delete track.pending[key];
       results.touched.push({ collection: pending.collection, id: pending.id, reason: assessment.reason });
       continue;
@@ -255,6 +266,18 @@ async function reconcilePendingHints(surfacedPoints, toolName, toolInput, meta =
       );
       _activity.activityLog({ op: 'noise-disposition', collection: pending.collection, pointId: _session.shortPointId(pending.id), disposition: 'unused', source: 'implicit-posttool', noTouchCount: pending.noTouchCount, reason: assessment.reason, tool: toolName, ..._utils.normalizeSourceMeta(meta) });
       _activity.activityLog({ op: 'implicit-unused', collection: pending.collection, pointId: _session.shortPointId(pending.id), count: pending.noTouchCount, reason: assessment.reason, tool: toolName, ..._utils.normalizeSourceMeta(meta) });
+      // Determine the precision-visible verdict from the same heuristic used
+      // to decide whether to also bump irrelevantCount: deterministic noise
+      // reasons → IRRELEVANT (counts as noise on dashboard), otherwise the
+      // entry was simply not used in time → IGNORED.
+      _activity.activityLog({
+        op: 'feedback', source: 'implicit',
+        collection: pending.collection,
+        pointId: _session.shortPointId(pending.id),
+        verdict: deterministicNoise ? 'IRRELEVANT' : 'IGNORED',
+        reason: assessment.reason,
+        tool: toolName, ..._utils.normalizeSourceMeta(meta),
+      });
       delete track.pending[key];
       results.implicitUnused.push({ collection: pending.collection, id: pending.id, reason: assessment.reason });
       continue;
