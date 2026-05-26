@@ -202,8 +202,13 @@ async function recordFeedback(collection, pointId, verdictOrFollowed, reason = n
     source,
     ...(normalizedReason ? { reason: normalizedReason } : {}),
   });
+  // Unified op naming: all explicit verdicts emit op='feedback' with a
+  // 'source' tag (manual / judge / implicit). Prior to this, judge-emitted
+  // FOLLOWED verdicts used op='judge-feedback' which the dashboard precision
+  // aggregator did not count — they were invisible to Gate 4 measurement.
   activityLog({
-    op: options.source === 'judge' ? 'judge-feedback' : 'feedback',
+    op: 'feedback',
+    source,
     collection,
     pointId: pointId.slice(0, 8),
     verdict,
