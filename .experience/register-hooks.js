@@ -77,11 +77,11 @@ const AGENTS = [
       if (!cfg.hooks.PostToolUse.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor-post')))) {
         cfg.hooks.PostToolUse.push({ matcher: 'Edit|Write|Bash', hooks: [{ type:'command', command:`node "${interceptorPost}"`, timeout:5 }] });
       }
-      // UserPromptSubmit is the only PreToolUse-like channel whose
-      // additionalContext is actually injected into Claude Code's model
-      // context (Claude Code v2.1.x has bug anthropics/claude-code#19432 that
-      // silently drops PreToolUse hookSpecificOutput.additionalContext).
-      // Without this, hints render in TUI but the agent never reads them.
+      // UserPromptSubmit hook injects long-form guidance (multi-paragraph
+      // recipe text) at message start. PreToolUse still emits per-tool
+      // hints via additionalContext (supported since Claude CLI v2.1.9 —
+      // anthropics/claude-code#15345 implemented). Both channels together
+      // give the agent both prompt-start context and per-tool hints.
       cfg.hooks.UserPromptSubmit = cfg.hooks.UserPromptSubmit || [];
       if (!cfg.hooks.UserPromptSubmit.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor-prompt')))) {
         cfg.hooks.UserPromptSubmit.push({ hooks: [{ type:'command', command:`node "${interceptorPrompt}"`, timeout:5 }] });

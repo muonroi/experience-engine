@@ -96,12 +96,14 @@ function isCodexHookInvocation(data, tool) {
   return false;
 }
 
-// Tools that mutate state and benefit from forced hint delivery. Claude Code
-// silently drops `additionalContext` for PreToolUse (anthropics/claude-code#19432),
-// so for write tools we fall back to `permissionDecision: "deny"` whose
-// `permissionDecisionReason` IS surfaced to the agent as a tool error. Agent
-// reads, adjusts, retries; subsequent retries on the same (tool, args, hintIds)
-// pass through to avoid an infinite block.
+// Tools that mutate state and benefit from session-scoped hint de-dup.
+// Claude Code v2.1.9+ honors `additionalContext` on PreToolUse correctly
+// (anthropics/claude-code#15345 implemented), so we no longer need the
+// `permissionDecision: "deny"` workaround that surfaced hints via the
+// reason field. We keep the delivered-hints tracking purely as a UX
+// guard so the same hint is not re-injected on retry of the exact same
+// (tool, args) within one session. Set EXPERIENCE_PRETOOL_LEGACY_DENY=1
+// to force the legacy behaviour on older Claude CLIs (< 2.1.9).
 const MUTATING_TOOLS = /^(Edit|Write|MultiEdit|NotebookEdit|Bash|shell|execute_command|replace.*|write_file|edit_file)$/i;
 
 const DELIVERED_STATE_PATH = path.join(os.homedir(), '.experience', 'tmp', 'delivered-hints.json');
@@ -189,45 +191,45 @@ function emitPreToolUseGuidance(data, tool, additionalContext = '', extras) {
 
   if (!additionalContext) return;
 
-  // Claude path. additionalContext is silently dropped for PreToolUse in
-  // Claude Code v2.1.x (issue #19432). Force-deliver for mutating tools via
-  // permissionDecision="deny" — the reason field IS surfaced to the agent.
+  // Claude path. v2.1.9+ honors hookSpecificOutput.additionalContext on
+  // PreToolUse, so we just emit it directly. Session-scoped delivered-hints
+  // tracking still runs for mutating tools so a retry of the exact same
+  // (tool, args) does not re-inject the same hint text.
   const toolInput = extras?.toolInput || data?.tool_input || data?.input || {};
   const surfacedIds = (extras?.surfacedIds || []).map(s => String(s.id || '')).filter(Boolean);
-  const forceDeliver = process.env.EXPERIENCE_FORCE_PRETOOL_HINT !== '0'
-    && MUTATING_TOOLS.test(tool || '')
-    && surfacedIds.length > 0;
+  const shouldDedup = MUTATING_TOOLS.test(tool || '') && surfacedIds.length > 0;
+  let contextToEmit = additionalContext;
 
-  if (forceDeliver) {
+  if (shouldDedup) {
     const session = data?.session_id || data?.tool_use_id || data?.turn_id || 'default';
     const fingerprint = _argsFingerprint(tool, toolInput);
     const undelivered = _filterUndeliveredHints(session, fingerprint, surfacedIds);
-    if (undelivered.length > 0) {
-      _markHintsDelivered(session, fingerprint, undelivered);
-      const reason =
-        '⚠️ Past-experience guidance for this tool call (forced via PreToolUse — ' +
-        'Claude Code v2.1.x drops `additionalContext`, so this is delivered as a ' +
-        'deny reason instead). Read, decide whether it applies, then retry the tool ' +
-        'call. The same hints will NOT block this same operation again in this session.\n\n' +
-        additionalContext;
-      process.stdout.write(JSON.stringify({
-        hookSpecificOutput: {
-          hookEventName: 'PreToolUse',
-          permissionDecision: 'deny',
-          permissionDecisionReason: reason,
-        }
-      }));
+    if (undelivered.length === 0) {
+      // Every hint in this batch was already surfaced for this exact
+      // (tool, args) in the current session — skip re-injection.
       return;
     }
-    // All hints already delivered this session for this exact tool+args —
-    // fall through to passive allow so retry proceeds.
+    _markHintsDelivered(session, fingerprint, undelivered);
+  }
+
+  // Legacy fallback for users still on Claude CLI < 2.1.9 — opt in with
+  // EXPERIENCE_PRETOOL_LEGACY_DENY=1. Modern path below is the default.
+  if (process.env.EXPERIENCE_PRETOOL_LEGACY_DENY === '1' && shouldDedup) {
+    process.stdout.write(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: contextToEmit,
+      }
+    }));
+    return;
   }
 
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
       permissionDecision: 'allow',
-      additionalContext,
+      additionalContext: contextToEmit,
     }
   }));
 }
@@ -450,11 +452,11 @@ process.stdin.on('end', async () => {
       outputText = outputText ? outputText + '\n---\n' + routeLine : routeLine;
     }
 
-    // Surface a one-line stderr indicator for Claude Code TUI users. Claude
-    // Code v2.1.x drops additionalContext silently for PreToolUse (issue
-    // #19432) AND auto-collapses hook output, so even when hints reach the
-    // agent the user has no visible signal that anything fired. A stderr
-    // line surfaces next to "Ran 1 PreToolUse hook" without needing Ctrl+O.
+    // Surface a one-line stderr indicator for Claude Code TUI users.
+    // Claude Code auto-collapses hook output, so even though v2.1.9+
+    // honors additionalContext on PreToolUse, the user has no visible
+    // signal that hints fired without Ctrl+O. A stderr line shows up
+    // next to "Ran 1 PreToolUse hook" so the user knows EE is alive.
     if (outputText && surfacedIds.length > 0 && process.env.EXPERIENCE_VISIBLE_HINT_INDICATOR !== '0') {
       try {
         const hintCount = surfacedIds.length;
