@@ -718,6 +718,35 @@ async function evolve(trigger) {
     }
   }
 
+  // Step 4d: Hard delete superseded entries.
+  // Supersede edges flag obsolete entries (a newer entry with higher conf
+  // exists), but the existing flow only marks them and relies on score
+  // penalty (-0.15) to suppress. That penalty cannot defeat high-cosine
+  // matches, so superseded noise keeps firing. Delete them aggressively:
+  // if an entry has been superseded for 24h with zero validated hits, it
+  // has had its chance and the replacement is doing the work.
+  const ONE_DAY = 24 * 60 * 60 * 1000;
+  for (const collCfg of [{ name: 'experience-selfqa' }, { name: 'experience-behavioral' }]) {
+    const entries = await getAllEntries(collCfg.name);
+    for (const entry of entries) {
+      const data = parsePayload(entry);
+      if (!data || data.superseded !== true) continue;
+      const supersededAt = data.supersededAt ? new Date(data.supersededAt).getTime() : 0;
+      const age = supersededAt ? (now - supersededAt) : (now - new Date(data.createdAt || 0).getTime());
+      if (age <= ONE_DAY) continue;
+      if (getValidatedHitCount(data) > 0) continue;
+      await deleteEntry(collCfg.name, entry.id);
+      results.archived++;
+      activityLog({
+        op: 'evolve-superseded-purge',
+        id: entry.id.slice(0, 8),
+        collection: collCfg.name,
+        ignoreCount: data.ignoreCount || 0,
+        age: Math.round(age / ONE_DAY),
+      });
+    }
+  }
+
   // Step 5: Route collection compaction
   const ROUTE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
   const ROUTE_MAX_ENTRIES = 5000;
