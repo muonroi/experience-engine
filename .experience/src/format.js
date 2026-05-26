@@ -92,6 +92,29 @@ function formatPoints(points) {
     // signal than "untested": penalties exceeded similarity, meaning the
     // candidate is actively misaligned with the query.
     if (point._probationaryT2 && displayScore < 0) continue;
+    // HARD GATE A: superseded entries must never surface.
+    // The -0.15 score penalty is too weak: a 0.80-cosine match still passes
+    // minSearchScore after penalty, so we explicitly drop these regardless
+    // of score. They will be physically deleted by evolve Step 4d.
+    if (exp.superseded === true) {
+      log('debug', 'format_point_rejected', {
+        reason: 'superseded',
+        confidence: exp.confidence,
+      });
+      continue;
+    }
+    // HARD GATE B: proven-noise entries. If an entry has been ignored ≥ 20
+    // times while never producing a single hit, it is permanent noise and
+    // must stop firing regardless of cosine similarity. ignorePenalty caps
+    // at -0.30 which cannot defeat a 0.80+ cosine, so we need a hard cut.
+    if ((exp.ignoreCount || 0) >= 20 && (exp.hitCount || 0) === 0) {
+      log('debug', 'format_point_rejected', {
+        reason: 'permanent_noise',
+        ignoreCount: exp.ignoreCount,
+        hitCount: exp.hitCount,
+      });
+      continue;
+    }
     // Instant noise suppression: if the entry has been explicitly marked
     // IRRELEVANT ≥3 times, stop surfacing it immediately — don't wait for
     // the hourly evolve cycle to mark it superseded. This closes the loop
