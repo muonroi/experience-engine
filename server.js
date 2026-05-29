@@ -451,6 +451,19 @@ async function handleIntercept(req, res) {
     framework: derived.framework,
     project_slug: derived.project_slug,
   };
+
+  // --- Deterministic static rules (file-size cap, etc.) ---
+  // These fire BEFORE embedding lookup, are not subject to ignoreCount
+  // throttling, and surface alongside vector-matched suggestions. See
+  // .experience/src/static-rules.js for rule definitions.
+  let staticHints = [];
+  try {
+    const { evaluateStaticRules } = require("./.experience/src/static-rules.js");
+    staticHints = evaluateStaticRules(body.toolName, body.toolInput || {}, meta) || [];
+  } catch (err) {
+    console.error("[handleIntercept] static-rules failed:", err && err.message ? err.message : err);
+  }
+
   // skipRoute=true lets latency-sensitive callers (e.g. CLI hook fast-path)
   // bypass the model-routing side-effect of intercept and only get suggestions.
   const options = { skipRoute: !!body.skipRoute };
@@ -462,11 +475,18 @@ async function handleIntercept(req, res) {
       surfacedIds: [],
       route: null,
     };
-  const result = resultMeta?.suggestions ?? null;
+  let result = resultMeta?.suggestions ?? null;
+  let surfacedIds = resultMeta?.surfacedIds || [];
+  if (staticHints.length) {
+    const synthIds = staticHints.map((h) => ({ collection: "static-rules", id: h.id, solution: h.line, scope: { lang: "any", framework: "any", project_slug: "any" }, hitCount: 0, ignoreCount: 0, superseded: false, static: true }));
+    surfacedIds = synthIds.concat(surfacedIds);
+    const lines = staticHints.map((h) => h.line).join("\n");
+    result = result ? (lines + "\n" + result) : lines;
+  }
   json(res, {
     suggestions: result,
     hasSuggestions: result !== null,
-    surfacedIds: resultMeta?.surfacedIds || [],
+    surfacedIds: surfacedIds,
     route: resultMeta?.route || null,
   });
 }
