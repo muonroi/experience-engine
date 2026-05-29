@@ -123,7 +123,8 @@ function preFilterComplexity(taskText, context) {
   if (architectureFiles.length >= 2) return 'premium';
 
   const lower = taskText.toLowerCase();
-  if (/security audit|breaking migration|multi.file.*architect|architect.*multi.file/.test(lower)) return 'premium';
+  if (/race\s*condition|security audit|breaking migration|multi.file.*architect|architect.*multi.file/.test(lower)) return 'premium';
+  if (/\brename\b|\bfix typo\b|\btypo\b/.test(lower)) return 'fast';
 
   return null;
 }

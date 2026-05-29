@@ -387,11 +387,11 @@ async function evolve(trigger) {
   // Tuning history (260512 recon):
   //   Cluster cosine 0.70 was too loose — heterogeneous clusters produced
   //   vague brain summaries that failed round-trip match (8/8 rejected,
-  //   matchRate ≤ 0.5). Tightened to 0.78 so clusters are semantically
-  //   coherent, while round-trip member match relaxed 0.65 → 0.60 and
-  //   accept rate relaxed 0.60 → 0.50 to make abstraction reachable.
-  //   These constants are deliberately surfaced for future re-tuning.
-  const ABSTRACT_CLUSTER_COSINE = 0.78;
+  //   matchRate ≤ 0.5). NOTE(260529): 0.78 proved TOO tight — 484 real
+  //   session-extractor T2 entries gave 0 clusters@0.78 vs 31@0.72; only
+  //   orphan abstractions cleared 0.78 (Step1c removes them) -> abstracted:0.
+  //   Lowered to 0.72; round-trip (0.60/0.50) is the real quality gate (5/6 pass).
+  const ABSTRACT_CLUSTER_COSINE = 0.72;
   const ROUND_TRIP_MEMBER_COSINE = 0.60;
   const ROUND_TRIP_ACCEPT_RATE = 0.50;
   const remainingT2 = await getAllEntries('experience-selfqa');
