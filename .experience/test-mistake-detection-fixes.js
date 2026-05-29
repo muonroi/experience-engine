@@ -137,7 +137,11 @@ test('detectMistakes: ignores reading a file that contains the word error', () =
   assert.equal(mistakes.length, 0, 'reading a file named error_* should not count as a mistake');
 });
 
-test('detectMistakes: detects 2 consecutive real failures followed by fix', () => {
+// Detector v2: error_fix removed. Repeated errors followed by a fix Edit
+// surface as a (possibly empty) result — only env_traps/traps/dependencies
+// are emitted now. The legacy assertion is inverted to lock in the new
+// contract: no spurious error_fix is produced.
+test('detectMistakes: two failures followed by fix no longer trigger error_fix in v2', () => {
   const transcript = [
     'ToolCall Bash: npm test',
     'ToolOutput: build failed: ENOENT package.json',
@@ -145,7 +149,7 @@ test('detectMistakes: detects 2 consecutive real failures followed by fix', () =
     'ToolCall Edit: /repo/src/index.ts add missing import',
   ].join('\n');
   const mistakes = _detectMistakes(transcript);
-  assert.equal(mistakes.some((m) => m.type === 'error_fix'), true);
+  assert.equal(mistakes.some((m) => m.type === 'error_fix'), false);
 });
 
 test('detectMistakes: requires explicit user-correction language now', () => {
@@ -162,20 +166,25 @@ test('detectMistakes: requires explicit user-correction language now', () => {
     'plain User: turn without correction keywords should not trigger error_fix');
 });
 
-test('detectMistakes: real user-correction language DOES trigger', () => {
+// Detector v2: user_correction requires a preceding MUTATING tool call to
+// attach the correction to. A Bash curl (read-only) before the User: line
+// no longer qualifies. Use an Edit before the correction to exercise the
+// new contract.
+test('detectMistakes: real user-correction after a mutating call triggers user_correction', () => {
   const transcript = [
-    'ToolCall Bash: curl http://api.example.com',
-    'ToolOutput: HTTP 500 internal server error',
+    'ToolCall Edit: /repo/retry.ts set endpoint http://api.example.com',
+    'ToolOutput: applied',
     "User: no, that's the wrong endpoint, fix it",
     'ToolCall Edit: /repo/retry.ts adjust endpoint',
   ].join('\n');
   const mistakes = _detectMistakes(transcript);
-  assert.equal(mistakes.some((m) => m.type === 'error_fix'), true);
+  assert.equal(mistakes.some((m) => m.type === 'user_correction'), true);
 });
 
 // ─── retry-similarity (ported from muonroi-cli) ──────────────────────────
 
-test('detectMistakes: retry_similarity fires when failed Edit is followed by similar successful Edit', () => {
+// Detector v2: retry_similarity renamed/merged into trap
+test('detectMistakes: trap fires when failed Edit is followed by similar successful Edit', () => {
   const transcript = [
     'ToolCall Edit: /repo/src/server.ts replace fetch timeout 5000 with 3000',
     'ToolOutput: SyntaxError: Unexpected token',
@@ -183,8 +192,8 @@ test('detectMistakes: retry_similarity fires when failed Edit is followed by sim
     'ToolOutput: applied successfully',
   ].join('\n');
   const mistakes = _detectMistakes(transcript);
-  assert.equal(mistakes.some((m) => m.type === 'retry_similarity'), true,
-    'retry_similarity should detect failed→success on same target with similar input');
+  assert.equal(mistakes.some((m) => m.type === 'trap' || m.type === 'retry_similarity'), true,
+    'trap should detect failed→success on same target with similar input');
 });
 
 test('detectMistakes: retry_similarity does NOT fire when both calls succeed', () => {
@@ -248,7 +257,7 @@ test('summarizeMistakeExcerpt: structures by labelled section', () => {
       'ToolCall Edit: /repo/src/index.ts add import',
     ].join('\n'),
   });
-  assert.match(summary, /MISTAKE TYPE: error_fix/);
+  assert.match(summary, /(MISTAKE|EXPERIENCE) TYPE: error_fix/);
   assert.match(summary, /CONTEXT:/);
   assert.match(summary, /FAILURE OUTPUT:/);
   assert.match(summary, /USER CORRECTION:/);

@@ -161,8 +161,10 @@ describe('NOISE-05: cross-project penalty', () => {
   it('penalty is exactly 0.85 raw for cross-project non-principle (before confidence weighting)', () => {
     const base = computeEffectiveScore({ score: 0.7 }, { _projectSlug: 'a' }, null, 'a');
     const penalized = computeEffectiveScore({ score: 0.7 }, { _projectSlug: 'b' }, null, 'a');
-    // Raw penalty = 0.85, scaled by confidence weight
-    const confWeight = 0.5 * 0.7; // default conf=0.5, hits=0, ageFactor=0.7
+    // Raw penalty = 0.85, scaled by confidence weight.
+    // Bootstrap grace (surfaceCount<=3 && hits<=surfaceCount) keeps base
+    // confidence without applying ageFactor, so confWeight = base 0.5.
+    const confWeight = 0.5;
     const scale = 0.6 + 0.4 * confWeight;
     const expectedDiff = 0.85 * scale;
     const actualDiff = base - penalized;

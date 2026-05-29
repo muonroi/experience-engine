@@ -61,24 +61,27 @@ describe('CTX-01: detectContext', () => {
 // --- CTX-02: buildQuery enrichment ---
 
 describe('CTX-02: buildQuery enrichment', () => {
-  it('prepends [TypeScript] for Edit with .ts file_path', () => {
+  // buildQuery was rewritten to use buildSemanticQuery (intent-based) — the
+  // language now appears mid-string (e.g. "[tool:Edit] modifying code TypeScript in foo.ts ...")
+  // rather than as a leading [Lang] tag. Tests check inclusion instead of prefix.
+  it('includes TypeScript for Edit with .ts file_path', () => {
     const result = buildQuery('Edit', { file_path: 'foo.ts', new_string: 'code' });
-    assert.ok(result.startsWith('[TypeScript]'), `expected [TypeScript] prefix, got: ${result}`);
+    assert.ok(result.includes('TypeScript'), `expected TypeScript in query, got: ${result}`);
   });
 
-  it('prepends [C#] for Edit with .cs file_path', () => {
+  it('includes C# for Edit with .cs file_path', () => {
     const result = buildQuery('Edit', { file_path: 'bar.cs', new_string: 'code' });
-    assert.ok(result.startsWith('[C#]'), `expected [C#] prefix, got: ${result}`);
+    assert.ok(result.includes('C#'), `expected C# in query, got: ${result}`);
   });
 
-  it('no prefix for Bash command (no file_path)', () => {
+  it('no language token for Bash command (no file_path)', () => {
     const result = buildQuery('Bash', { command: 'npm test' });
-    assert.ok(!result.startsWith('['), `expected no prefix, got: ${result}`);
+    assert.ok(!/(TypeScript|C#|Python|JavaScript|Java|Go|Rust)/.test(result), `expected no language token, got: ${result}`);
   });
 
-  it('prepends [Python] for Write with .py path', () => {
+  it('includes Python for Write with .py path', () => {
     const result = buildQuery('Write', { path: 'test.py', content: 'x' });
-    assert.ok(result.startsWith('[Python]'), `expected [Python] prefix, got: ${result}`);
+    assert.ok(result.includes('Python'), `expected Python in query, got: ${result}`);
   });
 
   it('result length does not exceed QUERY_MAX_CHARS (500)', () => {
@@ -87,10 +90,10 @@ describe('CTX-02: buildQuery enrichment', () => {
     assert.ok(result.length <= 500, `expected <= 500, got ${result.length}`);
   });
 
-  it('context prefix preserved even with long content', () => {
+  it('language enrichment preserved even with long content', () => {
     const longContent = 'x'.repeat(490);
     const result = buildQuery('Edit', { file_path: 'foo.ts', new_string: longContent });
-    assert.ok(result.startsWith('[TypeScript]'), `expected prefix preserved, got: ${result.slice(0, 20)}`);
+    assert.ok(result.includes('TypeScript'), `expected TypeScript preserved, got: ${result.slice(0, 80)}`);
   });
 });
 

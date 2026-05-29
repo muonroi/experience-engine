@@ -96,10 +96,11 @@ describe('NOISE-02: recency decay', () => {
 // --- NOISE-03: Confidence aging ---
 
 describe('NOISE-03: confidence aging', () => {
-  it('new experience (hits=0) gets ~70% of base confidence', () => {
-    const result = computeEffectiveConfidence({ confidence: 0.5, hitCount: 0 });
-    assert.ok(Math.abs(result - 0.35) < 0.01,
-      `expected ~0.35, got ${result.toFixed(4)}`);
+  it('new experience (hits=0, surface=0) keeps base via bootstrap grace', () => {
+    // Bootstrap grace: surfaceCount<=3 && hits<=surfaceCount -> base (no ageFactor degradation)
+    const result = computeEffectiveConfidence({ confidence: 0.5, hitCount: 0, surfaceCount: 0 });
+    assert.ok(Math.abs(result - 0.5) < 0.01,
+      `expected ~0.5 (bootstrap grace), got ${result.toFixed(4)}`);
   });
 
   it('after 5 hits, effective confidence equals base', () => {
@@ -108,10 +109,10 @@ describe('NOISE-03: confidence aging', () => {
       `expected ~0.50, got ${result.toFixed(4)}`);
   });
 
-  it('high-confidence experience at 0 hits gets ~0.56', () => {
-    const result = computeEffectiveConfidence({ confidence: 0.8, hitCount: 0 });
-    assert.ok(Math.abs(result - 0.56) < 0.01,
-      `expected ~0.56, got ${result.toFixed(4)}`);
+  it('high-confidence experience at 0 hits stays at base via bootstrap grace', () => {
+    const result = computeEffectiveConfidence({ confidence: 0.8, hitCount: 0, surfaceCount: 0 });
+    assert.ok(Math.abs(result - 0.8) < 0.01,
+      `expected ~0.8 (bootstrap grace), got ${result.toFixed(4)}`);
   });
 
   it('ageFactor capped at 1.0 for many hits', () => {
@@ -120,10 +121,17 @@ describe('NOISE-03: confidence aging', () => {
       `expected capped at 0.50, got ${result.toFixed(4)}`);
   });
 
-  it('defaults to confidence=0.5 when missing', () => {
-    const result = computeEffectiveConfidence({});
+  it('old un-validated entry (surfaceCount>3, hits=0) gets ageFactor 0.7', () => {
+    // Past bootstrap grace: ageFactor = min(1.0, 0.7 + hits*0.06) -> 0.7 for hits=0
+    const result = computeEffectiveConfidence({ confidence: 0.5, hitCount: 0, surfaceCount: 5 });
     assert.ok(Math.abs(result - 0.35) < 0.01,
-      `expected ~0.35 (default conf 0.5 * 0.7), got ${result.toFixed(4)}`);
+      `expected ~0.35 (0.5 * 0.7), got ${result.toFixed(4)}`);
+  });
+
+  it('defaults to confidence=0.5 when missing (bootstrap grace applies)', () => {
+    const result = computeEffectiveConfidence({});
+    assert.ok(Math.abs(result - 0.5) < 0.01,
+      `expected ~0.5 (default conf, bootstrap grace), got ${result.toFixed(4)}`);
   });
 });
 
@@ -236,7 +244,8 @@ describe('formatPoints with effective confidence', () => {
     // which is below MIN_CONFIDENCE (0.42), so it should be filtered out even if
     // raw cosine score is above MIN_CONFIDENCE
     const points = [
-      mkPoint(0.50, { hitCount: 0, confidence: 0.5, solution: 'test solution' }),
+      // surfaceCount=5 puts the entry past bootstrap grace -> ageFactor 0.7 applies
+      mkPoint(0.50, { hitCount: 0, confidence: 0.5, surfaceCount: 5, solution: 'test solution' }),
     ];
     const lines = formatPoints(points);
     // effectiveConfidence = 0.5 * 0.7 = 0.35 < 0.42 => filtered out
