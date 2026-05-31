@@ -296,6 +296,10 @@ function shouldPromoteBehavioralToPrinciple(data, now = Date.now()) {
 
 async function evolve(trigger) {
   const results = { promoted: 0, abstracted: 0, demoted: 0, archived: 0 };
+  // Entries promoted earlier in THIS run must not be demoted in the same pass.
+  // Without this guard the Step 1c orphan-repair -> Step 3 ignore-demote loop
+  // ping-pongs the same entries (promoted~=demoted churn every cron cycle).
+  const promotedThisRun = new Set();
 
   // Step 1: Promote T2 -> T1 (per D-04)
   const t2Entries = await getAllEntries('experience-selfqa');
@@ -329,6 +333,7 @@ async function evolve(trigger) {
     await upsertEntry('experience-behavioral', entry.id, vector, data);
     await deleteEntry('experience-selfqa', entry.id);
     results.promoted++;
+    promotedThisRun.add(entry.id);
   }
 
   // Step 1b: Promote probationary principles T1 -> T0
@@ -356,6 +361,7 @@ async function evolve(trigger) {
     await upsertEntry('experience-principles', entry.id, vector, data);
     await deleteEntry('experience-behavioral', entry.id);
     results.promoted++;
+    promotedThisRun.add(entry.id);
   }
 
   // Step 1c: Repair orphaned evolution-abstraction entries in selfqa.
@@ -370,6 +376,11 @@ async function evolve(trigger) {
     const data = parsePayload(entry);
     if (!data || data.createdFrom !== 'evolution-abstraction') continue;
     if ((data.confidence || 0) >= EVOLUTION_ABS_CONFIDENCE_FLOOR) continue;
+    // Do NOT repair entries already demote-eligible (ignored >=3 or contradicted).
+    // Repairing them only for Step 3 to demote them again the same run created an
+    // infinite promote<->demote flap (87 orphans ping-ponged every cron cycle).
+    // Leave them in selfqa for Step 3b auto-supersede to retire.
+    if ((data.ignoreCount || 0) >= 3 || data.contradiction) continue;
     data.confidence = EVOLUTION_ABS_CONFIDENCE_FLOOR;
     data.tier = 1;
     data.repairedAt = new Date().toISOString();
@@ -379,6 +390,7 @@ async function evolve(trigger) {
     await upsertEntry('experience-behavioral', entry.id, vector, data);
     await deleteEntry('experience-selfqa', entry.id);
     results.promoted++;
+    promotedThisRun.add(entry.id);
     activityLog({ op: 'evolve-repair-abs-orphan', id: entry.id.slice(0, 8) });
   }
 
@@ -466,6 +478,7 @@ async function evolve(trigger) {
   for (const entry of t0Entries) {
     const data = parsePayload(entry);
     if (!data) continue;
+    if (promotedThisRun.has(entry.id)) continue;
     const shouldDemote = (data.ignoreCount || 0) >= 5
       || (data.contradiction && (data.contradictionCount || 1) >= 2);
     if (shouldDemote) {
@@ -488,6 +501,7 @@ async function evolve(trigger) {
   for (const entry of t1Entries) {
     const data = parsePayload(entry);
     if (!data) continue;
+    if (promotedThisRun.has(entry.id)) continue;
     const shouldDemote = data.contradiction
       || (data.ignoreCount || 0) >= 3
       || computeEffectiveConfidence(data) < getMinConfidence();
@@ -532,6 +546,7 @@ async function evolve(trigger) {
     for (const entry of entries) {
       const data = parsePayload(entry);
       if (!data || data.superseded) continue;
+      if (promotedThisRun.has(entry.id)) continue;
       const ignores = data.ignoreCount || 0;
       const hits = data.hitCount || 0;
       const total = ignores + hits;
@@ -572,6 +587,7 @@ async function evolve(trigger) {
     for (const entry of entries) {
       const data = parsePayload(entry);
       if (!data || data.superseded) continue;
+      if (promotedThisRun.has(entry.id)) continue;
       const reasonCounts = data.noiseReasonCounts || {};
       let trippedReason = null;
       let trippedCount = 0;
@@ -607,6 +623,7 @@ async function evolve(trigger) {
     for (const entry of entries) {
       const data = parsePayload(entry);
       if (!data || data.superseded) continue;
+      if (promotedThisRun.has(entry.id)) continue;
       const history = Array.isArray(data.noiseContextHistory) ? data.noiseContextHistory : [];
       if (history.length < NARROW_MIN_VOTES) continue;
       const langVotes = {};
