@@ -479,7 +479,13 @@ async function evolve(trigger) {
     const data = parsePayload(entry);
     if (!data) continue;
     if (promotedThisRun.has(entry.id)) continue;
-    const shouldDemote = (data.ignoreCount || 0) >= 5
+    // Manually-seeded policy/principles (createdFrom 'seed-*') are authoritative
+    // org ground truth, not learned heuristics on probation. Passive ignores must
+    // NOT auto-demote them: the 'report followed' seed-policy rule was demoted +
+    // superseded on ignoreCount=9 — killed by the very behavior it asks agents for.
+    // Only an explicit contradiction signal may demote a seed.
+    const isManualSeed = (data.createdFrom || '').startsWith('seed-');
+    const shouldDemote = (!isManualSeed && (data.ignoreCount || 0) >= 5)
       || (data.contradiction && (data.contradictionCount || 1) >= 2);
     if (shouldDemote) {
       data.tier = 2;
@@ -502,9 +508,10 @@ async function evolve(trigger) {
     const data = parsePayload(entry);
     if (!data) continue;
     if (promotedThisRun.has(entry.id)) continue;
+    const isManualSeed = (data.createdFrom || '').startsWith('seed-');
     const shouldDemote = data.contradiction
-      || (data.ignoreCount || 0) >= 3
-      || computeEffectiveConfidence(data) < getMinConfidence();
+      || (!isManualSeed && (data.ignoreCount || 0) >= 3)
+      || (!isManualSeed && computeEffectiveConfidence(data) < getMinConfidence());
     if (shouldDemote) {
       data.tier = 2;
       data.confidence = Math.max(0.1, (data.confidence || 0.5) - 0.2);
@@ -547,6 +554,8 @@ async function evolve(trigger) {
       const data = parsePayload(entry);
       if (!data || data.superseded) continue;
       if (promotedThisRun.has(entry.id)) continue;
+      // seed-* entries are authoritative; exempt from passive ignore-ratio supersede.
+      if ((data.createdFrom || '').startsWith('seed-')) continue;
       const ignores = data.ignoreCount || 0;
       const hits = data.hitCount || 0;
       const total = ignores + hits;
