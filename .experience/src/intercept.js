@@ -197,6 +197,28 @@ function isPromptOnlySuggestionState(state) {
   return state.sourceHook === 'UserPromptSubmit' || state.tool === 'UserPrompt';
 }
 
+// Server-side stash: persist surfaced hint ids into the session pending track
+// at intercept time, keyed by sourceSession via getSessionTrackFile. This lets
+// PostToolUse reconciliation (reconcilePendingHints) assess them even when a
+// remote client (e.g. codex-windows) does not echo surfacedIds back at posttool
+// time, which was leaving 100% of posttool calls with surfacedCount:0 and
+// emitting zero FOLLOWED/IGNORED/IRRELEVANT verdicts (Gate 4 starvation).
+function stashSurfacedHints(surfacedPoints, meta = {}) {
+  const incoming = Array.isArray(surfacedPoints) ? surfacedPoints : [];
+  if (incoming.length === 0) return { stashed: 0 };
+  const track = _session.readSessionTrack(meta);
+  if (!track.pending || typeof track.pending !== "object" || Array.isArray(track.pending)) track.pending = {};
+  const nowIso = new Date().toISOString();
+  let stashed = 0;
+  for (const surface of incoming) {
+    if (!surface?.id || !surface?.collection) continue;
+    const key = `${surface.collection}:${surface.id}`;
+    if (!track.pending[key]) { track.pending[key] = { ...surface, surfacedAt: nowIso, noTouchCount: 0 }; stashed++; }
+  }
+  _session.writeSessionTrack(track, meta);
+  return { stashed };
+}
+
 async function reconcilePendingHints(surfacedPoints, toolName, toolInput, meta = {}) {
   const track = _session.readSessionTrack(meta);
   if (!track.pending || typeof track.pending !== 'object' || Array.isArray(track.pending)) track.pending = {};
@@ -461,6 +483,7 @@ module.exports = {
   promptStateSurfacedIds,
   isPromptOnlySuggestionState,
   reconcilePendingHints,
+  stashSurfacedHints,
   reconcileStalePromptSuggestions,
   extractFromSession,
 };

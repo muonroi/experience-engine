@@ -483,6 +483,16 @@ async function handleIntercept(req, res) {
     const lines = staticHints.map((h) => h.line).join("\n");
     result = result ? (lines + "\n" + result) : lines;
   }
+  // Server-side stash of surfaced hints so PostToolUse can reconcile them even
+  // when the remote client does not echo surfacedIds back (codex-windows path).
+  try {
+    if (surfacedIds.length && meta.sourceSession) {
+      const stashCore = loadExperienceCore();
+      if (typeof stashCore._stashSurfacedHints === "function") stashCore._stashSurfacedHints(surfacedIds, meta);
+    }
+  } catch (stashErr) {
+    slog("error", "intercept stash failed", { msg: stashErr?.message, session: meta.sourceSession });
+  }
   json(res, {
     suggestions: result,
     hasSuggestions: result !== null,
