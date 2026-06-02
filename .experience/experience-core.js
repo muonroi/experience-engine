@@ -455,6 +455,7 @@ module.exports = {
   _reconcilePendingHints: _intercept.reconcilePendingHints,
   _reconcileStalePromptSuggestions: _intercept.reconcileStalePromptSuggestions,
   _assessHintUsage: _intercept.assessHintUsage,
+  _stashSurfacedHints: _intercept.stashSurfacedHints,
   _detectTranscriptDomain: _context.detectTranscriptDomain,
   _detectNaturalLang: _context.detectNaturalLang,
   _callBrainWithFallback: callBrainWithFallback,
