@@ -155,14 +155,23 @@ const INTENT_EXTRACTORS = {
     const kw = [];
     if (/\bgit\s+(commit|push|pull|merge|rebase|reset)/i.test(content)) kw.push('git operations');
     if (/\bgit\s+checkout\b|\bgit\s+switch\b/i.test(content)) kw.push('branch management');
-    if (/\bnpm\s+(install|run|build|test)|\bbun\s+(install|run|test)|\byarn\b/i.test(content)) kw.push('package management');
+    const pkgMatch = content.match(/\b(npm|bun|yarn|pnpm)\s+(?:run\s+)?([\w:-]+)/i);
+    if (pkgMatch) {
+      const sub = pkgMatch[2].toLowerCase();
+      if (sub === "test") kw.push("running tests");
+      else if (sub === "build" || sub === "compile") kw.push("building project compilation");
+      else if (sub === "install" || sub === "ci" || sub === "i" || sub === "add") kw.push("installing dependencies");
+      else if (sub === "lint" || sub === "typecheck" || sub === "tsc") kw.push("linting type checking");
+      else kw.push("running script " + sub);
+    }
     if (/\bdocker\b/i.test(content)) kw.push('container operations');
     if (/\bdotnet\s+(build|restore|test|publish|run)/i.test(content)) kw.push('dotnet CLI');
     if (/\bkubectl\b|\bhelm\b/i.test(content)) kw.push('Kubernetes operations');
     if (/\bssh\b/i.test(content)) kw.push('remote access');
     if (/\bcurl\b|\bwget\b/i.test(content)) kw.push('HTTP client');
     if (/\bsed\b|\bawk\b|\bgrep\b/i.test(content)) kw.push('text processing');
-    if (/\bmkdir\b|\bcp\b|\bmv\b|\brm\b/i.test(content)) kw.push('file system operations');
+    if (/\bmkdir\b|\bcp\b|\bmv\b|\brm\b/i.test(content)) kw.push("file system operations");
+    if (/\b(rm|cp|mv)\b/i.test(content) && /-\w*f\b|--force\b/i.test(content)) kw.push("force flag handling missing files");
     if (/\bsystemctl\b|\bservice\b/i.test(content)) kw.push('service management');
     // Test runners
     if (/\bvitest\b|\bjest\b|\bmocha\b|\bpytest\b/i.test(content)) kw.push('running tests');
