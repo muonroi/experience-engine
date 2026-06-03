@@ -122,7 +122,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
         should: [
           { is_empty: { key: 'scope_lang' } },
           { key: 'scope_lang', match: { value: 'all' } },
-          { key: 'scope_lang', match: { value: callerLang } },
+          ...(((lang) => { const fam = ["javascript", "typescript", "ts", "tsx", "js", "jsx", "node", "nodejs"]; const vals = fam.includes(lang) ? ["javascript", "typescript"] : [lang]; return [...new Set(vals)].map((v) => ({ key: "scope_lang", match: { value: v } })); })(callerLang)),
         ],
       });
     }
@@ -200,6 +200,8 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
       // available (Bash/UserPromptSubmit hooks). Direct string compare —
       // both sides already aliased.
       if (!filePath && callerLangNorm) {
+        const JS_FAM = new Set(["javascript", "typescript"]);
+        if (JS_FAM.has(sl) && JS_FAM.has(callerLangNorm)) return true;
         return sl === callerLangNorm;
       }
       if (sl === 'c#') return CS_FAMILY.has(fileExt);
