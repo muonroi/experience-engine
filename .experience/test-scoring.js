@@ -121,9 +121,16 @@ describe('NOISE-03: confidence aging', () => {
       `expected capped at 0.50, got ${result.toFixed(4)}`);
   });
 
-  it('old un-validated entry (surfaceCount>3, hits=0) gets ageFactor 0.7', () => {
-    // Past bootstrap grace: ageFactor = min(1.0, 0.7 + hits*0.06) -> 0.7 for hits=0
+  it('clean un-validated entry (surfaceCount>3, hits=0, no negative signal) keeps base', () => {
+    // Clean-but-unvalidated grace: absence of a FOLLOWED verdict is not negative
+    // evidence, so a never-flagged hitless entry keeps base instead of decaying.
     const result = computeEffectiveConfidence({ confidence: 0.5, hitCount: 0, surfaceCount: 5 });
+    assert.ok(Math.abs(result - 0.5) < 0.01,
+      `expected ~0.5 (clean-hitless grace), got ${result.toFixed(4)}`);
+  });
+
+  it('negatively-signalled un-validated entry (surfaceCount>3, hits=0, ignoreCount>0) still decays via ageFactor 0.7', () => {
+    const result = computeEffectiveConfidence({ confidence: 0.5, hitCount: 0, surfaceCount: 5, ignoreCount: 1 });
     assert.ok(Math.abs(result - 0.35) < 0.01,
       `expected ~0.35 (0.5 * 0.7), got ${result.toFixed(4)}`);
   });
@@ -240,15 +247,14 @@ describe('rerankByQuality', () => {
 
 describe('formatPoints with effective confidence', () => {
   it('filters by effective confidence, not raw cosine score', () => {
-    // A new experience (hitCount=0) with confidence=0.5 has effectiveConfidence=0.35
-    // which is below MIN_CONFIDENCE (0.42), so it should be filtered out even if
-    // raw cosine score is above MIN_CONFIDENCE
+    // A negatively-signalled entry (ignoreCount>0) past bootstrap grace decays via
+    // ageFactor 0.7 -> 0.35, below MIN_CONFIDENCE, so it is filtered out even though
+    // raw cosine score is high. (A clean hitless entry keeps base and would pass.)
     const points = [
-      // surfaceCount=5 puts the entry past bootstrap grace -> ageFactor 0.7 applies
-      mkPoint(0.50, { hitCount: 0, confidence: 0.5, surfaceCount: 5, solution: 'test solution' }),
+      mkPoint(0.50, { hitCount: 0, confidence: 0.5, surfaceCount: 5, ignoreCount: 1, solution: 'test solution' }),
     ];
     const lines = formatPoints(points);
-    // effectiveConfidence = 0.5 * 0.7 = 0.35 < 0.42 => filtered out
+    // effectiveConfidence = 0.5 * 0.7 = 0.35 < MIN_CONFIDENCE => filtered out
     assert.strictEqual(lines.length, 0, 'should filter out low effective confidence');
   });
 
