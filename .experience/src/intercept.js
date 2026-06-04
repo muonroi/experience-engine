@@ -20,7 +20,7 @@ const _logger = require('./logger');
 const COLLECTIONS = [
   { name: 'experience-principles', topK: 2, budgetChars: 800 },
   { name: 'experience-behavioral', topK: 3, budgetChars: 1200 },
-  { name: 'experience-selfqa',     topK: 2, budgetChars: 1000 },
+  { name: 'experience-selfqa',     topK: 10, budgetChars: 1000 },
 ];
 
 const ROUTES_COLLECTION = 'experience-routes';
