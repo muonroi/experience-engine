@@ -40,6 +40,16 @@ function computeEffectiveConfidence(data) {
   // -> ageFactor 0.7 -> effConf drops below minConfidence -> never surfaces.
   const surfaceCount = data.surfaceCount || 0;
   if (surfaceCount <= 3 && hits <= surfaceCount) return Math.max(base, 0.50 + Math.min(0.20, hits * 0.05));
+  // Clean-but-unvalidated grace: a hitless entry that has never drawn a
+  // negative signal (no ignores / irrelevant / noise reports) is starved,
+  // not bad. Absence of a FOLLOWED verdict usually means the agent silently
+  // proceeded, not that the hint was wrong; decaying it below base kills it
+  // during verdict-pipeline warm-up before it gets a fair trial. Negatively-
+  // signalled entries still decay via the ageFactor path below. Zombies are
+  // retired by evolve Step 4 (90d age + hitCount=0 archive).
+  const negativeSignal = (data.ignoreCount || 0) + (data.irrelevantCount || 0)
+    + Object.values(data.noiseReasonCounts || {}).reduce((a, c) => a + (Number(c) || 0), 0);
+  if (hits === 0 && negativeSignal === 0) return base;
   const ageFactor = Math.min(1.0, 0.7 + (hits * 0.06));
   return base * ageFactor;
 }
