@@ -325,8 +325,10 @@ test('isProbationaryT2Candidate identifies fresh high-score T2 entries', async (
   delete require.cache[require.resolve(CORE_PATH)];
   const { _isProbationaryT2Candidate: isProbationaryT2Candidate } = require(CORE_PATH);
 
-  // Past bootstrap grace (surfaceCount > 3) so ageFactor 0.7 drops effective
-  // confidence below minConfidence -> entry IS a probationary candidate now.
+  // Sub-threshold base confidence (0.4) + clean (no negative signal) + past
+  // bootstrap grace: effConf stays at base 0.4 < minConfidence, so the entry
+  // surfaces via the probationary path. (Clean-hitless grace returns base, which
+  // here is already below the gate, so probation is still required.)
   const freshT2 = {
     id: 'fresh-t2',
     score: 0.92,
@@ -337,7 +339,7 @@ test('isProbationaryT2Candidate identifies fresh high-score T2 entries', async (
         trigger: 'test',
         question: 'test q',
         solution: 'test solution',
-        confidence: 0.5,
+        confidence: 0.4,
         hitCount: 0,
         validatedCount: 0,
         surfaceCount: 4,
