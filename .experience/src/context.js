@@ -565,6 +565,12 @@ function detectRecipes(events, lines) {
 function detectTraps(events, lines) {
   const traps = [];
   const MAX_TRAPS = 5;
+  // Session-level dedup: a long session often hits the SAME target with the
+  // SAME failed approach multiple times (each fail→succeed transition would
+  // otherwise emit a near-identical trap, differing only in "N turns apart").
+  // Collapse to one per (target, failed-approach signature). Real-session
+  // evidence (TEP, 2026-06-05): one target produced 6 duplicate traps.
+  const seenTraps = new Set();
 
   for (let i = 1; i < events.length; i++) {
     const cur = events[i];
@@ -613,7 +619,11 @@ function detectTraps(events, lines) {
 
       const window = lines.slice(Math.max(0, prior.lineIdx - 1), Math.min(lines.length, cur.lineIdx + 2));
       const trapFile = extractEditTarget(cur.summary);
-    if (traps.length >= MAX_TRAPS) break;
+      if (traps.length >= MAX_TRAPS) break;
+      // Skip a trap whose (target, failed-approach) was already captured this session.
+      const dedupKey = `${trapFile || curTool}|${String(prior.summary || '').replace(/\s+/g, ' ').trim().slice(0, 80)}`.toLowerCase();
+      if (seenTraps.has(dedupKey)) break;
+      seenTraps.add(dedupKey);
       traps.push({
         type: 'trap',
         context: `${cur.toolName} on same target: failed then succeeded (${i - j} turns apart)`,
