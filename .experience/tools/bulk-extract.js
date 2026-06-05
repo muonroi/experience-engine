@@ -356,6 +356,34 @@ function enrichMeta(projectPath, transcript) {
   return out;
 }
 
+// Per-experience project_slug. A single session can span MULTIPLE repos — e.g.
+// work under a container dir (D:\sources\TEP) that holds ~25 separate
+// microservice git repos. Session-level enrichMeta then resolves slug=NONE
+// (the container has no .git), so every experience stores unscoped and later
+// surfaces as cross-project noise. Resolve each experience's slug from the repo
+// of its OWN touched files — client-side, where the .git dirs exist (the server
+// receives only the resolved string; it cannot read these local paths).
+function deriveExperienceSlug(exp) {
+  try {
+    const enrich = require(path.join(expDir, 'source-meta-enrich.js'));
+    const candidates = [];
+    const ev = exp && exp.evidence;
+    if (ev && Array.isArray(ev.files_touched)) candidates.push(...ev.files_touched);
+    if (Array.isArray(exp && exp.files)) candidates.push(...exp.files);
+    if (exp && typeof exp.trigger === 'string') candidates.push(exp.trigger);
+    if (exp && typeof exp.affected === 'string') candidates.push(exp.affected);
+    for (const f of candidates) {
+      if (!f || typeof f !== 'string') continue;
+      // detectProjectSlug walks up from a directory looking for .git; pass the
+      // file's containing dir (or the path itself when it has no separator).
+      const dir = /[\\/]/.test(f) ? path.dirname(f) : f;
+      const slug = enrich.detectProjectSlug(dir);
+      if (slug) return slug;
+    }
+  } catch { /* best-effort — fall back to session-level slug on the server */ }
+  return null;
+}
+
 function shortLabel(session) {
   const base = path.basename(session.file).slice(0, 12);
   const proj = session.projectPath
@@ -441,6 +469,12 @@ async function main() {
       // on large sessions (24 exp from 1.4MB vs 1 exp from 18KB compact).
       // Compact is only used when sending to remote API.
       const experiences = detectExperience(rawTranscript);
+      // Annotate each experience with its own repo slug (multi-repo sessions);
+      // the server prefers exp._projectSlug over the session-level slug.
+      for (const e of experiences) {
+        const s = deriveExperienceSlug(e);
+        if (s) e._projectSlug = s;
+      }
       totalExperiences += experiences.length;
 
       const byType = {};
