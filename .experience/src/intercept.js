@@ -419,7 +419,10 @@ async function extractFromSession(transcript, projectPath, meta = {}) {
       continue;
     }
     try {
-      const projectSlug = meta?.project_slug || _utils.extractProjectSlug(projectPath);
+      // Per-experience slug (client-resolved from this experience's own touched
+      // files) wins over the session-level slug, so a session spanning multiple
+      // repos stores each experience scoped to its actual repo instead of NONE.
+      const projectSlug = exp._projectSlug || meta?.project_slug || _utils.extractProjectSlug(projectPath);
       _log('calling extractQA', { i, type: exp.type, lang: meta?.lang, fw: meta?.framework, slug: projectSlug, excerptLen: exp?.excerpt?.length });
       const qa = await _brainllm.extractQA(exp, {
         framework: meta?.framework || null,
