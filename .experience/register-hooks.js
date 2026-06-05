@@ -13,7 +13,7 @@
  *   EXP_STOP                absolute path to stop-extractor.js
  *
  * Env vars (optional):
- *   EXP_SELECTED_AGENTS     csv subset: claude,gemini,codex,opencode
+ *   EXP_SELECTED_AGENTS     csv subset: claude,gemini,codex,opencode,antigravity
  *                           empty → all agents
  *   EXP_REGISTER_MODE       'full' (default) — patch any agent in selected list
  *                           'existing-only' — only patch agents whose settings
@@ -164,6 +164,34 @@ const AGENTS = [
       cfg.hooks.after_response = cfg.hooks.after_response || [];
       if (!cfg.hooks.after_response.some(h => h.command?.includes('stop-extractor'))) {
         cfg.hooks.after_response.push({ command:`node "${stop}"`, timeout:90 });
+      }
+    }
+  },
+  {
+    key: 'antigravity',
+    name: 'Google Antigravity',
+    file: path.join(home, '.antigravity', 'hooks.json'),
+    patch(cfg) {
+      if (!cfg.hooks) cfg.hooks = {};
+      // PreToolUse hook for Edit/Write/Bash actions
+      cfg.hooks.PreToolUse = cfg.hooks.PreToolUse || [];
+      if (!cfg.hooks.PreToolUse.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor')))) {
+        cfg.hooks.PreToolUse.push({ matcher:'Edit|Write|Bash', hooks:[{ type:'command', command:`node "${interceptor}"`, timeout:5 }] });
+      }
+      // PostToolUse hook for feedback collection
+      cfg.hooks.PostToolUse = cfg.hooks.PostToolUse || [];
+      if (!cfg.hooks.PostToolUse.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor-post')))) {
+        cfg.hooks.PostToolUse.push({ matcher:'Edit|Write|Bash', hooks:[{ type:'command', command:`node "${interceptorPost}"`, timeout:5 }] });
+      }
+      // UserPromptSubmit hook for prompt-level guidance
+      cfg.hooks.UserPromptSubmit = cfg.hooks.UserPromptSubmit || [];
+      if (!cfg.hooks.UserPromptSubmit.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor-prompt')))) {
+        cfg.hooks.UserPromptSubmit.push({ hooks:[{ type:'command', command:`node "${interceptorPrompt}"`, timeout:5 }] });
+      }
+      // Stop hook for session extraction
+      cfg.hooks.Stop = cfg.hooks.Stop || [];
+      if (!cfg.hooks.Stop.some(h => (h.hooks||[]).some(e => e.command?.includes('stop-extractor')))) {
+        cfg.hooks.Stop.push({ hooks:[{ type:'command', command:`node "${stop}"`, timeout:90 }] });
       }
     }
   }

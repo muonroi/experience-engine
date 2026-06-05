@@ -97,6 +97,7 @@
     "codex",
     "claude",
     "gemini",
+    "antigravity",
     "qdrant"
   ]
 }

@@ -10,7 +10,7 @@
   <img alt="Node.js 20+" src="https://img.shields.io/badge/node-20%2B-green">
   <img alt="Zero Dependencies" src="https://img.shields.io/badge/runtime%20deps-zero-brightgreen">
   <img alt="Works Offline" src="https://img.shields.io/badge/works-offline-blue">
-  <img alt="Agents" src="https://img.shields.io/badge/agents-Claude%20%7C%20Codex%20%7C%20Gemini%20%7C%20OpenCode-purple">
+  <img alt="Agents" src="https://img.shields.io/badge/agents-Claude%20%7C%20Codex%20%7C%20Gemini%20%7C%20OpenCode%20%7C%20Antigravity-purple">
   <img alt="npm" src="https://img.shields.io/npm/v/@muonroi/experience-engine">
 </p>
 
