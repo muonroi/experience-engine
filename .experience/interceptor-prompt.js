@@ -18,6 +18,23 @@ const os = require('os');
 
 const EXP_DIR = path.join(os.homedir(), '.experience');
 const DEBUG_LOG = process.env.EXPERIENCE_HOOK_DEBUG_LOG || path.join(os.homedir(), '.codex', 'log', 'experience-hook-debug.jsonl');
+
+// Explicit runtime tag passed by register-hooks.js (e.g. `--runtime=antigravity`).
+const RUNTIME_OVERRIDE = (() => {
+  const arg = process.argv.find(a => a.startsWith('--runtime='));
+  return arg ? arg.slice('--runtime='.length).trim().toLowerCase() : null;
+})();
+
+let _sessionEmit = null;
+function loadSessionEmit() {
+  if (_sessionEmit !== null) return _sessionEmit;
+  try { _sessionEmit = require(path.join(os.homedir(), '.experience', 'src', 'session-emit.js')); }
+  catch {
+    try { _sessionEmit = require(path.join(__dirname, 'src', 'session-emit.js')); }
+    catch { _sessionEmit = false; }
+  }
+  return _sessionEmit;
+}
 function timeoutFromEnv(name, fallback) {
   const raw = Number(process.env[name] || 0);
   return raw > 0 ? raw : fallback;
@@ -280,8 +297,8 @@ function buildSourceMeta(data, _toolInput) {
   // are repo-agnostic and surface cross-language hints (e.g., .NET seeds
   // inside a TS CLI repo).
   const meta = {
-    sourceKind: 'codex-hook',
-    sourceRuntime: process.env.WSL_DISTRO_NAME ? 'codex-wsl' : 'codex-windows',
+    sourceKind: RUNTIME_OVERRIDE ? `${RUNTIME_OVERRIDE}-hook` : 'codex-hook',
+    sourceRuntime: RUNTIME_OVERRIDE || (process.env.WSL_DISTRO_NAME ? 'codex-wsl' : 'codex-windows'),
     sourceSession: data?.session_id || process.env.CODEX_SESSION_ID || null,
   };
   if (_promptEnricher) {
@@ -334,6 +351,19 @@ process.stdin.on('end', async () => {
     // Codex sends: { hook_event_name, session_id, cwd, ... }
     // The prompt text location may vary — check common fields
     const prompt = data.user_prompt || data.prompt || data.message || '';
+    // Antigravity transcript reconstruction: anchor the session with the user
+    // prompt. Best-effort, guarded; runs before the trivial-prompt skip so the
+    // transcript stays faithful to what the user actually asked.
+    if (RUNTIME_OVERRIDE === 'antigravity' && prompt) {
+      const emit = loadSessionEmit();
+      if (emit) emit.appendRuntimeEvent({
+        runtime: 'antigravity',
+        sessionId: data.session_id || null,
+        cwd: data.cwd || process.cwd(),
+        role: 'user',
+        blocks: [emit.textBlock(prompt)],
+      });
+    }
     debugLog({ stage: 'parsed', promptLen: prompt.length, preview: prompt.slice(0, 100) });
     activityLog({ stage: 'parsed', promptLen: prompt.length, preview: prompt.slice(0, 100), ...sourceMeta });
 

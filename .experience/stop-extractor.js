@@ -371,6 +371,21 @@ function findAllRecentSessions(homeDir = getHomeDir(), now = Date.now(), maxAgeM
     sessions.push({ runtime: 'muonroi-cli', file: f.file, mtimeMs: f.mtimeMs, projectPath: cwd });
   }
 
+  // antigravity native emit — JSONL reconstructed from the hook event stream by
+  // src/session-emit.js (Antigravity delivers no transcript_path). Same Claude
+  // shape as muonroi-cli: session_meta head with top-level cwd, then structured
+  // message entries that buildClaudeSessionData() parses unmodified.
+  const antigravityRoot = path.join(homeDir, '.experience', 'antigravity-sessions');
+  for (const f of walkAllJsonl(antigravityRoot, (_p, name) => name.endsWith('.jsonl'), now, maxAgeMs)) {
+    let cwd = null;
+    try {
+      const head = fs.readFileSync(f.file, 'utf8').split('\n', 1)[0];
+      const meta = head ? JSON.parse(head) : null;
+      if (meta && meta.type === 'session_meta' && typeof meta.cwd === 'string') cwd = meta.cwd;
+    } catch {}
+    sessions.push({ runtime: 'antigravity', file: f.file, mtimeMs: f.mtimeMs, projectPath: cwd });
+  }
+
   sessions.sort((a, b) => b.mtimeMs - a.mtimeMs);
   return sessions;
 }

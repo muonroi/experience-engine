@@ -4,14 +4,16 @@
  * (Claude, Codex, Gemini) and store them into the brain.
  *
  * Uses the same session finders and transcript builders as stop-extractor.js
- * so all 3 runtimes are handled identically.
+ * so all runtimes are handled identically.
  *
  * Usage:
  *   node tools/bulk-extract.js                      # all runtimes, newest first, max 50
  *   node tools/bulk-extract.js --max 600            # up to 600 sessions
- *   node tools/bulk-extract.js --runtime claude     # only Claude sessions
- *   node tools/bulk-extract.js --runtime codex      # only Codex sessions
- *   node tools/bulk-extract.js --runtime gemini     # only Gemini sessions
+ *   node tools/bulk-extract.js --runtime claude       # only Claude sessions
+ *   node tools/bulk-extract.js --runtime codex        # only Codex sessions
+ *   node tools/bulk-extract.js --runtime gemini       # only Gemini sessions
+ *   node tools/bulk-extract.js --runtime muonroi-cli  # only muonroi-cli native-emit sessions
+ *   node tools/bulk-extract.js --runtime antigravity  # only Antigravity reconstructed sessions
  *   node tools/bulk-extract.js --dry-run            # detect only, don't store
  *   node tools/bulk-extract.js --min-size 10000     # skip sessions < 10KB
  *   node tools/bulk-extract.js --project muonroi    # filter by project slug
@@ -70,7 +72,7 @@ function parseArgs() {
     if (argv[i] === '--reset-marker') args.resetMarker = true;
     if (argv[i] === '--verbose' || argv[i] === '-v') args.verbose = true;
     if (argv[i] === '--help') {
-      console.log('Usage: bulk-extract.js [--max N] [--runtime claude|codex|gemini] [--dry-run] [--min-size N] [--project slug] [--reset-marker] [--max-age 365d] [-v]');
+      console.log('Usage: bulk-extract.js [--max N] [--runtime claude|codex|gemini|muonroi-cli|antigravity] [--dry-run] [--min-size N] [--project slug] [--reset-marker] [--max-age 365d] [-v]');
       process.exit(0);
     }
   }

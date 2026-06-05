@@ -173,26 +173,24 @@ const AGENTS = [
     file: path.join(home, '.antigravity', 'hooks.json'),
     patch(cfg) {
       if (!cfg.hooks) cfg.hooks = {};
-      // PreToolUse hook for Edit/Write/Bash actions
-      cfg.hooks.PreToolUse = cfg.hooks.PreToolUse || [];
-      if (!cfg.hooks.PreToolUse.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor')))) {
-        cfg.hooks.PreToolUse.push({ matcher:'Edit|Write|Bash', hooks:[{ type:'command', command:`node "${interceptor}"`, timeout:5 }] });
-      }
-      // PostToolUse hook for feedback collection
-      cfg.hooks.PostToolUse = cfg.hooks.PostToolUse || [];
-      if (!cfg.hooks.PostToolUse.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor-post')))) {
-        cfg.hooks.PostToolUse.push({ matcher:'Edit|Write|Bash', hooks:[{ type:'command', command:`node "${interceptorPost}"`, timeout:5 }] });
-      }
-      // UserPromptSubmit hook for prompt-level guidance
-      cfg.hooks.UserPromptSubmit = cfg.hooks.UserPromptSubmit || [];
-      if (!cfg.hooks.UserPromptSubmit.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor-prompt')))) {
-        cfg.hooks.UserPromptSubmit.push({ hooks:[{ type:'command', command:`node "${interceptorPrompt}"`, timeout:5 }] });
-      }
-      // Stop hook for session extraction
-      cfg.hooks.Stop = cfg.hooks.Stop || [];
-      if (!cfg.hooks.Stop.some(h => (h.hooks||[]).some(e => e.command?.includes('stop-extractor')))) {
-        cfg.hooks.Stop.push({ hooks:[{ type:'command', command:`node "${stop}"`, timeout:90 }] });
-      }
+      // Antigravity delivers per-tool events but NO transcript_path, and labels
+      // every hook child the same. We pass `--runtime=antigravity` so the
+      // interceptors tag the runtime deterministically and reconstruct a
+      // Claude-shaped transcript (src/session-emit.js) the extractor can read.
+      // Drop any prior experience entries first so re-running upgrades older
+      // untagged commands to the tagged ones (idempotent + self-healing).
+      const drop = (arr, needle) => (arr || []).filter(h => !(h.hooks || []).some(e => e.command?.includes(needle)));
+      cfg.hooks.PreToolUse = drop(cfg.hooks.PreToolUse, 'interceptor');
+      cfg.hooks.PreToolUse.push({ matcher:'Edit|Write|Bash', hooks:[{ type:'command', command:`node "${interceptor}" --runtime=antigravity`, timeout:5 }] });
+
+      cfg.hooks.PostToolUse = drop(cfg.hooks.PostToolUse, 'interceptor-post');
+      cfg.hooks.PostToolUse.push({ matcher:'Edit|Write|Bash', hooks:[{ type:'command', command:`node "${interceptorPost}" --runtime=antigravity`, timeout:5 }] });
+
+      cfg.hooks.UserPromptSubmit = drop(cfg.hooks.UserPromptSubmit, 'interceptor-prompt');
+      cfg.hooks.UserPromptSubmit.push({ hooks:[{ type:'command', command:`node "${interceptorPrompt}" --runtime=antigravity`, timeout:5 }] });
+
+      cfg.hooks.Stop = drop(cfg.hooks.Stop, 'stop-extractor');
+      cfg.hooks.Stop.push({ hooks:[{ type:'command', command:`node "${stop}" --runtime=antigravity`, timeout:90 }] });
     }
   }
 ];
