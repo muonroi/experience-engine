@@ -642,6 +642,7 @@ function resolveRuntimeFromSourceMeta(sourceMeta, fallbackRuntime) {
   if (normalized.startsWith('claude')) return 'claude';
   if (normalized.startsWith('gemini')) return 'gemini';
   if (normalized.startsWith('opencode')) return 'opencode';
+  if (normalized.startsWith('antigravity')) return 'antigravity';
   return fallbackRuntime;
 }
 
@@ -651,6 +652,7 @@ function detectRuntime(toolName) {
     || /^(run_shell_command|write_file|edit_file|replace_in_file)$/.test(tool)) return 'gemini';
   if (process.env.CODEX_SESSION_ID) return 'codex';
   if (process.env.OPENCODE_SESSION_ID) return 'opencode';
+  if (process.env.ANTIGRAVITY_SESSION_ID) return 'antigravity';
   return 'claude';
 }
 

@@ -30,10 +30,11 @@ function getRouterDefaultTier() {
 }
 function getModelTiers() {
   return getConfig().modelTiers || {
-    claude:   { fast: 'claude-haiku-4-5',  balanced: 'claude-sonnet-4-6', premium: 'claude-opus-4-6' },
-    gemini:   { fast: 'gemini-3-flash',    balanced: 'gemini-3-pro',      premium: 'gemini-3.1-pro' },
-    codex:    { fast: 'gpt-5.4-mini',      balanced: 'gpt-5.3-codex',    premium: 'gpt-5.4' },
-    opencode: { fast: 'claude-haiku-4-5',  balanced: 'claude-sonnet-4-6', premium: 'claude-opus-4-6' },
+    claude:      { fast: 'claude-haiku-4-5',  balanced: 'claude-sonnet-4-6', premium: 'claude-opus-4-6' },
+    gemini:      { fast: 'gemini-3-flash',    balanced: 'gemini-3-pro',      premium: 'gemini-3.1-pro' },
+    codex:       { fast: 'gpt-5.4-mini',      balanced: 'gpt-5.3-codex',    premium: 'gpt-5.4' },
+    opencode:    { fast: 'claude-haiku-4-5',  balanced: 'claude-sonnet-4-6', premium: 'claude-opus-4-6' },
+    antigravity: { fast: 'gemini-3-flash',    balanced: 'gemini-3-pro',      premium: 'gemini-3.1-pro' },
   };
 }
 function getReasoningEffortTiers() {
@@ -73,6 +74,7 @@ function resolveRuntimeFromSourceMeta(sourceMeta, fallbackRuntime) {
   if (normalized.startsWith('claude')) return 'claude';
   if (normalized.startsWith('gemini')) return 'gemini';
   if (normalized.startsWith('opencode')) return 'opencode';
+  if (normalized.startsWith('antigravity')) return 'antigravity';
   return fallbackRuntime;
 }
 function detectRuntime(toolName) {
@@ -84,6 +86,8 @@ function detectRuntime(toolName) {
   if (process.env.CODEX_SESSION_ID) return 'codex';
   // OpenCode
   if (process.env.OPENCODE_SESSION_ID) return 'opencode';
+  // Google Antigravity
+  if (process.env.ANTIGRAVITY_SESSION_ID) return 'antigravity';
   // Default: Claude Code (Edit, Write, Bash, Shell)
   return 'claude';
 }
