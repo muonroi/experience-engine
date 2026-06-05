@@ -245,25 +245,74 @@ function isUserCorrectionLine(line) {
   return USER_CORRECTION_KEYWORDS_RE.test(body);
 }
 
+// Sanitize a raw transcript window before it is shown to the extractor LLM.
+// The raw window is the dominant source of two defects observed on real
+// sessions (TEP/eBerth dry-runs, 2026-06-05):
+//   - non-English text (Vietnamese conversational lines) leaking into stored
+//     hints, violating the English-only output rule;
+//   - neighbouring failed-command output (e.g. "Exit code 2 grep ...") and raw
+//     code dumps bleeding into recipe seeds, since the window is a raw slice of
+//     surrounding lines regardless of per-event success.
+// We drop conversational Assistant:/User: chatter (intent already lives in the
+// structured fields) and any line that is >25% non-ASCII (diacritics), keeping
+// ToolCall/ToolOutput/Bash evidence lines. Falls back to a non-ASCII-stripped
+// slice of the original if filtering would remove everything.
+function _sanitizeWindow(raw, maxChars) {
+  const src = String(raw || '');
+  if (!src) return '';
+  const kept = [];
+  for (const line of src.split('\n')) {
+    const l = line.trim();
+    if (!l) continue;
+    if (/^(Assistant|User):/i.test(l)) continue; // conversational chatter — not evidence
+    const nonAscii = (l.match(/[^\x00-\x7F]/g) || []).length;
+    if (l.length > 0 && nonAscii / l.length > 0.25) continue; // non-English line
+    kept.push(l);
+  }
+  const out = kept.join('\n').slice(0, maxChars);
+  // Fallback: never return empty — strip non-ASCII chars from the raw slice.
+  return out || src.replace(/[^\x00-\x7F]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, maxChars);
+}
+
+// Strip non-ASCII characters (e.g. Vietnamese diacritics) from a string while
+// preserving newlines and structure. Applied to the WHOLE LLM-bound summary so
+// non-English text cannot leak through ANY field (structured fields like
+// failedApproach/error/before/after can carry non-English filenames or
+// commands, not just the raw window). The extractQA prompt also instructs the
+// model to translate meaning to English — this is the input-side belt.
+function _stripNonAsciiPreserveNl(s) {
+  return String(s || '').replace(/[^\x00-\x7F\n]+/g, ' ').replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n');
+}
+
+// Public entry: structured per-type summary with all non-English text stripped.
+function summarizeExperienceExcerpt(experience) {
+  return _stripNonAsciiPreserveNl(_summarizeExperienceExcerptRaw(experience));
+}
+
 // Build a structured summary instead of a raw 1500-char excerpt slice. The
 // brain consistently copied the first ToolCall line as the trigger when fed
 // raw excerpts, producing path-specific noise. A labelled summary points at
 // the actual failure pattern.
-function summarizeExperienceExcerpt(experience) {
+function _summarizeExperienceExcerptRaw(experience) {
   const raw = String(experience?.excerpt || '');
   if (!raw) return '';
   const type = experience?.type || 'unknown';
   const lines = raw.split('\n').slice(0, 60);
+  const cleanWindow = _sanitizeWindow(raw, 600);
 
   if (type === 'recipe') {
     const steps = experience?.steps || [];
     const files = experience?.files || [];
+    // A recipe is a SUCCESS pattern — drop any residual failure-marker lines
+    // (e.g. "Exit code 2", error signals) that sit at the window boundary just
+    // outside the success run, so the seed never implies the recipe failed.
+    const recipeWindow = cleanWindow.split('\n').filter((l) => !isTranscriptErrorSignal(l)).join('\n');
     return [
       `EXPERIENCE TYPE: recipe (successful pattern)`,
       experience?.context ? `CONTEXT: ${experience.context}` : '',
       steps.length ? `STEPS:\n${steps.map((s, i) => `  ${i + 1}. ${s}`).join('\n')}` : '',
       files.length ? `FILES: ${files.join(', ')}` : '',
-      `RAW WINDOW (first 600 chars):\n${raw.slice(0, 600)}`,
+      `RAW WINDOW (first 600 chars):\n${recipeWindow}`,
     ].filter(Boolean).join('\n\n').slice(0, 1500);
   }
 
@@ -273,7 +322,7 @@ function summarizeExperienceExcerpt(experience) {
       experience?.context ? `CONTEXT: ${experience.context}` : '',
       experience?.failedApproach ? `FAILED APPROACH: ${experience.failedApproach}` : '',
       experience?.successApproach ? `WORKING APPROACH: ${experience.successApproach}` : '',
-      `RAW WINDOW (first 600 chars):\n${raw.slice(0, 600)}`,
+      `RAW WINDOW (first 600 chars):\n${cleanWindow}`,
     ].filter(Boolean).join('\n\n').slice(0, 1500);
   }
 
@@ -284,7 +333,7 @@ function summarizeExperienceExcerpt(experience) {
       experience?.trigger ? `TRIGGER FILE: ${experience.trigger}` : '',
       experience?.affected ? `AFFECTED FILE: ${experience.affected}` : '',
       experience?.error ? `ERROR: ${experience.error}` : '',
-      `RAW WINDOW (first 600 chars):\n${raw.slice(0, 600)}`,
+      `RAW WINDOW (first 600 chars):\n${cleanWindow}`,
     ].filter(Boolean).join('\n\n').slice(0, 1500);
   }
 
@@ -294,7 +343,7 @@ function summarizeExperienceExcerpt(experience) {
       experience?.context ? `CONTEXT: ${experience.context}` : '',
       experience?.error ? `ENV ERROR: ${experience.error}` : '',
       experience?.workaround ? `WORKAROUND: ${experience.workaround}` : '',
-      `RAW WINDOW (first 600 chars):\n${raw.slice(0, 600)}`,
+      `RAW WINDOW (first 600 chars):\n${cleanWindow}`,
     ].filter(Boolean).join('\n\n').slice(0, 1500);
   }
 
@@ -305,7 +354,7 @@ function summarizeExperienceExcerpt(experience) {
       experience?.correction ? `USER SAID: ${experience.correction}` : '',
       experience?.before ? `BEFORE: ${experience.before}` : '',
       experience?.after ? `AFTER: ${experience.after}` : '',
-      `RAW WINDOW (first 600 chars):\n${raw.slice(0, 600)}`,
+      `RAW WINDOW (first 600 chars):\n${cleanWindow}`,
     ].filter(Boolean).join('\n\n').slice(0, 1500);
   }
 
@@ -470,6 +519,12 @@ function detectRecipes(events, lines) {
     const hasRead = [...toolTypes].some(t => ['read', 'grep', 'glob', 'read_file', 'read_text_file'].includes(t));
     const hasMutate = [...toolTypes].some(t => ['edit', 'write', 'write_file', 'replace'].includes(t));
     if (!hasRead || !hasMutate) continue;
+
+    // A recipe is a SUCCESS pattern: require at least one event with a
+    // confirmed success signal (Bash exit 0 or non-error ToolOutput). The
+    // sequence loop only breaks on success===false; a run of success===undefined
+    // events (unverified/incomplete work) would otherwise be mislabeled a recipe.
+    if (!seq.some(e => e.success === true)) continue;
 
     const files = new Set();
     for (const ev of seq) {
