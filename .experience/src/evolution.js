@@ -403,7 +403,16 @@ async function evolve(trigger) {
   //   session-extractor T2 entries gave 0 clusters@0.78 vs 31@0.72; only
   //   orphan abstractions cleared 0.78 (Step1c removes them) -> abstracted:0.
   //   Lowered to 0.72; round-trip (0.60/0.50) is the real quality gate (5/6 pass).
-  const ABSTRACT_CLUSTER_COSINE = 0.72;
+  //   NOTE(260605): the post-reextract clean+scoped corpus pairs LOWER than the
+  //   old lexically-blunt legacy one. 468 T2 entries: nearest-neighbour p90
+  //   cosine = 0.698, so 0.72 clipped almost everything -> only 3 clusters@0.72
+  //   (6 entries) vs 21@0.70 (44 entries). Dry-run abstraction of all 21 0.70
+  //   clusters against the real brain: 19/21 passed round-trip (most rate=1.00,
+  //   concrete principles), only 2 heterogeneous clusters rejected. The 260512
+  //   "0.70 too loose" verdict was corpus-specific (legacy entries); on the
+  //   clean corpus the round-trip gate is sufficient. Lowered to 0.70 to
+  //   restore organic T0 growth (was stalled at ~0 abstractions/run).
+  const ABSTRACT_CLUSTER_COSINE = 0.70;
   const ROUND_TRIP_MEMBER_COSINE = 0.60;
   const ROUND_TRIP_ACCEPT_RATE = 0.50;
   const remainingT2 = await getAllEntries('experience-selfqa');
