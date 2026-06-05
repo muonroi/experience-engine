@@ -5,6 +5,27 @@ const path = require('path');
 const os = require('os');
 
 const DEBUG_LOG = process.env.EXPERIENCE_HOOK_DEBUG_LOG || path.join(os.homedir(), '.codex', 'log', 'experience-hook-debug.jsonl');
+
+// Explicit runtime tag passed by register-hooks.js (e.g. `--runtime=antigravity`).
+// Deterministic on Windows where the hook child env does not carry
+// ANTIGRAVITY_SESSION_ID; absent for other runtimes so behavior is unchanged.
+const RUNTIME_OVERRIDE = (() => {
+  const arg = process.argv.find(a => a.startsWith('--runtime='));
+  return arg ? arg.slice('--runtime='.length).trim().toLowerCase() : null;
+})();
+
+// Best-effort transcript emit for runtimes that deliver no transcript (Antigravity).
+let _sessionEmit = null;
+function loadSessionEmit() {
+  if (_sessionEmit !== null) return _sessionEmit;
+  try { _sessionEmit = require(path.join(os.homedir(), '.experience', 'src', 'session-emit.js')); }
+  catch {
+    try { _sessionEmit = require(path.join(__dirname, 'src', 'session-emit.js')); }
+    catch { _sessionEmit = false; }
+  }
+  return _sessionEmit;
+}
+
 let input = '';
 function timeoutFromEnv(name, fallback) {
   const raw = Number(process.env[name] || 0);
@@ -61,9 +82,9 @@ function loadEnricher() {
 const _enricher = loadEnricher();
 
 function buildSourceMeta(data, toolInput) {
-  const runtime = process.env.WSL_DISTRO_NAME ? 'codex-wsl' : 'codex-windows';
+  const runtime = RUNTIME_OVERRIDE || (process.env.WSL_DISTRO_NAME ? 'codex-wsl' : 'codex-windows');
   const meta = {
-    sourceKind: 'codex-hook',
+    sourceKind: RUNTIME_OVERRIDE ? `${RUNTIME_OVERRIDE}-hook` : 'codex-hook',
     sourceRuntime: runtime,
     // Codex hook payload reliably includes session_id; CODEX_SESSION_ID is
     // not guaranteed to be present in the hook subprocess environment.
@@ -315,6 +336,18 @@ process.stdin.on('end', async () => {
     const tool = data.tool_name || data.toolName || '';
     const toolInput = data.tool_input || data.input || {};
     const sourceMeta = buildSourceMeta(data, toolInput);
+    // Antigravity transcript reconstruction: record the tool call. Guarded +
+    // best-effort — never affects surfacing or other runtimes.
+    if (RUNTIME_OVERRIDE === 'antigravity') {
+      const emit = loadSessionEmit();
+      if (emit) emit.appendRuntimeEvent({
+        runtime: 'antigravity',
+        sessionId: data.session_id || data.tool_use_id || data.turn_id || null,
+        cwd: data.cwd || process.cwd(),
+        role: 'assistant',
+        blocks: [emit.toolUseBlock(tool, toolInput)],
+      });
+    }
     const matches = /Edit|Write|Bash|shell|replace|write_file|execute_command/i.test(tool);
     debugLog({ stage: 'parsed', tool, matches, keys: Object.keys(toolInput || {}).slice(0, 12), ...sourceMeta });
     activityLog({ stage: 'parsed', tool, matches, keys: Object.keys(toolInput || {}).slice(0, 12), query: toolInput?.command || toolInput?.cmd || null, ...sourceMeta });

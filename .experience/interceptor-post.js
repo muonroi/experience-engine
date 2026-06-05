@@ -33,6 +33,23 @@ const DEBUG_LOG  = process.env.EXPERIENCE_HOOK_DEBUG_LOG
 const STALE_MS   = 10_000;
 const ORPHAN_TTL = 60_000;
 
+// Explicit runtime tag passed by register-hooks.js (e.g. `--runtime=antigravity`).
+const RUNTIME_OVERRIDE = (() => {
+  const arg = process.argv.find(a => a.startsWith('--runtime='));
+  return arg ? arg.slice('--runtime='.length).trim().toLowerCase() : null;
+})();
+
+let _sessionEmit = null;
+function loadSessionEmit() {
+  if (_sessionEmit !== null) return _sessionEmit;
+  try { _sessionEmit = require(path.join(os.homedir(), '.experience', 'src', 'session-emit.js')); }
+  catch {
+    try { _sessionEmit = require(path.join(__dirname, 'src', 'session-emit.js')); }
+    catch { _sessionEmit = false; }
+  }
+  return _sessionEmit;
+}
+
 function debugLog(event) {
   try {
     fs.mkdirSync(path.dirname(DEBUG_LOG), { recursive: true });
@@ -79,8 +96,8 @@ const _enricher = loadEnricher();
 
 function buildSourceMeta(data, toolInput) {
   const meta = {
-    sourceKind: 'codex-hook',
-    sourceRuntime: process.env.WSL_DISTRO_NAME ? 'codex-wsl' : 'codex-windows',
+    sourceKind: RUNTIME_OVERRIDE ? `${RUNTIME_OVERRIDE}-hook` : 'codex-hook',
+    sourceRuntime: RUNTIME_OVERRIDE || (process.env.WSL_DISTRO_NAME ? 'codex-wsl' : 'codex-windows'),
     sourceSession: data?.session_id || process.env.CODEX_SESSION_ID || null,
   };
   if (_enricher) {
@@ -162,6 +179,23 @@ process.stdin.on('end', async () => {
     const toolInput  = data.tool_input || data.input     || {};
     const toolOutput = data.tool_response || data.output || data.result || {};
     const sourceMeta = buildSourceMeta(data, toolInput);
+    // Antigravity transcript reconstruction: record the tool result so the
+    // extractor can pair it with the PreToolUse tool_use (trap/recipe signals).
+    if (RUNTIME_OVERRIDE === 'antigravity') {
+      const emit = loadSessionEmit();
+      if (emit) {
+        const body = typeof toolOutput === 'string'
+          ? toolOutput
+          : (toolOutput?.output ?? toolOutput?.stdout ?? toolOutput?.content ?? toolOutput);
+        emit.appendRuntimeEvent({
+          runtime: 'antigravity',
+          sessionId: data.session_id || data.tool_use_id || data.turn_id || null,
+          cwd: data.cwd || process.cwd(),
+          role: 'tool',
+          blocks: [emit.toolResultBlock(body)],
+        });
+      }
+    }
     let surfacedIds = [];
     if (state?.ts) {
       const ageMs = Date.now() - new Date(state.ts).getTime();
