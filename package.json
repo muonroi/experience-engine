@@ -74,6 +74,7 @@
     "format": "npx prettier --write server.js .experience/experience-core.js .experience/src/",
     "format:check": "npx prettier --check server.js .experience/experience-core.js .experience/src/",
     "changelog": "node scripts/generate-changelog.js",
+    "seed:catalog": "node scripts/seed-catalog.js",
     "config:encrypt": "node scripts/config-encrypt.js encrypt",
     "config:status": "node scripts/config-encrypt.js status",
     "pack:dry-run": "npm pack --dry-run"
