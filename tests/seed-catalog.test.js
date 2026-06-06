@@ -128,6 +128,24 @@ test('seedCatalog is offline-safe: fetch failure leaves config untouched', async
   assert.deepEqual(JSON.parse(fs.readFileSync(p, 'utf8')), { user: 'bob' }); // untouched
 });
 
+test('seedCatalog forwards MUONROI_CATALOG_API_KEY as X-API-Key header', async () => {
+  const p = tmpConfig();
+  const prev = process.env.MUONROI_CATALOG_API_KEY;
+  process.env.MUONROI_CATALOG_API_KEY = 'shh';
+  let seenHeaders = null;
+  const spyFetch = async (_url, opts) => {
+    seenHeaders = opts && opts.headers;
+    return { ok: true, json: async () => ({ version: '9', updated_at: 'x', models: CATALOG }) };
+  };
+  try {
+    await seedCatalog({ url: 'x', fetchImpl: spyFetch, path: p, baseTiers: BASE });
+  } finally {
+    if (prev === undefined) delete process.env.MUONROI_CATALOG_API_KEY;
+    else process.env.MUONROI_CATALOG_API_KEY = prev;
+  }
+  assert.equal(seenHeaders['X-API-Key'], 'shh');
+});
+
 test('seedCatalog no-ops on empty catalog (no models)', async () => {
   const p = tmpConfig();
   const r = await seedCatalog({ url: 'x', fetchImpl: fakeFetch([]), path: p, baseTiers: BASE });

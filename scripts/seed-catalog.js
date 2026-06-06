@@ -122,13 +122,18 @@ function resolveBaseTiers(existingConfig) {
   }
 }
 
+function catalogHeaders() {
+  const key = (process.env.MUONROI_CATALOG_API_KEY || '').trim();
+  return key ? { 'X-API-Key': key } : {};
+}
+
 async function fetchCatalog(url, fetchImpl) {
   const doFetch = fetchImpl || globalThis.fetch;
   if (typeof doFetch !== 'function') return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await doFetch(url, { signal: controller.signal });
+    const res = await doFetch(url, { signal: controller.signal, headers: catalogHeaders() });
     if (!res || !res.ok) return null;
     const data = await res.json();
     return Array.isArray(data && data.models) ? data.models : null;
