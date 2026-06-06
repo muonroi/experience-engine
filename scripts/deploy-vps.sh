@@ -15,6 +15,11 @@ git fetch origin "$DEPLOY_BRANCH"
 git checkout "$DEPLOY_BRANCH"
 git pull --ff-only origin "$DEPLOY_BRANCH"
 
+# Seed model tiers from the shared catalog (offline-safe, non-fatal).
+# Writes ~/.experience/config.json modelTiers; runtime stays config-only.
+echo "[deploy] seeding model catalog"
+node "$REPO_DIR/scripts/seed-catalog.js" || echo "[deploy] catalog seed skipped (non-fatal)"
+
 echo "[deploy] ensuring qdrant container"
 docker compose up -d qdrant
 
