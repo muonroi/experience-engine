@@ -27,6 +27,7 @@ const { collectEvents, resolveLogFiles } = require('./dashboard/activity-parser'
 const {
   indexQdrantPoints,
   computePrecision,
+  computePrecisionSince,
   computeFunnel,
   computeTopOffenders,
   computeGateStatus,
@@ -142,6 +143,7 @@ async function main() {
 
   console.log('[exp-dashboard] aggregating…');
   const precision = computePrecision(events, qdrantIdx);
+  const precisionSince = computePrecisionSince(events);
   const funnel = computeFunnel(events);
   const topOffenders = computeTopOffenders(qdrantIdx, { minSurfaceCount: 5, limit: 20 });
   const store = computeStoreDistribution(payloads);
@@ -170,6 +172,7 @@ async function main() {
     },
     gates,
     precision,
+    precisionSince,
     funnel,
     topOffenders,
     store,

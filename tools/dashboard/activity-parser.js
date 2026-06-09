@@ -22,6 +22,9 @@ const KNOWN_KINDS = new Set([
   'intercept',          // hint surface attempt (may surface 0 or N matches)
   'posttool',           // posttool outcome — has surfacedCount + toolOutcome
   'feedback',           // FOLLOWED / IGNORED / IRRELEVANT verdict
+  'implicit-touch',     // surfaced hint matched the next action (relevant)
+  'implicit-unused',    // surfaced hint did not match (irrelevant) + reason
+  'relevance-gate',     // pre-surface gate dropped N mismatched candidates
   'extract',            // QA entry extracted from session
   'extract-skip',
   'extract-merge',

@@ -83,6 +83,57 @@ function renderGates(g) {
   </section>`;
 }
 
+function renderPrecisionSince(ps) {
+  if (!ps) return '';
+  const verdictClass = ps.verdict === 'PASS_TRENDING' ? 'good'
+    : ps.verdict === 'BELOW_TARGET' ? 'warn'
+    : ps.verdict === 'GATE_STALLED' ? 'bad'
+    : 'muted';
+  const reasonRows = Object.entries(ps.reasonMix || {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td class="num">${v}</td></tr>`)
+    .join('') || `<tr><td colspan="2" class="muted">No irrelevant feedback since gate went live.</td></tr>`;
+  const precStr = ps.precision == null ? '—' : pct(ps.precision);
+  const note = ps.verdict === 'INSUFFICIENT_DATA'
+    ? `Need ${ps.minClassified} classified (have ${ps.classified}) for a confident read — keep using normally, recheck tomorrow.`
+    : ps.verdict === 'GATE_STALLED'
+      ? 'Pre-surface gate dropped 0 hints — fix not engaging, investigate now.'
+      : ps.verdict === 'PASS_TRENDING'
+        ? `At/above the ${pct(ps.target)} target — the 7-day gate will converge here.`
+        : `Below the ${pct(ps.target)} target — investigate without waiting for the 7-day window.`;
+  return `
+  <section>
+    <h2>A2. Post-Deploy Precision (early warning)</h2>
+    <p class="muted">Precision over events since the pre-surface relevance gate went live${ps.gateLiveTs ? ` (${escapeHtml(ps.gateLiveTs)})` : ''}. Sidesteps the 7-day rolling window so a fix is visible in ~1–2 days.</p>
+    <div class="kpi">
+      <div class="kpi-label">Verdict</div>
+      <div class="kpi-value ${verdictClass}">${escapeHtml(ps.verdict)}</div>
+      <div class="kpi-sub">${escapeHtml(note)}</div>
+    </div>
+    <div class="grid-2">
+      <div>
+        <h3>Post-gate precision</h3>
+        <table style="max-width:24rem">
+          <tbody>
+            <tr><td>Precision</td><td class="num ${verdictClass}">${precStr}</td></tr>
+            <tr><td>Relevant</td><td class="num">${ps.relevant}</td></tr>
+            <tr><td>Irrelevant</td><td class="num">${ps.irrelevant}</td></tr>
+            <tr><td>Classified</td><td class="num">${ps.classified} / ${ps.minClassified} min</td></tr>
+            <tr><td>Gate drops</td><td class="num">${ps.gateDropped} (${ps.gateEvents} events)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <h3>Remaining irrelevant by reason</h3>
+        <table style="max-width:24rem">
+          <thead><tr><th>Reason</th><th class="num">Count</th></tr></thead>
+          <tbody>${reasonRows}</tbody>
+        </table>
+      </div>
+    </div>
+  </section>`;
+}
+
 function renderPrecisionTable(rows, keyName, keyLabel) {
   if (!rows || rows.length === 0) {
     return `<p class="muted">No data.</p>`;
@@ -544,6 +595,7 @@ function renderHtml(snapshot) {
 <p class="muted">Generated <strong>${escapeHtml(generated)}</strong> · window ${escapeHtml(win.days || '?')}d (${escapeHtml(win.since || '?')} → ${escapeHtml(win.until || '?')}) · schema v${escapeHtml(snapshot.version || '?')}</p>
 
 ${renderGates(snapshot.gates || {})}
+${renderPrecisionSince(snapshot.precisionSince)}
 ${renderStore(snapshot.store || {})}
 ${renderPrecision(snapshot.precision || {})}
 ${renderFunnel(snapshot.funnel || {})}
