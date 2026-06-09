@@ -275,6 +275,23 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     promptPrecisionRemoved = g0.removed.length + g1.removed.length + g2.removed.length;
   }
 
+  // Pre-surface relevance gate (PreToolUse only). Drop learned-tier candidates
+  // the post-hoc reconciler would mark wrong_repo/wrong_language/wrong_task so
+  // they never surface and never count against precision. Principles (r0) stay
+  // permissive — they are intentionally cross-cutting. See intercept.js
+  // filterByActionRelevance for the evidence trail (precision 57% drag).
+  let relevanceRemoved = 0;
+  if (_intercept.isActionKnownHook(toolName)) {
+    const relMeta = { cwd: sourceMeta.cwd || filePath || '' };
+    const a1 = _intercept.filterByActionRelevance(r1, COLLECTIONS[1].name, toolName, toolInput, relMeta);
+    const a2 = _intercept.filterByActionRelevance(r2, COLLECTIONS[2].name, toolName, toolInput, relMeta);
+    r1 = a1.kept; r2 = a2.kept;
+    relevanceRemoved = a1.removed.length + a2.removed.length;
+    if (relevanceRemoved > 0) {
+      _activity.activityLog({ op: 'relevance-gate', removed: relevanceRemoved, tool: toolName, project: filePath || null, ...sourceMeta });
+    }
+  }
+
   const suppressionContext = { queryProjectSlug, queryDomain, actionKind };
   const s0 = _noise.filterNoiseSuppressedPoints(r0, suppressionContext);
   const s1 = _noise.filterNoiseSuppressedPoints(r1, suppressionContext);

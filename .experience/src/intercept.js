@@ -186,6 +186,49 @@ function assessHintUsage(surface, toolName, toolInput, runtimeMeta = {}) {
   return { touched: false, reason: 'wrong_task', actionProject, actionDomain, actionKind };
 }
 
+// Pre-surface relevance gate. On PreToolUse hooks the action (tool + input +
+// cwd) is fully known at surface time, so we can run the SAME relevance check
+// the post-hoc reconciler uses (assessHintUsage) BEFORE surfacing — dropping
+// candidate points that would later be classified wrong_repo / wrong_language /
+// wrong_task. This closes the surface-vs-classify gap that drove 87% of
+// irrelevant surfaces (58/67, Bash-dominated) and pinned interception precision
+// at 57%. Evidence: ~/.experience/activity.jsonl 7d window (2026-06-09) —
+// IRRELEVANT by tool: Bash 46 / Edit 8 / Write 4 / prompt 9; inside Bash:
+// wrong_task 28, wrong_repo 18.
+// UserPromptSubmit (toolName 'UserPrompt') has no concrete action yet — the
+// gate is a no-op there so prompt-time surfacing is unaffected.
+function isActionKnownHook(toolName) {
+  const t = String(toolName || '');
+  return t !== '' && t !== 'UserPrompt';
+}
+
+function filterByActionRelevance(points, collectionName, toolName, toolInput, runtimeMeta = {}) {
+  if (!isActionKnownHook(toolName)) return { kept: points || [], removed: [] };
+  const kept = [];
+  const removed = [];
+  for (const point of points || []) {
+    let exp = {};
+    try {
+      exp = JSON.parse(point?.payload?.json || '{}');
+    } catch (err) {
+      // Fail-open: a malformed payload must not silently vanish from surfacing.
+      // Keep it and log per the No-Silent-Catch rule.
+      _logger.log('debug', 'relevance_gate_parse_fail', { id: point?.id, collection: collectionName, error: err?.message });
+      kept.push(point);
+      continue;
+    }
+    const surface = {
+      projectSlug: exp.scope?.project_slug || exp.scope?.projectSlug || null,
+      scope: exp.scope || {},
+      collection: collectionName,
+    };
+    const verdict = assessHintUsage(surface, toolName, toolInput, runtimeMeta);
+    if (verdict.touched) kept.push(point);
+    else removed.push({ id: point?.id, reason: verdict.reason });
+  }
+  return { kept, removed };
+}
+
 function promptStateSurfacedIds(state) {
   return Array.isArray(state?.surfacedIds)
     ? state.surfacedIds.filter(surface => surface?.collection && surface?.id)
@@ -482,6 +525,8 @@ module.exports = {
   isPromptHookPrecisionGate,
   promptHookScoreThreshold,
   filterPromptHookPoints,
+  isActionKnownHook,
+  filterByActionRelevance,
   assessHintUsage,
   promptStateSurfacedIds,
   isPromptOnlySuggestionState,
