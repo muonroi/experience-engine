@@ -791,9 +791,84 @@ function computeStoreDistribution(payloadsByCollection) {
   return { total, tiers, types, quality, collections };
 }
 
+/**
+ * Post-deploy early-warning precision (Section A2).
+ *
+ * The dashboard/gate precision is a 7-day rolling window, so a surfacing fix
+ * does not register for ~7 days. This computes precision over the slice of
+ * events SINCE the pre-surface relevance gate went live (first `relevance-gate`
+ * event), making the real post-fix precision readable in ~1-2 days. Mirrors
+ * exp-gates.js computeInterceptionPrecision (counts implicit-touch/unused +
+ * FOLLOWED/IGNORED/IRRELEVANT). Reads raw.op directly so it is independent of
+ * the activity-parser kind allowlist.
+ *
+ * @param {Array} events — typed events from activity-parser ({ raw, tsMs })
+ */
+function computePrecisionSince(events, opts = {}) {
+  const TARGET = opts.target ?? 0.70;
+  const MIN_CLASSIFIED = opts.minClassified ?? 30;
+
+  let firstGateMs = null;
+  let gateLiveTs = null;
+  let gateEvents = 0;
+  let gateDropped = 0;
+  for (const ev of events) {
+    if (ev?.raw?.op !== 'relevance-gate') continue;
+    gateEvents++;
+    gateDropped += Number(ev.raw.removed) || 0;
+    if (ev.tsMs != null && (firstGateMs == null || ev.tsMs < firstGateMs)) {
+      firstGateMs = ev.tsMs;
+      gateLiveTs = ev.ts || ev.raw.ts || null;
+    }
+  }
+
+  if (firstGateMs == null) {
+    return {
+      available: false,
+      verdict: 'GATE_STALLED',
+      reason: 'no relevance-gate event in window — pre-surface gate not firing',
+      gateLiveTs: null, gateEvents: 0, gateDropped: 0,
+      classified: 0, relevant: 0, irrelevant: 0, precision: null,
+      target: TARGET, minClassified: MIN_CLASSIFIED, reasonMix: {},
+    };
+  }
+
+  let relevant = 0;
+  let irrelevant = 0;
+  const reasonMix = {};
+  for (const ev of events) {
+    if (ev.tsMs == null || ev.tsMs < firstGateMs) continue;
+    const op = ev?.raw?.op;
+    if (op === 'implicit-touch') { relevant++; continue; }
+    if (op === 'implicit-unused') { irrelevant++; const r = ev.raw.reason || 'unspecified'; reasonMix[r] = (reasonMix[r] || 0) + 1; continue; }
+    if (op === 'feedback') {
+      const v = ev.raw.verdict || (ev.raw.followed === true ? 'FOLLOWED' : ev.raw.followed === false ? 'IGNORED' : null);
+      if (v === 'FOLLOWED' || v === 'IGNORED') relevant++;
+      else if (v === 'IRRELEVANT') { irrelevant++; const r = ev.raw.reason || 'unspecified'; reasonMix[r] = (reasonMix[r] || 0) + 1; }
+    }
+  }
+  const classified = relevant + irrelevant;
+  const precision = classified > 0 ? relevant / classified : null;
+
+  let verdict;
+  if (gateDropped === 0) verdict = 'GATE_STALLED';
+  else if (classified < MIN_CLASSIFIED) verdict = 'INSUFFICIENT_DATA';
+  else if (precision != null && precision >= TARGET) verdict = 'PASS_TRENDING';
+  else verdict = 'BELOW_TARGET';
+
+  return {
+    available: true,
+    verdict,
+    gateLiveTs, gateEvents, gateDropped,
+    classified, relevant, irrelevant, precision,
+    target: TARGET, minClassified: MIN_CLASSIFIED, reasonMix,
+  };
+}
+
 module.exports = {
   CONF_BANDS,
   computeStoreDistribution,
+  computePrecisionSince,
   NOISE_REASONS,
   bandLabel,
   emptyBucket,
