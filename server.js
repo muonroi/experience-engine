@@ -1074,6 +1074,10 @@ async function ensureCollections() {
 // pulled context reinforces precisely and filters noise faster than passive
 // hints (the agent chose to ask, so its verdict is high-signal).
 async function handleRecall(req, res) {
+  // Defense-in-depth: the POST dispatch block already gates on requireAuth, but
+  // mirror handleSearch/handlePilContext so the handler is safe even if routing
+  // is later refactored (recall can record surface + reads scoped experience).
+  if (!requireAuth(req, res)) return;
   const body = await readBody(req);
   const query = typeof body.query === 'string' ? body.query.trim() : '';
   if (!query) return error(res, 'query is required');
