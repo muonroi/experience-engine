@@ -95,11 +95,20 @@ function hybridFuse(vectorPoints, lexicalCandidates, queryText, opts = {}) {
   const cosineById = new Map((vectorPoints || []).map(p => [String(p.id), p.score]));
   const fused = rrfFuse([vectorPoints || [], lexRanked], opts);
   const lexicalDisplay = typeof opts.lexicalDisplayScore === 'number' ? opts.lexicalDisplayScore : 0.5;
-  return fused.map(p => {
+  // opts.maxLexicalOnly: cap how many lexical-only hits (no cosine) may be kept,
+  // in fused-rank order. Used by passive hybridization to bound precision risk —
+  // vector-origin hits are never capped. Default Infinity (recall keeps all).
+  const maxLexicalOnly = Number.isFinite(opts.maxLexicalOnly) ? opts.maxLexicalOnly : Infinity;
+  let lexicalKept = 0;
+  const out = [];
+  for (const p of fused) {
     const cos = cosineById.get(String(p.id));
-    if (typeof cos === 'number') return { ...p, score: cos };
-    return { ...p, score: lexicalDisplay, _lexicalOnly: true };
-  });
+    if (typeof cos === 'number') { out.push({ ...p, score: cos }); continue; }
+    if (lexicalKept >= maxLexicalOnly) continue; // drop excess lexical-only
+    lexicalKept += 1;
+    out.push({ ...p, score: lexicalDisplay, _lexicalOnly: true });
+  }
+  return out;
 }
 
 module.exports = { rrfFuse, lexicalRank, lexicalScore, hybridFuse, tokenize, RRF_K };

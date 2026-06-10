@@ -77,6 +77,35 @@ test('hybridFuse: empty lexical leg degrades to vector order', () => {
   assert.deepEqual(fused.map(p => p.id), ['A', 'B']);
 });
 
+test('hybridFuse maxLexicalOnly: caps lexical-only adds, never caps vector-origin', () => {
+  // Passive hybridization: bound precision risk by limiting how many lexical-only
+  // (no-cosine) hits may be injected. Vector-origin hits are always kept.
+  const vector = [
+    { id: 'V1', score: 0.9, payload: { json: '{}' } },
+    { id: 'V2', score: 0.6, payload: { json: '{}' } },
+  ];
+  const sparse = [
+    { id: 'S1', score: 30, payload: { json: '{}' } },
+    { id: 'S2', score: 20, payload: { json: '{}' } },
+    { id: 'S3', score: 10, payload: { json: '{}' } },
+  ];
+  const fused = hybridFuse(vector, sparse, 'q', { preranked: true, maxLexicalOnly: 1, lexicalDisplayScore: 0.5 });
+  const lexOnly = fused.filter(p => p._lexicalOnly);
+  assert.equal(lexOnly.length, 1, 'only 1 lexical-only hit kept (the cap)');
+  assert.equal(lexOnly[0].id, 'S1', 'the top-ranked lexical-only survives the cap');
+  // Both vector-origin hits retained with their real cosine.
+  assert.equal(fused.filter(p => p.id === 'V1').length, 1);
+  assert.equal(fused.filter(p => p.id === 'V2').length, 1);
+  assert.equal(fused.find(p => p.id === 'V1').score, 0.9);
+});
+
+test('hybridFuse maxLexicalOnly:0 → pure re-rank (no lexical-only candidates added)', () => {
+  const vector = [{ id: 'V1', score: 0.8, payload: { json: '{}' } }];
+  const sparse = [{ id: 'S1', score: 30, payload: { json: '{}' } }];
+  const fused = hybridFuse(vector, sparse, 'q', { preranked: true, maxLexicalOnly: 0 });
+  assert.deepEqual(fused.map(p => p.id), ['V1'], 'no lexical-only added when cap is 0');
+});
+
 test('hybridFuse preranked: native sparse leg used as-is (no app-side re-rank)', () => {
   // The sparse leg comes pre-scored + pre-ordered from Qdrant. With preranked,
   // hybridFuse must trust that order (S2 deliberately precedes the higher-id S1)

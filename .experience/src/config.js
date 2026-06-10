@@ -106,6 +106,21 @@ function getMinConfidence()  { return cfgValue('minConfidence', 'EXPERIENCE_MIN_
 function getHighConfidence() { return cfgValue('highConfidence', 'EXPERIENCE_HIGH_CONFIDENCE', 0.60); }
 function getMinSearchScore() { return cfgValue('minSearchScore', 'EXPERIENCE_MIN_SEARCH_SCORE', 0.40); }
 
+// --- Passive-hint hybridization (PreToolUse/UserPromptSubmit lexical leg) ---
+// Recall is fully hybrid; passive hints stay vector-only by DEFAULT because they
+// are tuned for precision (dashboard Gate 4). These knobs let the native BM25
+// sparse leg also feed passive hints — OFF by default so it can be A/B measured
+// before becoming the norm. When ON, lexical-only hits are capped and given a
+// borderline display score so the existing confidence/scope/precision gates
+// (not a new threshold) decide whether they actually surface.
+function getPassiveHybrid()            { return cfgValue('passiveHybrid', 'EXPERIENCE_PASSIVE_HYBRID', false) === true
+                                                || String(cfgValue('passiveHybrid', 'EXPERIENCE_PASSIVE_HYBRID', 'false')).toLowerCase() === 'true'; }
+function getPassiveLexicalMaxAdds()    { return Math.max(0, Number(cfgValue('passiveLexicalMaxAdds', 'EXPERIENCE_PASSIVE_LEXICAL_MAX_ADDS', 1)) || 0); }
+function getPassiveLexicalDisplayScore() {
+  const v = cfgValue('passiveLexicalDisplayScore', 'EXPERIENCE_PASSIVE_LEXICAL_DISPLAY_SCORE', null);
+  return v == null ? (getMinSearchScore() + 0.10) : (Number(v) || (getMinSearchScore() + 0.10));
+}
+
 // --- Prompt triviality gate (consumed by interceptor-prompt.js) ---
 // Decides whether a UserPromptSubmit prompt is worth running retrieval +
 // injecting the active-recall nudge. Previously hardcoded in the hook; now
@@ -231,6 +246,7 @@ module.exports = {
   getEmbedProvider, getEmbedModel, getEmbedEndpoint, getEmbedKey, getEmbedDim, getEmbedTimeoutMs,
   getBrainProvider, getBrainModel, getBrainExtractModel, getBrainModelForSource, getBrainEndpoint, getBrainKey,
   getMinConfidence, getHighConfidence, getMinSearchScore,
+  getPassiveHybrid, getPassiveLexicalMaxAdds, getPassiveLexicalDisplayScore,
   getMinPromptLength, getPromptSkipRegex, DEFAULT_PROMPT_SKIP_WORDS,
   getExpUser, EXP_USER,
   getHomeExpDir, getStoreDir, getActivityLogPath,

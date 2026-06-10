@@ -179,27 +179,35 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   let t0 = searchResults[0], t1 = searchResults[1], t2 = searchResults[2];
   const routeResult = searchResults[3];
 
-  // Hybrid recall (recall only): run a lexical leg alongside the dense-vector
-  // leg and fuse per collection with Reciprocal Rank Fusion, so an experience
-  // that matches strongly on EITHER semantics OR exact terms surfaces. Passive
-  // hints stay vector-only + precision-gated.
+  // Hybrid lexical leg: run a lexical leg alongside the dense-vector leg and
+  // fuse per collection with Reciprocal Rank Fusion, so an experience that
+  // matches strongly on EITHER semantics OR exact terms surfaces. The lexical
+  // leg prefers Qdrant NATIVE BM25 (scored sparse vector, idf modifier); on a
+  // collection not yet migrated to sparse, searchCollectionSparse returns [] and
+  // we fall back to the boolean MatchText leg (app-side ranked). A dead lexical
+  // leg just leaves the vector leg untouched — neither mode ever breaks.
   //
-  // The lexical leg prefers Qdrant NATIVE BM25 (scored sparse vector, idf
-  // modifier). On a collection not yet migrated to sparse, searchCollectionSparse
-  // returns [] and we fall back to the boolean MatchText leg (app-side ranked).
-  // Either way recall never breaks — a dead lexical leg just leaves the vector
-  // leg untouched.
-  if (recallMode) {
+  // RECALL: full hybrid (lexical-only hits kept, wide net, floor dropped later).
+  // PASSIVE (opt-in via getPassiveHybrid, OFF by default): precision-guarded —
+  // lexical-only hits are CAPPED (passiveLexicalMaxAdds) and given a borderline
+  // display score (passiveLexicalDisplayScore ≈ floor+0.10), so the existing
+  // scope + confidence + precision gates downstream decide whether they surface,
+  // rather than a new threshold. Vector-origin hits are only re-ranked.
+  const passiveHybrid = !recallMode && _config.getPassiveHybrid();
+  if (recallMode || passiveHybrid) {
     const lexicalLeg = async (i) => {
       const sparse = await _qdrant.searchCollectionSparse(COLLECTIONS[i].name, query, tkFor(i), signal, queryFilter);
       if (sparse.length > 0) return { points: sparse, preranked: true };
       const lexical = await _qdrant.searchCollectionLexical(COLLECTIONS[i].name, query, tkFor(i), signal, queryFilter);
       return { points: lexical, preranked: false };
     };
+    const fuseOpts = (preranked) => (passiveHybrid
+      ? { preranked, maxLexicalOnly: _config.getPassiveLexicalMaxAdds(), lexicalDisplayScore: _config.getPassiveLexicalDisplayScore() }
+      : { preranked });
     const [l0, l1, l2] = await Promise.all([lexicalLeg(0), lexicalLeg(1), lexicalLeg(2)]);
-    t0 = _fusion.hybridFuse(t0, l0.points, query, { preranked: l0.preranked });
-    t1 = _fusion.hybridFuse(t1, l1.points, query, { preranked: l1.preranked });
-    t2 = _fusion.hybridFuse(t2, l2.points, query, { preranked: l2.preranked });
+    t0 = _fusion.hybridFuse(t0, l0.points, query, fuseOpts(l0.preranked));
+    t1 = _fusion.hybridFuse(t1, l1.points, query, fuseOpts(l1.preranked));
+    t2 = _fusion.hybridFuse(t2, l2.points, query, fuseOpts(l2.preranked));
   }
 
   // Collections whose seeds are language/framework-specific. For these we
