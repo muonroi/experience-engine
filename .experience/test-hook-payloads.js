@@ -27,13 +27,18 @@ function writeExperienceCore(homeDir, body) {
   fs.writeFileSync(path.join(homeDir, '.experience', 'experience-core.js'), body);
 }
 
-function runHook(homeDir, scriptName, input) {
+function runHook(homeDir, scriptName, input, extraEnv = {}) {
   const started = Date.now();
   const childEnv = {
     ...process.env,
     HOME: homeDir,
     USERPROFILE: homeDir,
     EXPERIENCE_HOOK_DEBUG_LOG: path.join(homeDir, '.experience', 'tmp', 'debug.jsonl'),
+    // Default-off so the suggestion-pipeline tests below stay deterministic
+    // (they assert empty stdout when nothing surfaces). The dedicated nudge
+    // test re-enables it explicitly via extraEnv.
+    EXPERIENCE_RECALL_NUDGE: '0',
+    ...extraEnv,
   };
   // Isolate from the host agent runtime: when the suite runs *inside* a Claude
   // Code / Gemini / Codex session, those CLIs export markers (CLAUDE_PROJECT_DIR,
@@ -216,6 +221,43 @@ test('local UserPromptSubmit keeps high-score prompt suggestions', { skip: CHILD
   assert.match(payload.hookSpecificOutput?.additionalContext || '', /High score prompt guidance/);
   const state = JSON.parse(fs.readFileSync(path.join(homeDir, '.experience', 'tmp', 'last-suggestions.json'), 'utf8'));
   assert.equal(state.surfacedIds[0].id, 'highscor');
+});
+
+test('UserPromptSubmit injects active-recall nudge when no hint surfaced', { skip: CHILD_BLOCKED ? 'sandbox blocks child node processes' : false }, () => {
+  const homeDir = makeTempHome();
+  copyRuntime(homeDir, ['interceptor-prompt.js']);
+  // Core returns nothing → no experience hint this turn.
+  writeExperienceCore(homeDir, `module.exports = { interceptWithMeta: async () => ({ suggestions: null, surfacedIds: [], route: null }), _activityLog: () => {} };`);
+
+  const result = runHook(homeDir, 'interceptor-prompt.js', {
+    hook_event_name: 'UserPromptSubmit',
+    session_id: 'sess-recall-nudge',
+    user_prompt: 'refactor the deployment script and verify the rollout',
+    cwd: '/repo/experience-engine',
+  }, { EXPERIENCE_RECALL_NUDGE: '1' });
+
+  assert.equal(result.status, 0);
+  const ctx = JSON.parse(result.stdout || '{}').hookSpecificOutput?.additionalContext || '';
+  assert.match(ctx, /exp-recall\.js/);
+  assert.match(ctx, /exp-feedback\.js followed\|ignored\|noise/);
+});
+
+test('UserPromptSubmit skips recall nudge when an experience hint surfaced', { skip: CHILD_BLOCKED ? 'sandbox blocks child node processes' : false }, () => {
+  const homeDir = makeTempHome();
+  copyRuntime(homeDir, ['interceptor-prompt.js']);
+  writeExperienceCore(homeDir, scoredPromptCoreFixture(0.80, 'A real hint fired', 'hinted01'));
+
+  const result = runHook(homeDir, 'interceptor-prompt.js', {
+    hook_event_name: 'UserPromptSubmit',
+    session_id: 'sess-recall-nudge-skip',
+    user_prompt: 'please implement the prompt stale feedback loop',
+    cwd: '/repo/experience-engine',
+  }, { EXPERIENCE_RECALL_NUDGE: '1' });
+
+  assert.equal(result.status, 0);
+  const ctx = JSON.parse(result.stdout || '{}').hookSpecificOutput?.additionalContext || '';
+  assert.match(ctx, /A real hint fired/);
+  assert.doesNotMatch(ctx, /exp-recall\.js/); // nudge suppressed when a hint is present
 });
 
 test('local UserPromptSubmit reconciles stale prompt-only state before next prompt', { skip: CHILD_BLOCKED ? 'sandbox blocks child node processes' : false }, () => {

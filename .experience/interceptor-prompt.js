@@ -47,6 +47,22 @@ const PROMPT_STALE_MS = timeoutFromEnv('EXPERIENCE_PROMPT_STALE_MS', 10_000);
 const PROMPT_STALE_RECONCILE_TIMEOUT_MS = timeoutFromEnv('EXPERIENCE_PROMPT_STALE_RECONCILE_TIMEOUT_MS', 450);
 const PROMPT_HOOK_MIN_SCORE = timeoutFromEnv('EXPERIENCE_PROMPT_HOOK_MIN_SCORE', 0.60);
 
+// Active-recall nudge. SessionStart + CLAUDE.md/AGENTS.md get buried in long
+// contexts (and dropped on compaction), so the agent stops actively pulling
+// experience. Re-injecting a one-line reminder per prompt keeps the PULL path
+// (exp-recall) top-of-mind. Emitted only when NO experience hint surfaced this
+// turn — a surfaced hint already carries [id col] + the feedback command, so
+// doubling up is redundant. Disable with EXPERIENCE_RECALL_NUDGE=0.
+const RECALL_NUDGE_ENABLED = process.env.EXPERIENCE_RECALL_NUDGE !== '0';
+const RECALL_NUDGE_TEXT = [
+  '💡 [Experience] Unfamiliar/risky step, or want prior lessons before you act?',
+  'Don\'t wait for passive hints — actively query the brain:',
+  '`node ~/.experience/exp-recall.js "<your question>"`',
+  '(semantic search across T0 principles → T1 behavioral → T2 seeds → self-QA; records a surface).',
+  'After acting, report the verdict so the brain learns:',
+  '`node ~/.experience/exp-feedback.js followed|ignored|noise <id> <col>`.',
+].join(' ');
+
 function debugLog(event) {
   try {
     fs.mkdirSync(path.dirname(DEBUG_LOG), { recursive: true });
@@ -488,6 +504,11 @@ process.stdin.on('end', async () => {
     if (sourceMeta.sourceKind !== 'codex-hook' && routeInfo && routeInfo.tier) {
       const routeLine = `[Model Route] tier=${routeInfo.tier} model=${routeInfo.model || '?'} confidence=${(routeInfo.confidence || 0).toFixed(2)} source=${routeInfo.source || 'default'}`;
       outputText = outputText ? outputText + '\n---\n' + routeLine : routeLine;
+    }
+
+    // Active-recall nudge — only when no experience hint surfaced this turn.
+    if (RECALL_NUDGE_ENABLED && !suggestions) {
+      outputText = outputText ? outputText + '\n---\n' + RECALL_NUDGE_TEXT : RECALL_NUDGE_TEXT;
     }
 
     if (outputText) {

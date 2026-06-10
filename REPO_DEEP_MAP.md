@@ -96,7 +96,7 @@ Qdrant config is resolved through `.experience/src/config.js`, so both flat keys
 | Path | Purpose |
 |------|---------|
 | `.experience/interceptor.js` | Agent hook entry; calls local core or remote client |
-| `.experience/interceptor-prompt.js` | Prompt-side interception helpers |
+| `.experience/interceptor-prompt.js` | UserPromptSubmit hook: similarity-gated experience hints + **active-recall nudge** (one-line reminder to PULL via `exp-recall` injected per prompt, but ONLY when no hint surfaced that turn — survives context compaction that buries SessionStart/CLAUDE.md). Disable with `EXPERIENCE_RECALL_NUDGE=0` |
 | `.experience/interceptor-session.js` | SessionStart hook; injects the breadth-first Project Brief once per session. Wired for Claude/Codex/Gemini/Antigravity (all expose a native SessionStart + `hookSpecificOutput.additionalContext`; Antigravity tagged `--runtime=antigravity`) |
 | `.experience/interceptor-post.js` | Post-tool reconciliation hook |
 | `.experience/posttool-batch-hook.js` | Batched post-tool hook path |

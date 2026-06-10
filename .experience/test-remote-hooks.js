@@ -55,6 +55,9 @@ function runHook(homeDir, scriptName, input, extraEnv = {}) {
         HOME: homeDir,
         USERPROFILE: homeDir,
         EXPERIENCE_HOOK_DEBUG_LOG: path.join(homeDir, '.experience', 'tmp', 'debug.jsonl'),
+        // Default-off so prompt-pipeline assertions (empty stdout when nothing
+        // surfaces) stay deterministic; the nudge has its own test.
+        EXPERIENCE_RECALL_NUDGE: '0',
         ...extraEnv,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
