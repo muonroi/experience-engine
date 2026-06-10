@@ -21,7 +21,10 @@ const { getEmbedding } = require('./embedding');
 const {
   searchCollection, fileStoreRead, fileStoreUpsert,
   cosineSimilarity, checkQdrant, setQdrantAvailable, buildQdrantUserFilter, deleteEntry,
+  collectionSupportsSparse,
 } = require('./qdrant');
+const { buildSparseVector, SPARSE_VECTOR_NAME } = require('./sparse');
+const { log } = require('./logger');
 const { normalizeExtractText, assessExtractedQaQuality } = require('./context');
 const {
   ensureSignalMetrics, ensureNovelCaseEvidence,
@@ -970,10 +973,23 @@ async function upsertEntry(collection, id, vector, data) {
     fileStoreUpsert(collection, id, vector, payload);
     return;
   }
+  // Native BM25: when the collection was (re)created with the text_bm25 sparse
+  // vector, write it alongside the unnamed dense vector ({"": dense, text_bm25:
+  // sparse}). Falls back to dense-only when the collection is not yet migrated,
+  // so writes never break before the migration runs.
+  let vectorField = vector;
+  try {
+    const sparse = buildSparseVector(payload.text_search);
+    if (sparse.indices.length > 0 && await collectionSupportsSparse(collection)) {
+      vectorField = { '': vector, [SPARSE_VECTOR_NAME]: sparse };
+    }
+  } catch (err) {
+    log('warn', 'sparse_upsert_skip', { collection, error: err?.message || String(err) });
+  }
   await fetch(`${getQdrantBase()}/collections/${collection}/points`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
-    body: JSON.stringify({ points: [{ id, vector, payload }] }),
+    body: JSON.stringify({ points: [{ id, vector: vectorField, payload }] }),
     signal: AbortSignal.timeout(5000),
   });
 }
