@@ -77,6 +77,23 @@ test('hybridFuse: empty lexical leg degrades to vector order', () => {
   assert.deepEqual(fused.map(p => p.id), ['A', 'B']);
 });
 
+test('hybridFuse preranked: native sparse leg used as-is (no app-side re-rank)', () => {
+  // The sparse leg comes pre-scored + pre-ordered from Qdrant. With preranked,
+  // hybridFuse must trust that order (S2 deliberately precedes the higher-id S1)
+  // and NOT run lexicalRank (which needs payload.text_search these points lack).
+  const vector = [{ id: 'V', score: 0.7, payload: { json: '{}' } }];
+  const sparse = [
+    { id: 'S2', score: 9.1, payload: { json: '{}' } }, // sparse rank 1
+    { id: 'S1', score: 4.2, payload: { json: '{}' } }, // sparse rank 2
+  ];
+  const fused = hybridFuse(vector, sparse, 'qq', { preranked: true });
+  // S2 (sparse rank 1) outranks S1 (sparse rank 2) in the fused result.
+  const pos = id => fused.findIndex(p => p.id === id);
+  assert.ok(pos('S2') < pos('S1'), 'pre-ranked sparse order preserved');
+  // Lexical-only sparse points still surface (vector leg missed them).
+  assert.ok(pos('S2') !== -1 && pos('S1') !== -1);
+});
+
 test('buildTextSearch: concatenates searchable fields, normalizes whitespace, caps length', () => {
   const data = {
     trigger: 'When  running   tests', question: 'how to fix flaky?',

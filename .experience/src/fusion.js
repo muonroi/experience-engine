@@ -89,7 +89,9 @@ function rrfFuse(rankedLists, opts = {}) {
 // indicative score for lexical-only hits (no cosine available). _rrfScore and
 // _lexicalOnly are attached for diagnostics.
 function hybridFuse(vectorPoints, lexicalCandidates, queryText, opts = {}) {
-  const lexRanked = lexicalRank(lexicalCandidates, queryText);
+  // opts.preranked: the lexical leg is already scored + ordered (e.g. Qdrant
+  // native BM25 sparse query) — use it as-is instead of app-side lexicalRank.
+  const lexRanked = opts.preranked ? (lexicalCandidates || []) : lexicalRank(lexicalCandidates, queryText);
   const cosineById = new Map((vectorPoints || []).map(p => [String(p.id), p.score]));
   const fused = rrfFuse([vectorPoints || [], lexRanked], opts);
   const lexicalDisplay = typeof opts.lexicalDisplayScore === 'number' ? opts.lexicalDisplayScore : 0.5;

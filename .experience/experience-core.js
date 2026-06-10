@@ -179,20 +179,27 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   let t0 = searchResults[0], t1 = searchResults[1], t2 = searchResults[2];
   const routeResult = searchResults[3];
 
-  // Hybrid recall (recall only): run a lexical full-text leg alongside the
-  // dense-vector leg and fuse per collection with Reciprocal Rank Fusion, so an
-  // experience that matches strongly on EITHER semantics OR exact terms
-  // surfaces. Passive hints stay vector-only + precision-gated. The lexical leg
-  // degrades to [] if the text index is missing, so this never breaks recall.
+  // Hybrid recall (recall only): run a lexical leg alongside the dense-vector
+  // leg and fuse per collection with Reciprocal Rank Fusion, so an experience
+  // that matches strongly on EITHER semantics OR exact terms surfaces. Passive
+  // hints stay vector-only + precision-gated.
+  //
+  // The lexical leg prefers Qdrant NATIVE BM25 (scored sparse vector, idf
+  // modifier). On a collection not yet migrated to sparse, searchCollectionSparse
+  // returns [] and we fall back to the boolean MatchText leg (app-side ranked).
+  // Either way recall never breaks — a dead lexical leg just leaves the vector
+  // leg untouched.
   if (recallMode) {
-    const [lx0, lx1, lx2] = await Promise.all([
-      _qdrant.searchCollectionLexical(COLLECTIONS[0].name, query, tkFor(0), signal, queryFilter),
-      _qdrant.searchCollectionLexical(COLLECTIONS[1].name, query, tkFor(1), signal, queryFilter),
-      _qdrant.searchCollectionLexical(COLLECTIONS[2].name, query, tkFor(2), signal, queryFilter),
-    ]);
-    t0 = _fusion.hybridFuse(t0, lx0, query);
-    t1 = _fusion.hybridFuse(t1, lx1, query);
-    t2 = _fusion.hybridFuse(t2, lx2, query);
+    const lexicalLeg = async (i) => {
+      const sparse = await _qdrant.searchCollectionSparse(COLLECTIONS[i].name, query, tkFor(i), signal, queryFilter);
+      if (sparse.length > 0) return { points: sparse, preranked: true };
+      const lexical = await _qdrant.searchCollectionLexical(COLLECTIONS[i].name, query, tkFor(i), signal, queryFilter);
+      return { points: lexical, preranked: false };
+    };
+    const [l0, l1, l2] = await Promise.all([lexicalLeg(0), lexicalLeg(1), lexicalLeg(2)]);
+    t0 = _fusion.hybridFuse(t0, l0.points, query, { preranked: l0.preranked });
+    t1 = _fusion.hybridFuse(t1, l1.points, query, { preranked: l1.preranked });
+    t2 = _fusion.hybridFuse(t2, l2.points, query, { preranked: l2.preranked });
   }
 
   // Collections whose seeds are language/framework-specific. For these we

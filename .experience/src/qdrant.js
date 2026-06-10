@@ -12,6 +12,7 @@ const {
   getStoreDir, getExpUser, COLLECTIONS,
 } = require('./config');
 const { log } = require('./logger');
+const { buildSparseVector, SPARSE_VECTOR_NAME } = require('./sparse');
 
 // ============================================================
 //  Qdrant connection state
@@ -451,6 +452,133 @@ async function syncToQdrant() {
 }
 
 // ============================================================
+//  Sparse BM25 (native Qdrant lexical leg)
+//  Qdrant scores these with idf weighting server-side (sparse vector configured
+//  with modifier:"idf"). Replaces the boolean MatchText leg with real scored
+//  retrieval. A collection only supports this once it was (re)created with the
+//  sparse vector config — see tools/migrate-sparse-bm25.js. The write path
+//  probes support and falls back to dense-only, so deploy is non-breaking before
+//  migration; the recall path falls back to searchCollectionLexical.
+// ============================================================
+
+// Per-collection support cache. value: { supported: bool, at: ms }
+const _sparseSupport = new Map();
+const SPARSE_SUPPORT_TTL_MS = 60_000;
+
+/**
+ * collectionSupportsSparse: true iff the collection was created with the
+ * `text_bm25` sparse vector. Cached (60s) so the hot write path doesn't probe
+ * Qdrant on every upsert. Returns false without Qdrant or on any error (callers
+ * then write dense-only / fall back to MatchText).
+ */
+async function collectionSupportsSparse(collection, signal) {
+  const cached = _sparseSupport.get(collection);
+  if (cached && (Date.now() - cached.at) < SPARSE_SUPPORT_TTL_MS) return cached.supported;
+  if (!(await checkQdrant())) return false;
+  let supported = false;
+  try {
+    const res = await fetch(`${getQdrantBase()}/collections/${collection}`, {
+      headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
+      signal: signal || AbortSignal.timeout(5000),
+    });
+    if (res.ok) {
+      const sv = (await res.json()).result?.config?.params?.sparse_vectors;
+      supported = !!(sv && sv[SPARSE_VECTOR_NAME]);
+    } else {
+      log('warn', 'sparse_support_probe_http_error', { collection, status: res.status });
+    }
+  } catch (err) {
+    log('warn', 'sparse_support_probe_error', { collection, error: err?.message || String(err) });
+    return false; // do not cache transient errors
+  }
+  _sparseSupport.set(collection, { supported, at: Date.now() });
+  return supported;
+}
+
+function invalidateSparseSupport(collection) {
+  if (collection) _sparseSupport.delete(collection);
+  else _sparseSupport.clear();
+}
+
+/**
+ * searchCollectionSparse: native BM25 lexical leg. Builds a sparse query vector
+ * from queryText and runs a scored sparse query (`using: text_bm25`). Returns
+ * scored points `{ id, score, payload }` in Qdrant rank order. Returns [] when:
+ * Qdrant is down, the collection has no sparse vector yet (pre-migration), the
+ * query has no usable tokens, or any error — so recall degrades cleanly.
+ */
+async function searchCollectionSparse(name, queryText, limit, signal, extraFilter) {
+  if (!(await checkQdrant())) return [];
+  const sparse = buildSparseVector(queryText);
+  if (sparse.indices.length === 0) return [];
+  if (!(await collectionSupportsSparse(name, signal))) return [];
+  try {
+    const filter = { must: [buildQdrantUserFilter()] };
+    if (extraFilter && typeof extraFilter === 'object') {
+      if (Array.isArray(extraFilter.must)) filter.must.push(...extraFilter.must);
+      if (Array.isArray(extraFilter.must_not)) filter.must_not = [...(filter.must_not || []), ...extraFilter.must_not];
+      if (Array.isArray(extraFilter.should)) filter.should = [...(filter.should || []), ...extraFilter.should];
+    }
+    const res = await fetch(`${getQdrantBase()}/collections/${name}/points/query`, {
+      method: 'POST',
+      headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ query: sparse, using: SPARSE_VECTOR_NAME, limit, with_payload: true, filter }),
+      signal,
+    });
+    if (!res.ok) {
+      log('warn', 'sparse_search_http_error', { collection: name, status: res.status });
+      return [];
+    }
+    return (await res.json()).result?.points ?? [];
+  } catch (err) {
+    log('warn', 'sparse_search_failed', { collection: name, error: err?.message || String(err) });
+    return [];
+  }
+}
+
+/**
+ * ensureSparseCollection: create the collection WITH the text_bm25 sparse vector
+ * if it does not exist. Qdrant cannot ADD a sparse vector to an existing
+ * dense-only collection (PATCH update_collection only edits existing sparse
+ * params) — migrating an existing collection is tools/migrate-sparse-bm25.js's
+ * job. This only covers the fresh-install case. Idempotent; non-fatal.
+ */
+async function ensureSparseCollection(collection, dim, signal) {
+  if (!(await checkQdrant())) return false;
+  try {
+    const check = await fetch(`${getQdrantBase()}/collections/${collection}`, {
+      headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
+      signal: signal || AbortSignal.timeout(5000),
+    });
+    if (check.ok) {
+      const sv = (await check.json()).result?.config?.params?.sparse_vectors;
+      if (sv && sv[SPARSE_VECTOR_NAME]) return true;
+      log('warn', 'sparse_vector_absent_needs_migration', { collection });
+      return false; // exists but dense-only — migration required, cannot PATCH-add
+    }
+    const create = await fetch(`${getQdrantBase()}/collections/${collection}`, {
+      method: 'PUT',
+      headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        vectors: { size: Number(dim) || 768, distance: 'Cosine' },
+        sparse_vectors: { [SPARSE_VECTOR_NAME]: { modifier: 'idf' } },
+      }),
+      signal: signal || AbortSignal.timeout(10000),
+    });
+    if (!create.ok) {
+      const body = await create.text();
+      log('warn', 'ensure_sparse_collection_failed', { collection, status: create.status, body: body.slice(0, 200) });
+      return false;
+    }
+    invalidateSparseSupport(collection);
+    return true;
+  } catch (err) {
+    log('warn', 'ensure_sparse_collection_error', { collection, error: err?.message || String(err) });
+    return false;
+  }
+}
+
+// ============================================================
 //  Exports
 // ============================================================
 
@@ -461,6 +589,10 @@ module.exports = {
   updatePointPayload,
   searchCollection,
   searchCollectionLexical,
+  searchCollectionSparse,
+  collectionSupportsSparse,
+  invalidateSparseSupport,
+  ensureSparseCollection,
   scrollCollection,
   ensureTextIndex,
   setPayloadFields,

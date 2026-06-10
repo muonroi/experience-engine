@@ -1296,7 +1296,7 @@ else
         fi
         if eval "curl -s -m 10 -X PUT $QDRANT_AUTH_HEADER '$QDRANT_URL/collections/$COLL' \
           -H 'Content-Type: application/json' \
-          -d '{\"vectors\":{\"size\":${EMBED_DIM},\"distance\":\"Cosine\"}}'" >/dev/null 2>&1; then
+          -d '{\"vectors\":{\"size\":${EMBED_DIM},\"distance\":\"Cosine\"},\"sparse_vectors\":{\"text_bm25\":{\"modifier\":\"idf\"}}}'" >/dev/null 2>&1; then
           echo "  $COLL recreated (dim=$EMBED_DIM)"
         else
           echo "  [WARN] Could not recreate $COLL (dim=$EMBED_DIM) — FileStore fallback will be used"
