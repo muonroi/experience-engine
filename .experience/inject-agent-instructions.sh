@@ -34,6 +34,13 @@ a step is unfamiliar or risky:
 node ~/.experience/exp-recall.js "<your question>"
 ```
 
+**Recall-first, verify-before-acting.** On an unfamiliar or risky step, query the
+brain to orient and surface prior gotchas BEFORE diving in — then read the specific
+code it points to and confirm against ground truth before acting. Recall replaces
+broad blind exploration (read 1 file, not 10); it does NOT replace verifying the
+exact code you are about to change, and recalled lessons are point-in-time and can
+be stale — Evidence-First wins over a remembered claim.
+
 After acting on any hint, report the verdict so the brain learns (this drives
 Gate-4 precision — skipping it lets useful hints get auto-pruned):
 
