@@ -327,9 +327,32 @@ function buildSourceMeta(data, _toolInput) {
   return meta;
 }
 
-// Skip trivial prompts — greetings, single words, very short
-const SKIP_PATTERNS = /^(hi|hello|hey|thanks|ok|yes|no|quit|exit|help|\/\w+)\s*$/i;
-const MIN_PROMPT_LENGTH = 10;
+// Skip trivial prompts — greetings, single words, very short. Criteria are
+// config/env-driven (src/config.js getMinPromptLength + getPromptSkipRegex) so
+// they can be tuned per install (e.g. non-English greetings, length floor)
+// without editing this hook. Fail-open to the original hardcoded defaults if
+// config.js can't be loaded (thin-client safety) so triviality skipping never
+// breaks prompt handling.
+const DEFAULT_SKIP_PATTERNS = /^(hi|hello|hey|thanks|ok|yes|no|quit|exit|help|\/\w+)\s*$/i;
+const DEFAULT_MIN_PROMPT_LENGTH = 10;
+
+function loadTrivialityConfig() {
+  try {
+    const cfg = require(path.join(EXP_DIR, 'src', 'config.js'));
+    return {
+      minLength: cfg.getMinPromptLength(),
+      skipRegex: cfg.getPromptSkipRegex(),
+    };
+  } catch {
+    try {
+      const cfg = require(path.join(__dirname, 'src', 'config.js'));
+      return { minLength: cfg.getMinPromptLength(), skipRegex: cfg.getPromptSkipRegex() };
+    } catch {
+      return { minLength: DEFAULT_MIN_PROMPT_LENGTH, skipRegex: DEFAULT_SKIP_PATTERNS };
+    }
+  }
+}
+const { minLength: MIN_PROMPT_LENGTH, skipRegex: SKIP_PATTERNS } = loadTrivialityConfig();
 
 let input = '';
 

@@ -223,6 +223,23 @@ test('local UserPromptSubmit keeps high-score prompt suggestions', { skip: CHILD
   assert.equal(state.surfacedIds[0].id, 'highscor');
 });
 
+test('UserPromptSubmit treats a non-English greeting as trivial (config default)', { skip: CHILD_BLOCKED ? 'sandbox blocks child node processes' : false }, () => {
+  const homeDir = makeTempHome();
+  copyRuntime(homeDir, ['interceptor-prompt.js']);
+  // Core would surface a hint, but the trivial gate should short-circuit first.
+  writeExperienceCore(homeDir, noisyCoreFixture());
+
+  const result = runHook(homeDir, 'interceptor-prompt.js', {
+    hook_event_name: 'UserPromptSubmit',
+    session_id: 'sess-vi-greeting',
+    user_prompt: 'cảm ơn',
+    cwd: '/repo/experience-engine',
+  }, { EXPERIENCE_RECALL_NUDGE: '1' }); // nudge on — proves the SKIP wins over it
+
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout, ''); // trivial → no retrieval, no nudge
+});
+
 test('UserPromptSubmit injects active-recall nudge when no hint surfaced', { skip: CHILD_BLOCKED ? 'sandbox blocks child node processes' : false }, () => {
   const homeDir = makeTempHome();
   copyRuntime(homeDir, ['interceptor-prompt.js']);

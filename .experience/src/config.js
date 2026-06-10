@@ -101,6 +101,55 @@ function getEmbedDim()       { return cfgValue('embedDim', 'EXPERIENCE_EMBED_DIM
 function getMinConfidence()  { return cfgValue('minConfidence', 'EXPERIENCE_MIN_CONFIDENCE', 0.42); }
 function getHighConfidence() { return cfgValue('highConfidence', 'EXPERIENCE_HIGH_CONFIDENCE', 0.60); }
 function getMinSearchScore() { return cfgValue('minSearchScore', 'EXPERIENCE_MIN_SEARCH_SCORE', 0.40); }
+
+// --- Prompt triviality gate (consumed by interceptor-prompt.js) ---
+// Decides whether a UserPromptSubmit prompt is worth running retrieval +
+// injecting the active-recall nudge. Previously hardcoded in the hook; now
+// config/env-driven so it can be tuned per install without a code change
+// (e.g. add non-English greetings, lower the length floor). Deterministic and
+// zero-latency by design — the brain still judges relevance of the RETRIEVED
+// hints downstream (brainRelevanceFilter), so this stays a cheap pre-filter.
+function getMinPromptLength() {
+  const n = Number(cfgValue('minPromptLength', 'EXPERIENCE_MIN_PROMPT_LENGTH', 10));
+  return Number.isFinite(n) && n >= 0 ? n : 10;
+}
+
+// Default greeting/ack words (multilingual). A prompt whose entire trimmed text
+// is one of these (or a bare slash-command) is treated as trivial.
+const DEFAULT_PROMPT_SKIP_WORDS = [
+  'hi', 'hello', 'hey', 'yo', 'thanks', 'thank you', 'thx', 'ok', 'okay', 'k',
+  'yes', 'yep', 'no', 'nope', 'quit', 'exit', 'help',
+  // Vietnamese
+  'chào', 'chao', 'xin chào', 'cảm ơn', 'cam on', 'cám ơn', 'thanks nhé',
+  'ừ', 'ờ', 'vâng', 'dạ', 'ok nhé', 'tiếp', 'tiếp tục', 'được',
+];
+
+function _escapeRegex(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+// Returns a RegExp matching a trivial prompt (anchored, case-insensitive).
+// Override priority: explicit full pattern > word list > built-in default.
+function getPromptSkipRegex() {
+  const cfg = getConfig();
+  // Full override: a raw regex source string via config.promptSkipPattern or env.
+  const rawPattern = cfg.promptSkipPattern || process.env.EXPERIENCE_PROMPT_SKIP_PATTERN;
+  if (rawPattern) {
+    try { return new RegExp(rawPattern, 'i'); }
+    catch (err) {
+      // Fail-open to default rather than crash the hook on a bad config value.
+      activityLog({ op: 'config', warn: 'invalid_prompt_skip_pattern', error: err?.message });
+    }
+  }
+  // Word list: array from config.json, or comma/pipe-separated env, else default.
+  let words = cfg.promptSkipWords;
+  if (!Array.isArray(words)) {
+    const envWords = process.env.EXPERIENCE_PROMPT_SKIP_WORDS;
+    words = envWords ? envWords.split(/[,|]/).map(w => w.trim()).filter(Boolean) : DEFAULT_PROMPT_SKIP_WORDS;
+  }
+  const alt = words.map(_escapeRegex).join('|');
+  // Always treat a bare slash-command (/clear, /help, …) as trivial too.
+  return new RegExp(`^(?:${alt}|\\/\\w+)\\s*$`, 'i');
+}
+
 function getOllamaEmbedUrl() { return `${getOllamaBase()}/api/embed`; }
 function getOllamaGenerateUrl() { return `${getOllamaBase()}/api/generate`; }
 function getExpUser() {
@@ -170,6 +219,7 @@ module.exports = {
   getEmbedProvider, getEmbedModel, getEmbedEndpoint, getEmbedKey, getEmbedDim,
   getBrainProvider, getBrainModel, getBrainExtractModel, getBrainModelForSource, getBrainEndpoint, getBrainKey,
   getMinConfidence, getHighConfidence, getMinSearchScore,
+  getMinPromptLength, getPromptSkipRegex, DEFAULT_PROMPT_SKIP_WORDS,
   getExpUser, EXP_USER,
   getHomeExpDir, getStoreDir, getActivityLogPath,
   COLLECTIONS, SELFQA_COLLECTION, EDGE_COLLECTION, ROUTES_COLLECTION,

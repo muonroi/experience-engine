@@ -96,7 +96,7 @@ Qdrant config is resolved through `.experience/src/config.js`, so both flat keys
 | Path | Purpose |
 |------|---------|
 | `.experience/interceptor.js` | Agent hook entry; calls local core or remote client |
-| `.experience/interceptor-prompt.js` | UserPromptSubmit hook: similarity-gated experience hints + **active-recall nudge** (one-line reminder to PULL via `exp-recall` injected per prompt, but ONLY when no hint surfaced that turn — survives context compaction that buries SessionStart/CLAUDE.md). Disable with `EXPERIENCE_RECALL_NUDGE=0` |
+| `.experience/interceptor-prompt.js` | UserPromptSubmit hook: similarity-gated experience hints + **active-recall nudge** (one-line reminder to PULL via `exp-recall` injected per prompt, but ONLY when no hint surfaced that turn — survives context compaction that buries SessionStart/CLAUDE.md). Disable with `EXPERIENCE_RECALL_NUDGE=0`. **Trivial-prompt gate is config-driven** (no longer hardcoded): `getMinPromptLength` (`minPromptLength` / `EXPERIENCE_MIN_PROMPT_LENGTH`, default 10) + `getPromptSkipRegex` (`promptSkipWords[]` or `EXPERIENCE_PROMPT_SKIP_WORDS`, multilingual default incl. vi greetings; full override via `promptSkipPattern` / `EXPERIENCE_PROMPT_SKIP_PATTERN`). Fails open to hardcoded defaults if config.js can't load |
 | `.experience/interceptor-session.js` | SessionStart hook; injects the breadth-first Project Brief once per session. Wired for Claude/Codex/Gemini/Antigravity (all expose a native SessionStart + `hookSpecificOutput.additionalContext`; Antigravity tagged `--runtime=antigravity`) |
 | `.experience/interceptor-post.js` | Post-tool reconciliation hook |
 | `.experience/posttool-batch-hook.js` | Batched post-tool hook path |
