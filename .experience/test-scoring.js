@@ -129,10 +129,26 @@ describe('NOISE-03: confidence aging', () => {
       `expected ~0.5 (clean-hitless grace), got ${result.toFixed(4)}`);
   });
 
-  it('negatively-signalled un-validated entry (surfaceCount>3, hits=0, ignoreCount>0) still decays via ageFactor 0.7', () => {
+  it('lightly-signalled hitless entry decays gently by negative-rate, not the old flat cliff', () => {
+    // Graded penalty (death-spiral guard, 2026-06-10): 1 ignore over 5 surfaces ->
+    // negRate 0.2 -> factor 0.94 -> 0.47, NOT the old 0.5*0.7=0.35 that buried clean
+    // entries below minConfidence on a single stale ignore.
     const result = computeEffectiveConfidence({ confidence: 0.5, hitCount: 0, surfaceCount: 5, ignoreCount: 1 });
-    assert.ok(Math.abs(result - 0.35) < 0.01,
-      `expected ~0.35 (0.5 * 0.7), got ${result.toFixed(4)}`);
+    assert.ok(Math.abs(result - 0.47) < 0.01,
+      `expected ~0.47 (0.5 * (1 - 0.3*0.2)), got ${result.toFixed(4)}`);
+  });
+
+  it('heavily-signalled hitless entry still decays (high negative rate)', () => {
+    // 8 ignores over 10 surfaces -> negRate 0.8 -> factor 0.76 -> 0.38: legitimately low.
+    const result = computeEffectiveConfidence({ confidence: 0.5, hitCount: 0, surfaceCount: 10, ignoreCount: 8 });
+    assert.ok(Math.abs(result - 0.38) < 0.01, `expected ~0.38, got ${result.toFixed(4)}`);
+  });
+
+  it('negative penalty is monotonic in count and reproduces base*0.7 at negRate=1', () => {
+    const mk = (neg) => computeEffectiveConfidence({ confidence: 0.5, hitCount: 0, surfaceCount: 10, ignoreCount: neg });
+    assert.ok(mk(0) >= mk(1) && mk(1) >= mk(5) && mk(5) >= mk(10), 'should be monotonic non-increasing');
+    assert.strictEqual(mk(0), 0.5);                  // clean grace -> base
+    assert.ok(Math.abs(mk(10) - 0.5 * 0.7) < 1e-9);  // negRate 1 -> old cliff factor
   });
 
   it('defaults to confidence=0.5 when missing (bootstrap grace applies)', () => {
@@ -247,14 +263,14 @@ describe('rerankByQuality', () => {
 
 describe('formatPoints with effective confidence', () => {
   it('filters by effective confidence, not raw cosine score', () => {
-    // A negatively-signalled entry (ignoreCount>0) past bootstrap grace decays via
-    // ageFactor 0.7 -> 0.35, below MIN_CONFIDENCE, so it is filtered out even though
-    // raw cosine score is high. (A clean hitless entry keeps base and would pass.)
+    // A heavily negatively-signalled entry (high negative rate) past bootstrap grace
+    // decays below MIN_CONFIDENCE via the graded penalty, so it is filtered out even
+    // though raw cosine score is high. (A clean hitless entry keeps base and passes.)
     const points = [
-      mkPoint(0.50, { hitCount: 0, confidence: 0.5, surfaceCount: 5, ignoreCount: 1, solution: 'test solution' }),
+      mkPoint(0.50, { hitCount: 0, confidence: 0.5, surfaceCount: 10, ignoreCount: 8, solution: 'test solution' }),
     ];
     const lines = formatPoints(points);
-    // effectiveConfidence = 0.5 * 0.7 = 0.35 < MIN_CONFIDENCE => filtered out
+    // effectiveConfidence = 0.5 * (1 - 0.3*0.8) = 0.38 < MIN_CONFIDENCE => filtered out
     assert.strictEqual(lines.length, 0, 'should filter out low effective confidence');
   });
 

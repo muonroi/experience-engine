@@ -50,6 +50,21 @@ function computeEffectiveConfidence(data) {
   const negativeSignal = (data.ignoreCount || 0) + (data.irrelevantCount || 0)
     + Object.values(data.noiseReasonCounts || {}).reduce((a, c) => a + (Number(c) || 0), 0);
   if (hits === 0 && negativeSignal === 0) return base;
+  // Graded negative penalty (durable death-spiral guard, 2026-06-10): the old
+  // flat `hits===0 -> base*0.7` cliff let a SINGLE stale ignore — frequently
+  // earned under bad surfacing context, not bad content — permanently drop a
+  // 0.5–0.7 base entry below minConfidence, collapsing the surfacing corpus
+  // (measured: 170/263 selfqa entries "killed-innocent" with one ignore each).
+  // Scale the penalty by the negative RATE over the entry's surface exposure
+  // instead: a lone ignore among many surfaces barely dents it, while a high
+  // negative rate still decays it. Self-correcting — a re-surfaced entry that
+  // keeps drawing negatives re-suppresses legitimately as neg approaches its
+  // exposure. negRate=1 reproduces the old base*0.7 cliff.
+  if (hits === 0) {
+    const exposure = Math.max(surfaceCount, negativeSignal, 1);
+    const negRate = Math.min(1, negativeSignal / exposure);
+    return base * (1 - 0.30 * negRate);
+  }
   const ageFactor = Math.min(1.0, 0.7 + (hits * 0.06));
   return base * ageFactor;
 }
