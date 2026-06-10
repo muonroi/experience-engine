@@ -70,6 +70,8 @@ copy_file "$SRC_DIR/remote-client.js" "remote-client.js"
 copy_file "$SRC_DIR/source-meta-enrich.js" "source-meta-enrich.js"
 copy_file "$SRC_DIR/stop-extractor.js" "stop-extractor.js"
 copy_file "$SRC_DIR/sync-install.sh" "sync-install.sh"
+copy_file "$SRC_DIR/inject-agent-instructions.sh" "inject-agent-instructions.sh"
+copy_file "$SRC_DIR/AGENT_GUIDE.md" "AGENT_GUIDE.md"
 copy_file "$ROOT_DIR/tools/exp-server-maintain.js" "exp-server-maintain.js"
 copy_file "$ROOT_DIR/tools/exp-portable-backup.js" "exp-portable-backup.js"
 copy_file "$ROOT_DIR/tools/exp-portable-restore.js" "exp-portable-restore.js"
@@ -129,6 +131,13 @@ if [ -f "$TARGET_DIR/register-hooks.js" ]; then
     EXP_STOP="$STOP_FWD" \
     EXP_REGISTER_MODE="existing-only" \
     node "$TARGET_DIR/register-hooks.js" || log "  (non-fatal: register-hooks failed)"
+fi
+
+# Refresh the managed agent-instruction block on every upgrade (idempotent;
+# auto-migrates stale blocks). Honors EXPERIENCE_SKIP_MD_INJECT.
+if [ -f "$TARGET_DIR/inject-agent-instructions.sh" ]; then
+  log "Refreshing agent instruction block..."
+  bash "$TARGET_DIR/inject-agent-instructions.sh" || log "  (non-fatal: agent instruction injection skipped)"
 fi
 
 log "Runtime sync complete: $TARGET_DIR"

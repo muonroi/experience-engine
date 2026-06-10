@@ -1381,56 +1381,11 @@ STOP_FWD=$(echo "$STOP_PATH" | sed 's|\\|/|g' | sed 's|^/\([a-zA-Z]\)/|\1:/|')
 EXP_SELECTED_AGENTS="$SELECTED_AGENTS" EXP_INTERCEPTOR="$INTERCEPTOR_FWD" EXP_INTERCEPTOR_POST="$INTERCEPTOR_POST_FWD" EXP_INTERCEPTOR_PROMPT="$INTERCEPTOR_PROMPT_FWD" EXP_INTERCEPTOR_SESSION="$INTERCEPTOR_SESSION_FWD" EXP_STOP="$STOP_FWD" EXP_REGISTER_MODE="full" node "$INSTALL_DIR/register-hooks.js"
 
 # ── Auto-inject Experience Engine instruction block into agent MD files ──
+# Delegates to the shared, idempotent injector so install and upgrade share one
+# source of truth for the managed block (see inject-agent-instructions.sh).
 echo ""
 echo "  Injecting Experience Engine instructions into agent config files..."
-
-EXP_INSTRUCTION_BLOCK='<!-- experience-engine:start -->
-## Experience Engine Hooks
-
-PreToolUse hooks inject experience-based warnings (`⚠️ [Experience]` / `💡 [Suggestion]`) before relevant tool calls. In Codex today this means `Bash`; other agent runtimes may surface warnings before `Edit` / `Write` / `Bash`. Each warning includes a `Why:` line and ends with `[id:xxxx col:name]`.
-
-- **Follow** high-confidence warnings — they reflect confirmed patterns.
-- **If a warning is wrong or noisy** — tell the user immediately. Noise degrades ALL agents.
-- **When you IGNORE a hint**, report it: `curl -s -X POST http://localhost:8082/api/feedback -H "Content-Type: application/json" -d '\''{"pointId":"xxxx","collection":"col-name","followed":false}'\''` (use the short ID from `[id:xxxx]`).
-- Do NOT silently ignore repeated bad suggestions — feedback is critical for the engine to learn.
-<!-- experience-engine:end -->'
-
-# Inject into each MD file if the block doesn't already exist
-for MD_FILE in \
-  "$HOME/.claude/CLAUDE.md" \
-  "$HOME/.gemini/GEMINI.md" \
-  "$HOME/.codex/AGENTS.md" \
-  "$HOME/.config/opencode/AGENTS.md"; do
-
-  # Only inject if the parent directory exists (agent is installed)
-  MD_DIR=$(dirname "$MD_FILE")
-  if [ ! -d "$MD_DIR" ]; then
-    continue
-  fi
-
-  # Create file if it doesn't exist
-  if [ ! -f "$MD_FILE" ]; then
-    echo "$EXP_INSTRUCTION_BLOCK" > "$MD_FILE"
-    echo "  Created: $MD_FILE"
-    continue
-  fi
-
-  # Skip if already injected
-  if grep -q 'experience-engine:start' "$MD_FILE" 2>/dev/null; then
-    # Replace existing block with updated version
-    TMPFILE=$(mktemp)
-    awk '/<!-- experience-engine:start -->/{skip=1} /<!-- experience-engine:end -->/{skip=0; next} !skip' "$MD_FILE" > "$TMPFILE"
-    echo "$EXP_INSTRUCTION_BLOCK" >> "$TMPFILE"
-    mv "$TMPFILE" "$MD_FILE"
-    echo "  Updated: $MD_FILE"
-    continue
-  fi
-
-  # Append to existing file
-  echo "" >> "$MD_FILE"
-  echo "$EXP_INSTRUCTION_BLOCK" >> "$MD_FILE"
-  echo "  Injected: $MD_FILE"
-done
+bash "$SRC_DIR/inject-agent-instructions.sh" || echo "  [inject] non-fatal: agent instruction injection skipped"
 
 # ── GSD Integration: patch Model Router into GSD framework ───────────────
 resolve_gsd_install() {
