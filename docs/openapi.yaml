@@ -617,6 +617,81 @@ paths:
               schema:
                 type: object
 
+  /api/project-brief:
+    get:
+      summary: Project Brief (SessionStart breadth digest)
+      description: >
+        Returns a breadth-first, always-on digest of what the engine knows about
+        a project — top-N learned entries scoped by project membership (flat
+        `scope_project_slug`) plus universal `scope.lang=all` rules, ranked by
+        confidence × hit-count × recency (NOT similarity). Each line is tagged
+        `[id:xxxx col:name]` for lazy detail fetch. Authorized by the read token.
+      parameters:
+        - name: project
+          in: query
+          required: false
+          description: Project slug. If omitted, derived from `cwd`.
+          schema:
+            type: string
+        - name: cwd
+          in: query
+          required: false
+          description: Working directory used to derive the project slug when `project` is absent.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 12
+      responses:
+        '200':
+          description: Project brief
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  text:
+                    type: string
+                    nullable: true
+                    description: Formatted index (header + one line per entry), or null when empty.
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        collection: { type: string }
+                        score: { type: number }
+                  projectSlug:
+                    type: string
+                    nullable: true
+                  count:
+                    type: integer
+    post:
+      summary: Project Brief (hook transport)
+      description: >
+        Same as GET, for the SessionStart hook which posts via the thin-client
+        transport. Requires the full auth token.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                project: { type: string }
+                cwd: { type: string }
+                limit: { type: integer }
+      responses:
+        '200':
+          description: Project brief
+          content:
+            application/json:
+              schema:
+                type: object
+
   /api/timeline:
     get:
       summary: Semantic timeline
