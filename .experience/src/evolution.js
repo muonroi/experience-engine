@@ -246,6 +246,69 @@ async function storeExperience(qa, domain, projectSlug) {
   return { stored: true, merged: false, id };
 }
 
+// Fetch an existing point's parsed experience data by id (for counter
+// preservation on re-import). Returns null if absent / Qdrant unavailable.
+async function getImportedById(collection, id) {
+  if (!(await checkQdrant())) return null;
+  try {
+    const res = await fetch(`${getQdrantBase()}/collections/${collection}/points/${id}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json', 'api-key': getQdrantApiKey() },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null; // 404 = new entry
+    const j = await res.json();
+    const json = j?.result?.payload?.json;
+    return json ? JSON.parse(json) : null;
+  } catch (err) {
+    log('warn', 'memory_import_getbyid_fail', { collection, id: String(id).slice(0, 8), error: err?.message });
+    return null;
+  }
+}
+
+/**
+ * Store a curated-memory import DIRECTLY (no LLM) at a stable id into a target
+ * tier collection, upserting in place. Treated seed-like via createdFrom
+ * 'seed-memory-import' (bypasses the hit-count confidence discount). On re-import
+ * of an existing id, EARNED runtime signal is preserved (hitCount/surfaceCount/
+ * ignoreCount/etc.) — only the content + scope are refreshed.
+ *
+ * @param {{ trigger, question, solution, why, scope, evidenceClass }} qa
+ * @param {{ id: string, collection: string, tier: number, confidence: number, runtime?: string }} opts
+ */
+async function storeImportedExperience(qa, opts) {
+  const { id, collection, tier, confidence } = opts;
+  const text = `${qa.trigger} ${qa.question} ${qa.solution}`;
+  const vector = await getEmbedding(text);
+  if (!vector) return { stored: false, reason: 'embed_failed', id };
+
+  const projectSlug = qa.scope?.project_slug || null;
+  const data = buildStorePayload(id, qa, null, projectSlug);
+  // Override seed-of-session defaults → curated-memory import semantics.
+  data.confidence = confidence;
+  data.tier = tier;
+  data.createdFrom = 'seed-memory-import';
+  data.provenance = { kind: 'memory-import', source: `memory:${opts.runtime || 'claude'}`, sourceSession: null };
+
+  const existing = await getImportedById(collection, id);
+  if (existing) {
+    // Preserve earned signal; refresh content/scope/confidence only.
+    data.hitCount = existing.hitCount || 0;
+    data.validatedCount = existing.validatedCount || 0;
+    data.surfaceCount = existing.surfaceCount || 0;
+    data.ignoreCount = existing.ignoreCount || 0;
+    data.unusedCount = existing.unusedCount || 0;
+    data.irrelevantCount = existing.irrelevantCount || 0;
+    data.lastHitAt = existing.lastHitAt || null;
+    if (Array.isArray(existing.confirmedAt)) data.confirmedAt = existing.confirmedAt;
+    if (existing.createdAt) data.createdAt = existing.createdAt; // keep original creation time
+    if (existing.novelCaseEvidence) data.novelCaseEvidence = existing.novelCaseEvidence;
+  }
+
+  await upsertEntry(collection, id, vector, data);
+  return { stored: true, upserted: !!existing, id, collection, tier };
+}
+
 // --- Promotion helpers ---
 
 function uniqueConfirmationCount(data, field) {
@@ -1075,7 +1138,7 @@ module.exports = {
   uniqueConfirmationCount, hasRepeatedSessionConfirmations,
   resetPromotionProbation, shouldPromoteBehavioralToPrinciple,
   parsePayload, clusterByCosine, sharePrinciple, importPrinciple,
-  migrateQdrantUserTags, storeExperience, evolve,
+  migrateQdrantUserTags, storeExperience, storeImportedExperience, evolve,
   getAllEntries, upsertEntry,
   _inheritClusterScope,
 };
