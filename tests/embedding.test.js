@@ -242,3 +242,57 @@ test('getEmbeddingRaw handles timeout gracefully', async () => {
   const result = await getEmbeddingRaw('timeout test');
   assert.ok(Array.isArray(result), 'should handle fine with normal response');
 });
+
+// ============================================================
+//  Test: provider failure classification (No-Silent-Catch contract)
+//  Providers return { vector, err } so getEmbedding can record the cause
+//  (errKind/status) on the cost-call instead of discarding it.
+// ============================================================
+test('classifyError maps timeout / network / generic', () => {
+  const { classifyError } = require(path.join(__dirname, '..', '.experience', 'src', 'embedding.js'));
+  assert.equal(classifyError({ name: 'TimeoutError' }), 'timeout');
+  assert.equal(classifyError({ name: 'AbortError' }), 'timeout');
+  assert.equal(classifyError({ name: 'TypeError', message: 'fetch failed' }), 'network');
+  assert.equal(classifyError({ message: 'getaddrinfo ENOTFOUND host' }), 'network');
+  assert.equal(classifyError({ name: 'Error', message: 'weird' }), 'error');
+});
+
+test('embedOpenAI returns {vector:null, err} on HTTP 4xx/5xx with status + body', async () => {
+  const { embedOpenAI } = require(path.join(__dirname, '..', '.experience', 'src', 'embedding.js'));
+  const orig = global.fetch;
+  try {
+    global.fetch = async () => ({ ok: false, status: 429, statusText: 'Too Many Requests', text: async () => 'rate limited' });
+    let r = await embedOpenAI('hi');
+    assert.equal(r.vector, null);
+    assert.equal(r.err.kind, 'http4xx');
+    assert.equal(r.err.status, 429);
+    assert.match(r.err.message, /rate limited/);
+
+    global.fetch = async () => ({ ok: false, status: 503, statusText: 'Service Unavailable', text: async () => 'down' });
+    r = await embedOpenAI('hi');
+    assert.equal(r.err.kind, 'http5xx');
+    assert.equal(r.err.status, 503);
+  } finally { global.fetch = orig; }
+});
+
+test('embedOpenAI returns {vector:null, err:{kind:timeout}} when fetch aborts', async () => {
+  const { embedOpenAI } = require(path.join(__dirname, '..', '.experience', 'src', 'embedding.js'));
+  const orig = global.fetch;
+  try {
+    global.fetch = async () => { const e = new Error('aborted'); e.name = 'TimeoutError'; throw e; };
+    const r = await embedOpenAI('hi');
+    assert.equal(r.vector, null);
+    assert.equal(r.err.kind, 'timeout');
+  } finally { global.fetch = orig; }
+});
+
+test('embedOpenAI returns {vector, err:null} on success', async () => {
+  const { embedOpenAI } = require(path.join(__dirname, '..', '.experience', 'src', 'embedding.js'));
+  const orig = global.fetch;
+  try {
+    global.fetch = async () => ({ ok: true, json: async () => ({ data: [{ embedding: [0.1, 0.2, 0.3] }] }) });
+    const r = await embedOpenAI('hi');
+    assert.deepEqual(r.vector, [0.1, 0.2, 0.3]);
+    assert.equal(r.err, null);
+  } finally { global.fetch = orig; }
+});
