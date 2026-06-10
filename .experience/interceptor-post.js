@@ -140,6 +140,17 @@ const t = setTimeout(() => {
   process.exit(0);
 }, 3000);
 
+// Watchdog: force-quit only if natural drain hangs. Unref'd so it never keeps
+// the loop alive on its own — when the handler finishes and undici sockets
+// close, the process exits naturally (avoiding the Windows libuv double-close
+// assertion that process.exit() trips while sockets are mid-teardown).
+const hardExit = setTimeout(() => {
+  debugLog({ stage: 'hard_exit' });
+  activityLog({ stage: 'hard_exit' });
+  process.exit(0);
+}, 5000);
+hardExit.unref();
+
 let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', c => { input += c; });
@@ -240,7 +251,7 @@ process.stdin.on('end', async () => {
         }
         try { remote.maybeSpawnExtractDrain({ config }); } catch {}
         try { if (state) fs.unlinkSync(STATE_FILE); } catch {}
-        process.exit(0);
+        process.exitCode = 0; return;
       }
     }
 
@@ -274,7 +285,7 @@ process.stdin.on('end', async () => {
       debugLog({ stage: 'no_surfaced_ids' });
       activityLog({ stage: 'no_surfaced_ids', tool: toolName || null, ...sourceMeta });
       try { if (state) fs.unlinkSync(STATE_FILE); } catch {}
-      process.exit(0);
+      process.exitCode = 0; return;
     }
 
     // --- Step 4: Write judge queue file ---
@@ -332,5 +343,7 @@ process.stdin.on('end', async () => {
     activityLog({ stage: 'error', message: error?.message || String(error) });
   }
 
-  process.exit(0);
+  // Exit naturally so undici sockets close cleanly; hardExit (unref'd) is the
+  // watchdog if drain ever hangs. See hardExit comment above.
+  process.exitCode = 0;
 });

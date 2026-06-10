@@ -175,7 +175,12 @@ async function fetchBrief(slug, cwd) {
 
 let input = '';
 const t = setTimeout(() => { debugLog({ stage: 'timeout' }); process.exit(0); }, STDIN_TIMEOUT_MS);
+// Watchdog: force-quit only if natural drain hangs. Unref'd so it never keeps
+// the loop alive on its own — when the handler finishes and undici sockets
+// close, the process exits naturally (avoiding the Windows libuv double-close
+// assertion that process.exit() trips while sockets are mid-teardown).
 const hardExit = setTimeout(() => { debugLog({ stage: 'hard_exit' }); process.exit(0); }, HARD_EXIT_TIMEOUT_MS);
+hardExit.unref();
 
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', c => { input += c; });
@@ -186,13 +191,12 @@ process.stdin.on('end', async () => {
     const hookEvent = data.hook_event_name || '';
     if (hookEvent && hookEvent !== 'SessionStart') {
       debugLog({ stage: 'skip', reason: 'not SessionStart', hookEvent });
-      clearTimeout(hardExit);
-      process.exit(0);
+      process.exitCode = 0; return;
     }
     const cwd = data.cwd || process.cwd();
     const slug = deriveProjectSlug(cwd);
     debugLog({ stage: 'parsed', source: data.source || null, cwd, slug, runtime: RUNTIME_OVERRIDE });
-    if (!slug) { clearTimeout(hardExit); process.exit(0); }
+    if (!slug) { process.exitCode = 0; return; }
 
     // Client cache short-circuit — brief changes slowly.
     const cached = readClientCache(slug);
@@ -219,6 +223,7 @@ process.stdin.on('end', async () => {
   } catch (err) {
     debugLog({ stage: 'error', message: err?.message || String(err) });
   }
-  clearTimeout(hardExit);
-  process.exit(0);
+  // Exit naturally so undici sockets close cleanly; hardExit (unref'd) is the
+  // watchdog if drain ever hangs. See hardExit comment above.
+  process.exitCode = 0;
 });
