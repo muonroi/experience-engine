@@ -377,11 +377,13 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   }
 
   const fmtOpts = { skipSearchScoreGate: recallMode };
+  // Recall casts a wide net and wants depth → larger display budget than the
+  // tight passive-hint budget (which would drop whole entries).
+  const budgetFor = (i) => (recallMode ? (COLLECTIONS[i].recallBudgetChars || COLLECTIONS[i].budgetChars) : COLLECTIONS[i].budgetChars);
   const lines = [
-    ..._format.applyBudget(_format.formatPoints(r0, fmtOpts), COLLECTIONS[0].budgetChars),
-    ..._format.applyBudget(_format.formatPoints(r1, fmtOpts), COLLECTIONS[1].budgetChars),
-    ..._format.applyBudget(_format.formatPoints(r2, fmtOpts), COLLECTIONS[2].budgetChars),
-
+    ..._format.applyBudget(_format.formatPoints(r0, fmtOpts), budgetFor(0)),
+    ..._format.applyBudget(_format.formatPoints(r1, fmtOpts), budgetFor(1)),
+    ..._format.applyBudget(_format.formatPoints(r2, fmtOpts), budgetFor(2)),
   ];
 
   try {
