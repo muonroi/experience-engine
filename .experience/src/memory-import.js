@@ -260,8 +260,21 @@ function mapMemoryToExperience(record, opts = {}) {
   return { id, collection: route.collection, tier: route.tier, confidence: route.confidence, type, qa, record };
 }
 
+/** Shape a mapped experience for the /api/import-memory wire payload (thin client). */
+function toWireExperience(mapped, record) {
+  return {
+    id: mapped.id,
+    collection: mapped.collection,
+    tier: mapped.tier,
+    confidence: mapped.confidence,
+    runtime: record.runtime,
+    qa: mapped.qa,
+  };
+}
+
 module.exports = {
   ADAPTERS,
+  toWireExperience,
   claudeAdapter,
   stubAdapter,
   scanMemorySources,
