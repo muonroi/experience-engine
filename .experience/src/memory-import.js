@@ -31,6 +31,15 @@ const { log } = require('./logger');
 const BEHAVIORAL_COLLECTION = 'experience-behavioral'; // T1
 const SELFQA_COLLECTION = 'experience-selfqa';          // T2
 
+// Cap the embedded/surfaced solution. Long bodies overflow the embedder input
+// window (silent truncation) or muddy the vector across unrelated topics, and a
+// multi-KB body can never render as a passive hint anyway.
+const MAX_SOLUTION_CHARS = 1500;
+// A `project` note bigger than this with NO distilled rationale (`**Why:**` /
+// `**How to apply:**`) is a status/findings dump, not a reusable lesson — skip it
+// by default (kept only with --include-reference).
+const REFERENCE_DUMP_CHARS = 6000;
+
 // Type → tier routing (per design). user = profile, not a surfacing experience;
 // reference = URL/pointer, low surface value — both skipped by default.
 const TYPE_ROUTING = {
@@ -121,13 +130,32 @@ function fileExists(p) {
   try { return fs.existsSync(p); } catch { return false; }
 }
 
+/**
+ * A real project slug is a single path segment (no `/`, `:`, `\`) and longer than
+ * one char. extractProjectSlug returns a path-like value (e.g. `d:/sources`) when it
+ * CANNOT resolve a real project root — that is the signal for "workspace root / home
+ * dir", which should be GLOBAL scope (null), not pinned to a bogus slug that no
+ * action's derived slug will ever match.
+ */
+function isCanonicalSlug(s) {
+  if (!s || typeof s !== 'string') return false;
+  if (s.length <= 1) return false;
+  return s.indexOf('/') < 0 && s.indexOf(':') < 0 && s.indexOf('\\') < 0;
+}
+
 function dirSlugToProjectSlug(dirSlug) {
   const realPath = dirSlugToRealPath(dirSlug);
   const viaExtract = realPath ? extractProjectSlug(realPath) : null;
-  if (viaExtract) return viaExtract;
-  // Fallback: last path-ish token, lowercased.
-  const tail = String(dirSlug).split('-').filter(Boolean).pop();
-  return tail ? tail.toLowerCase() : null;
+  if (isCanonicalSlug(viaExtract)) return viaExtract; // resolved to a real repo slug
+  // A path-like result (e.g. `d:/sources`) means extractProjectSlug hit its
+  // 2-segment fallback — the memory dir is a workspace root / home dir, not a
+  // project → GLOBAL scope (null), never a bogus slug.
+  if (viaExtract) return null;
+  // Path didn't resolve at all → fall back to the dir-slug tail (covers a bare
+  // single-name project dir), but only if it is itself a canonical slug.
+  const tail = String(dirSlug || '').split('-').filter(Boolean).pop();
+  const tailSlug = tail ? tail.toLowerCase() : null;
+  return isCanonicalSlug(tailSlug) ? tailSlug : null;
 }
 
 // --- adapters ---
@@ -243,13 +271,28 @@ function mapMemoryToExperience(record, opts = {}) {
       return null; // user / reference / unknown → skip
     }
   }
+  const body = String(record.body || '');
+  const why = extractWhy(body);
+  const hasHowTo = /\*\*How to apply:\*\*/i.test(body);
+  // Whole-status-dump guard: a big project note with no distilled rationale is
+  // reference material, not a reusable experience — skip unless includeReference.
+  const isStatusDump = type === 'project' && body.length > REFERENCE_DUMP_CHARS && !why && !hasHowTo;
+  if (isStatusDump && !opts.includeReference) {
+    log('debug', 'memory_import_skip_status_dump', { file: record.file, len: body.length });
+    return null;
+  }
+  // Cap the embedded/surfaced solution to keep the vector focused and the hint usable.
+  const solution = body.length > MAX_SOLUTION_CHARS
+    ? `${body.slice(0, MAX_SOLUTION_CHARS)}\n\n[…truncated ${body.length - MAX_SOLUTION_CHARS} chars on import — full text in the source memory file]`
+    : body;
+
   const id = stableId(record.runtime, record.projectSlug, record.name);
   const scope = record.projectSlug ? { project_slug: record.projectSlug } : undefined;
   const qa = {
     trigger: record.description,
     question: record.description,
-    solution: record.body,
-    why: extractWhy(record.body),
+    solution,
+    why,
     scope,
     evidenceClass: route.evidenceClass,
     conditions: [],
@@ -283,8 +326,11 @@ module.exports = {
   extractWhy,
   dirSlugToRealPath,
   dirSlugToProjectSlug,
+  isCanonicalSlug,
   stableId,
   TYPE_ROUTING,
   BEHAVIORAL_COLLECTION,
   SELFQA_COLLECTION,
+  MAX_SOLUTION_CHARS,
+  REFERENCE_DUMP_CHARS,
 };
