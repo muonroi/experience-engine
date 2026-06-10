@@ -21,6 +21,20 @@ const { spawn } = require('node:child_process');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const { parseArgs } = require('../.experience/exp-recall.js');
+const { formatPoints } = require('../.experience/src/format.js');
+const { rerankByQuality } = require('../.experience/src/scoring.js');
+const { getMinSearchScore, getMinConfidence } = require('../.experience/src/config.js');
+
+// Build a formatPoints-ready point. `eff` is the display/effective score the
+// recall path would carry (raw cosine in recall mode). Confidence defaults high
+// enough to clear GATE 1 regardless of host config (grace path floors at base).
+function makePoint(id, eff, payloadOverrides = {}) {
+  const data = Object.assign(
+    { solution: `do thing ${id}`, confidence: 0.9, hitCount: 0, surfaceCount: 0 },
+    payloadOverrides,
+  );
+  return { id, _effectiveScore: eff, _collection: 'experience-behavioral', score: eff, payload: { json: JSON.stringify(data) } };
+}
 
 // ----------------------------- helper unit tests -----------------------------
 
@@ -42,6 +56,57 @@ test('exp-recall parseArgs: --help → ok=false code 0', () => {
   const r = parseArgs(['node', 'exp-recall.js', '--help']);
   assert.equal(r.ok, false);
   assert.equal(r.code, 0);
+});
+
+// --------------------- semantic-search mode (recallMode) ----------------------
+
+test('formatPoints: below-floor point dropped by default, kept with skipSearchScoreGate', () => {
+  const below = getMinSearchScore() - 0.1;        // e.g. 0.30 vs 0.40 floor
+  const pt = makePoint('aaaaaaaa', below);
+
+  // Default (passive-hint path): GATE 2 drops it.
+  assert.equal(formatPoints([pt]).length, 0);
+
+  // Active recall: floor bypassed → surfaces.
+  const kept = formatPoints([pt], { skipSearchScoreGate: true });
+  assert.equal(kept.length, 1);
+  assert.match(kept[0], /\[id:aaaaaaaa col:experience-behavioral\]/);
+});
+
+test('formatPoints: integrity gates still drop even with skipSearchScoreGate', () => {
+  const above = getMinSearchScore() + 0.1;         // clearly above floor — only integrity can drop
+  const opts = { skipSearchScoreGate: true };
+
+  const superseded = makePoint('b0000000', above, { superseded: true });
+  const permanentNoise = makePoint('b1000000', above, { ignoreCount: 25, hitCount: 0 });
+  const irrelevant = makePoint('b2000000', above, { irrelevantCount: 3 });
+  // Below min-confidence: surfaced before (surfaceCount>3) + negative signal → ageFactor decays effConf.
+  const lowConf = makePoint('b3000000', above, { confidence: 0.1, surfaceCount: 5, hitCount: 0, ignoreCount: 2 });
+  assert.ok(getMinConfidence() > 0.1 * (0.7 + 0 * 0.06)); // sanity: fixture really is below floor
+
+  for (const pt of [superseded, permanentNoise, irrelevant, lowConf]) {
+    assert.equal(formatPoints([pt], opts).length, 0, `expected ${pt.id} dropped by integrity gate`);
+  }
+
+  // Control: a clean above-floor point with the same opts DOES surface.
+  assert.equal(formatPoints([makePoint('b4000000', above)], opts).length, 1);
+});
+
+test('rerankByQuality rawCosineRank: orders by raw cosine and differs from default', () => {
+  // A: high cosine, low confidence. B: low cosine, high confidence.
+  const pts = [
+    { id: 'A', score: 0.80, payload: { json: JSON.stringify({ solution: 'a', confidence: 0.2, surfaceCount: 0, hitCount: 0 }) } },
+    { id: 'B', score: 0.45, payload: { json: JSON.stringify({ solution: 'b', confidence: 0.95, surfaceCount: 0, hitCount: 0 }) } },
+  ];
+
+  const raw = rerankByQuality(pts, null, null, 'q', { rawCosineRank: true });
+  assert.deepEqual(raw.map(p => p.id), ['A', 'B']);            // pure cosine order
+  assert.equal(raw[0]._effectiveScore, 0.80);                 // effective == raw cosine
+  assert.equal(raw[1]._effectiveScore, 0.45);
+
+  // Default path applies confidence weighting / penalties → effective != raw cosine.
+  const def = rerankByQuality(pts, null, null, 'q');
+  assert.ok(def.some(p => p._effectiveScore !== (p.score)), 'default mode must reweight, not pass cosine through');
 });
 
 // --------------------------- server integration ------------------------------

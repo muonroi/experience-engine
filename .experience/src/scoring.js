@@ -168,12 +168,19 @@ function computeEffectiveScore(point, data, queryDomain, queryProjectSlug, query
   return rawScore * (0.6 + 0.4 * confWeight); // scale: 0.6 floor to avoid zeroing out
 }
 
-function rerankByQuality(points, queryDomain, queryProjectSlug, queryText = '') {
+// opts.rawCosineRank: rank by raw cosine similarity (point.score) instead of the
+// penalty-weighted effective score. Used by active recall (semantic-search mode)
+// where the penalty stack — which exists to suppress passive-hint noise — must
+// not reorder a deliberate query's results. Default path is unchanged.
+function rerankByQuality(points, queryDomain, queryProjectSlug, queryText = '', opts = {}) {
   return points
     .map(p => {
       let data = {};
       try { data = JSON.parse(p.payload?.json || '{}'); } catch { /* default */ }
-      return { ...p, _effectiveScore: computeEffectiveScore(p, data, queryDomain, queryProjectSlug, queryText) };
+      const eff = opts && opts.rawCosineRank
+        ? (p.score || 0)
+        : computeEffectiveScore(p, data, queryDomain, queryProjectSlug, queryText);
+      return { ...p, _effectiveScore: eff };
     })
     .sort((a, b) => b._effectiveScore - a._effectiveScore);
 }
