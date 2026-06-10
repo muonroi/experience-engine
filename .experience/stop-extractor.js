@@ -706,6 +706,56 @@ function shouldExtractDelta(sessionData, startLine, minNewLines) {
   return { ok: newLines >= minNewLines || hasDenseSignal, newLines };
 }
 
+// "Who Am I" v4.0 (slice 1): rule-based, LLM-free profile update on Stop.
+// Gated behind privacyLevel (default 'off' = no-op). Local-only, no network.
+// Reads the same transcript + activity.jsonl the engine already produces.
+// Never throws into the Stop path — failures are logged and swallowed at the boundary.
+function maybeUpdateProfile(homeDir = getHomeDir(), now = Date.now()) {
+  let config;
+  try {
+    config = require(path.join(homeDir, '.experience', 'src', 'config.js'));
+  } catch (err) {
+    // module not present (older sync) — silently skip, this is optional infra
+    return null;
+  }
+  const level = config.getPrivacyLevel();
+  if (level === 'off') return null;
+
+  try {
+    const { detectSignals, readActivityEvents } = require(path.join(homeDir, '.experience', 'src', 'signal-detector.js'));
+    const { loadProfile, aggregateProfile, saveProfile } = require(path.join(homeDir, '.experience', 'src', 'profile-model.js'));
+
+    // 'minimal' = work patterns only (Tang 1) → no transcript-derived comm signals.
+    // 'standard'/'full' (Tang 1+2) → include the session transcript.
+    let transcript = '';
+    if (level !== 'minimal') {
+      const session = findCurrentSession(homeDir, now);
+      if (session) {
+        const sessionData = buildSessionData(session, 0);
+        transcript = compactTranscript(sessionData.transcript || '');
+      }
+    }
+
+    const sinceMs = now - config.getSignalWindowDays() * 86400000;
+    const { events, skipped } = readActivityEvents(config.getActivityLogPath(), sinceMs);
+    const { signals, stats } = detectSignals({ transcript, activityEvents: events, now });
+    if (!signals.length) return null;
+
+    const profile = aggregateProfile(loadProfile(config.getProfilePath()), signals, { now });
+    const ok = saveProfile(profile, config.getProfilePath());
+    try {
+      const core = getCore(homeDir);
+      if (core && typeof core._activityLog === 'function') {
+        core._activityLog({ op: 'profile-update', level, dims: Object.keys(profile.dimensions).length, signals: signals.length, userTurns: stats.userTurns, skipped });
+      }
+    } catch { /* activity log is best-effort; never block on it */ }
+    return ok ? profile : null;
+  } catch (err) {
+    console.error(`[stop-extractor] profile update failed: ${err?.message}`);
+    return null;
+  }
+}
+
 async function runStopExtractor(options = {}) {
   // Auto-extraction disabled — user syncs manually via bulk-extract.
   // Only evolve is kept so cron-triggered evolution still works.
@@ -714,6 +764,8 @@ async function runStopExtractor(options = {}) {
   const evolveResult = (remote && remote.isRemoteEnabled(remote.loadConfig(homeDir)))
     ? null
     : await maybeEvolve(homeDir);
+  // Update the "Who Am I" profile (gated; default-off no-op). Independent of extraction.
+  maybeUpdateProfile(homeDir);
   return { session: null, extracted: 0, skipped: 'auto-extract-disabled', evolveResult };
 }
 
@@ -799,6 +851,7 @@ module.exports = {
   buildSessionData,
   countImportantSignals,
   runStopExtractor,
+  maybeUpdateProfile,
   runBackfillExtractor,
   readMarker,
   writeMarker,

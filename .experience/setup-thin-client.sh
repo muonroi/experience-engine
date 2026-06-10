@@ -249,19 +249,29 @@ if [ "$pruned" -gt 0 ]; then
   echo "  ✓ Pruned $pruned local-only artefacts (backup: $PRUNE_BACKUP)"
 fi
 
-# ── Install standalone src/config.js (trivial-prompt gate knobs) ────────────
+# ── Install standalone thin-safe src/ modules ──────────────────────────────
 #
-# Runs AFTER the src/ prune above so we end with a src/ dir containing ONLY
-# config.js — the single source of truth for getMinPromptLength /
-# getPromptSkipRegex consumed by interceptor-prompt.js loadTrivialityConfig().
-# config.js requires only Node built-ins, so this lone copy is thin-safe.
-if [ -f "$SRC_DIR/src/config.js" ]; then
-  mkdir -p "$INSTALL_DIR/src"
-  cp "$SRC_DIR/src/config.js" "$INSTALL_DIR/src/config.js"
-  echo "  ✓ Installed src/config.js (trivial-prompt gate config)"
-else
-  echo "  ! src/config.js missing in repo — triviality gate will fail open to inline defaults" >&2
-fi
+# Runs AFTER the src/ prune above. These are the ONLY src/ modules a thin
+# client keeps — each requires only Node built-ins (fs/path/os/crypto), so a
+# lone copy cannot drift the client half-local (interceptors still gate on
+# isRemoteMode() and never load core):
+#   - config.js          trivial-prompt gate knobs + privacy config
+#   - signal-detector.js / profile-model.js  "Who Am I" v4.0 (default-off; the
+#                        Stop hook only loads them when privacyLevel != off)
+THIN_SAFE_SRC=(
+  config.js
+  signal-detector.js
+  profile-model.js
+)
+mkdir -p "$INSTALL_DIR/src"
+for f in "${THIN_SAFE_SRC[@]}"; do
+  if [ -f "$SRC_DIR/src/$f" ]; then
+    cp "$SRC_DIR/src/$f" "$INSTALL_DIR/src/$f"
+    echo "  ✓ Installed src/$f"
+  elif [ "$f" = "config.js" ]; then
+    echo "  ! src/config.js missing in repo — triviality gate will fail open to inline defaults" >&2
+  fi
+done
 
 mkdir -p "$HOME/.local/bin"
 ln -sf "$INSTALL_DIR/exp-feedback" "$HOME/.local/bin/exp-feedback"
