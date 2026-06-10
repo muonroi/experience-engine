@@ -57,6 +57,30 @@ Full documentation at **[docs.muonroi.com/docs/experience-engine](https://docs.m
 | Observability & stats | [Observability](https://docs.muonroi.com/docs/experience-engine/observability) |
 | Python SDK | [Python SDK](https://docs.muonroi.com/docs/experience-engine/python-sdk) |
 
+## Agent instructions (auto-managed)
+
+Install and upgrade write a small **managed block** (delimited by
+`<!-- experience-engine:start -->` / `<!-- experience-engine:end -->`) into each
+installed agent's config — `~/.claude/CLAUDE.md`, `~/.gemini/GEMINI.md`,
+`~/.codex/AGENTS.md`, `~/.config/opencode/AGENTS.md` — so agents load the
+Experience Engine workflow at session start. The block is refreshed idempotently
+on every `upgrade.sh`, so guidance never goes stale.
+
+The block stays concise and points to the full reference shipped at
+`~/.experience/AGENT_GUIDE.md` (active recall, the feedback verdict table, and the
+noise decision tree). The two commands agents use:
+
+```bash
+node ~/.experience/exp-recall.js "<your question>"          # actively query the brain
+node ~/.experience/exp-feedback.js followed|ignored|noise <id> <col>   # report the verdict
+```
+
+Use the helper for feedback — never raw `curl …:8082/api/feedback`, which
+silently no-ops on thin-client installs.
+
+To manage your own agent config instead, set `EXPERIENCE_SKIP_MD_INJECT=1` before
+running setup/upgrade and the injection is skipped.
+
 ## Requirements
 
 - Node.js 20+

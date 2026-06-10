@@ -182,6 +182,8 @@ THIN_CLIENT_FILES=(
   exp-shell-init.sh
   sync-install.sh
   register-hooks.js
+  inject-agent-instructions.sh
+  AGENT_GUIDE.md
 )
 
 for f in "${THIN_CLIENT_FILES[@]}"; do
@@ -361,6 +363,12 @@ if [ -f "$INSTALL_DIR/register-hooks.js" ]; then
     EXP_STOP="$(to_fwd_path "$INSTALL_DIR/stop-extractor.js")" \
     EXP_REGISTER_MODE="existing-only" \
     node "$INSTALL_DIR/register-hooks.js" || echo "(non-fatal: register-hooks failed)"
+fi
+
+# Refresh the managed agent-instruction block on every thin-client install/upgrade
+# (idempotent; auto-migrates stale blocks). Honors EXPERIENCE_SKIP_MD_INJECT.
+if [ -f "$INSTALL_DIR/inject-agent-instructions.sh" ]; then
+  bash "$INSTALL_DIR/inject-agent-instructions.sh" || echo "(non-fatal: agent instruction injection skipped)"
 fi
 
 echo
