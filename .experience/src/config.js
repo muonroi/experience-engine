@@ -167,10 +167,14 @@ const EXP_USER = getExpUser();
 // recallTopK: wider net for active recall — recall drops the score floor and
 // fuses a lexical leg (RRF), so fetching more candidates per leg then ranking
 // is strictly better than the precision-tuned passive topK.
+// budgetChars: display budget for passive hints (tight — hints interrupt).
+// recallBudgetChars: larger budget for active recall — a deliberate query wants
+// depth, and recall entries (with their feedback footer) run longer, so the
+// passive budget would drop whole entries.
 const COLLECTIONS = [
-  { name: 'experience-principles', topK: 4, recallTopK: 10, budgetChars: 800 },
-  { name: 'experience-behavioral', topK: 6, recallTopK: 15, budgetChars: 1200 },
-  { name: 'experience-selfqa',     topK: 4, recallTopK: 20, budgetChars: 1000 },
+  { name: 'experience-principles', topK: 4, recallTopK: 10, budgetChars: 800,  recallBudgetChars: 1800 },
+  { name: 'experience-behavioral', topK: 6, recallTopK: 15, budgetChars: 1200, recallBudgetChars: 3500 },
+  { name: 'experience-selfqa',     topK: 4, recallTopK: 20, budgetChars: 1000, recallBudgetChars: 3500 },
 ];
 const SELFQA_COLLECTION = 'experience-selfqa';
 const EDGE_COLLECTION = 'experience-edges';

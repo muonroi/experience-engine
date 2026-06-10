@@ -122,13 +122,15 @@ test('rerankByQuality preserveOrder: keeps input (RRF-fused) order, still sets _
   assert.equal(out[1]._effectiveScore, 0.90);
 });
 
-test('formatPoints footer: closes the loop with followed / ignored / noise', () => {
+test('formatPoints footer: one compact line closes the loop with all three verdicts', () => {
   const lines = formatPoints([makePoint('cccccccc', getMinSearchScore() + 0.2)]);
   assert.equal(lines.length, 1);
   const out = lines[0];
-  assert.match(out, /exp-feedback\.js followed cccccccc experience-behavioral/);
-  assert.match(out, /exp-feedback\.js ignored cccccccc experience-behavioral/);
-  assert.match(out, /exp-feedback\.js noise cccccccc experience-behavioral/);
+  // Single compact feedback line lists followed|ignored|noise + id + collection.
+  assert.match(out, /exp-feedback\.js followed\|ignored\|noise cccccccc experience-behavioral/);
+  // Stays one line (multi-line footer overflowed budgetChars) — only the [id] +
+  // feedback lines are appended after the body, so total newlines stay small.
+  assert.ok((out.match(/exp-feedback\.js/g) || []).length === 1, 'exactly one feedback command line');
 });
 
 // --------------------------- server integration ------------------------------

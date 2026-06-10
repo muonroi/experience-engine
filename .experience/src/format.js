@@ -164,15 +164,14 @@ function formatPoints(points, opts = {}) {
     const pid = String(point.id).slice(0, 8);
     const coll = point._collection || 'experience-behavioral';
     line += `\n   [id:${pid} col:${coll}]`;
-    // v3: inline feedback — agent reports the verdict via the local exp-feedback
-    // helper (reads serverBaseUrl + auth token from ~/.experience/config.json so
-    // it works on thin clients; raw `POST /api/feedback` defaults to localhost
-    // and no-ops on a remote VPS). All three verdicts are shown so the loop is
-    // closed both ways: `followed` (the asymmetric signal Gate-4 precision needs)
-    // and `ignored` keep the entry alive; only `noise` pushes it toward removal.
-    line += `\n   ✓ helped: node ~/.experience/exp-feedback.js followed ${pid} ${coll}`;
-    line += `\n   · n/a:    node ~/.experience/exp-feedback.js ignored ${pid} ${coll}`;
-    line += `\n   ↩ wrong:  node ~/.experience/exp-feedback.js noise ${pid} ${coll} <stale_rule|wrong_repo|wrong_language|wrong_task>`;
+    // v3: inline feedback — one compact line listing ALL THREE verdicts so the
+    // loop is closed both ways without bloating the per-entry display budget
+    // (a multi-line footer overflowed budgetChars and dropped whole entries).
+    // `followed` is the asymmetric signal Gate-4 precision needs; `ignored`
+    // keeps the entry alive; only `noise` pushes it toward removal. The helper
+    // reads serverBaseUrl + token from ~/.experience/config.json (works on thin
+    // clients; raw `POST /api/feedback` no-ops against a remote VPS).
+    line += `\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise ${pid} ${coll} [reason]`;
     lines.push(line);
   }
   return lines;
