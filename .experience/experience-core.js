@@ -98,7 +98,13 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   // post-filter would drop. Critical for foreign-repo intercepts where the
   // brain is org-doc-dominated — without this, top-2 principles can be 100%
   // org-doc, all dropped, leaving zero surfaces despite common-doc existing.
-  const queryFilter = (() => {
+  // Active recall: no index-level scope pre-filter. The passive-hint pipeline
+  // restricts the Qdrant search to matching scope_lang/scope_project_slug/
+  // scope_framework BEFORE fetch — which would drop cross-repo / cross-language
+  // lessons before the relaxed post-filter (applyScopeFilter recall branch) and
+  // raw-cosine ranking ever see them. User isolation is still enforced inside
+  // searchCollection (buildQdrantUserFilter), independent of this extraFilter.
+  const queryFilter = recallMode ? undefined : (() => {
     const orgCfg = _config.getConfig().org;
     const orgName = orgCfg && typeof orgCfg.name === 'string' ? orgCfg.name.trim().toLowerCase() : '';
     const fileIsOrgStack = orgName ? _utils.isOrgStackRepo(filePath, orgCfg) : false;
