@@ -9,21 +9,29 @@ const pathMod = require('path');
 const os = require('os');
 
 // --- Native config loader ---
-const CONFIG_PATH = pathMod.join(os.homedir(), '.experience', 'config.json');
-const configState = { mtimeMs: null, value: {} };
+// Resolved per call so EXPERIENCE_CONFIG_PATH can isolate unit tests from the
+// operator's live ~/.experience/config.json (e.g. a config that enables an
+// opt-in feature must not break that feature's "default OFF" unit assertion).
+function getConfigPath() {
+  return process.env.EXPERIENCE_CONFIG_PATH || pathMod.join(os.homedir(), '.experience', 'config.json');
+}
+const configState = { mtimeMs: null, value: {}, path: null };
 
 function readConfigFile() {
-  try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch { return {}; }
+  try { return JSON.parse(fs.readFileSync(getConfigPath(), 'utf8')); } catch { return {}; }
 }
 
 function loadConfig(force = false) {
+  const path = getConfigPath();
   try {
-    const stat = fs.statSync(CONFIG_PATH);
-    if (!force && configState.mtimeMs === stat.mtimeMs) return configState.value;
+    const stat = fs.statSync(path);
+    if (!force && configState.path === path && configState.mtimeMs === stat.mtimeMs) return configState.value;
+    configState.path = path;
     configState.mtimeMs = stat.mtimeMs;
     configState.value = readConfigFile();
     return configState.value;
   } catch {
+    configState.path = path;
     configState.mtimeMs = null;
     configState.value = {};
     return configState.value;

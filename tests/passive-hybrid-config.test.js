@@ -10,14 +10,23 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
+const os = require('node:os');
 
 const cfg = require('../.experience/src/config.js');
 
+// Point the config loader at a path that does not exist so these unit tests
+// assert the CODE defaults + env overrides, isolated from the operator's live
+// ~/.experience/config.json (which may legitimately enable passiveHybrid and
+// would otherwise win over env, since cfgValue reads config before env).
+const NO_CONFIG = path.join(os.tmpdir(), 'ee-nonexistent-config-passive-hybrid-test.json');
+
 function withEnv(vars, fn) {
+  const merged = { EXPERIENCE_CONFIG_PATH: NO_CONFIG, ...vars };
   const saved = {};
-  for (const k of Object.keys(vars)) { saved[k] = process.env[k]; process.env[k] = vars[k]; }
+  for (const k of Object.keys(merged)) { saved[k] = process.env[k]; process.env[k] = merged[k]; }
   try { return fn(); }
-  finally { for (const k of Object.keys(vars)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } }
+  finally { for (const k of Object.keys(merged)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } }
 }
 
 test('getPassiveHybrid: OFF by default', () => {
