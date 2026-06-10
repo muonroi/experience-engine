@@ -37,6 +37,14 @@ your follow-up verdict reinforces precisely and noise is filtered faster.
 Each returned entry is **surfaced** (bumps surfaceCount, not a hit). After you
 act, always report the verdict.
 
+**Recall-first, verify-before-acting.** Recall to ORIENT — surface prior gotchas
+and narrow where to look — then read the specific code it points to and confirm
+against ground truth before you act. Recall replaces broad blind exploration
+(read 1 file, not 10); it does NOT replace verifying the exact code you are about
+to change. Recalled lessons are point-in-time and can be stale, so Evidence-First
+always wins over a remembered claim — when recall and the live code disagree, the
+code is right and the stale entry should be corrected.
+
 ## 3. Feedback verdict — what to call
 
 Always go through the helper (it resolves the engine URL + auth token from
