@@ -148,6 +148,12 @@ ensure_line_in_file() {
 # It does NOT need:
 #   - experience-core.js (full local brain)
 #   - src/* modules (router, qdrant, embedding — all server-side)
+#     EXCEPTION: src/config.js is installed standalone below — it is the
+#     single source of truth for the trivial-prompt gate knobs
+#     (getMinPromptLength / getPromptSkipRegex) read by interceptor-prompt.js.
+#     It requires only Node built-ins (fs/path/os/crypto), so a lone copy
+#     cannot drift the client half-local (interceptors still gate on
+#     isRemoteMode() and never load core).
 #   - judge-worker.js (judge runs on the server)
 #   - activity-watch.js + exp-pane-* + exp-open-pane + exp-watch
 #     (these tail local activity.jsonl which only the server writes)
@@ -239,6 +245,20 @@ if [ -d "$INSTALL_DIR/src" ]; then
 fi
 if [ "$pruned" -gt 0 ]; then
   echo "  ✓ Pruned $pruned local-only artefacts (backup: $PRUNE_BACKUP)"
+fi
+
+# ── Install standalone src/config.js (trivial-prompt gate knobs) ────────────
+#
+# Runs AFTER the src/ prune above so we end with a src/ dir containing ONLY
+# config.js — the single source of truth for getMinPromptLength /
+# getPromptSkipRegex consumed by interceptor-prompt.js loadTrivialityConfig().
+# config.js requires only Node built-ins, so this lone copy is thin-safe.
+if [ -f "$SRC_DIR/src/config.js" ]; then
+  mkdir -p "$INSTALL_DIR/src"
+  cp "$SRC_DIR/src/config.js" "$INSTALL_DIR/src/config.js"
+  echo "  ✓ Installed src/config.js (trivial-prompt gate config)"
+else
+  echo "  ! src/config.js missing in repo — triviality gate will fail open to inline defaults" >&2
 fi
 
 mkdir -p "$HOME/.local/bin"
