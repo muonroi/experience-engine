@@ -1144,6 +1144,43 @@ async function handleRecall(req, res) {
   return json(res, { text: result?.suggestions || null, entries, count: entries.length, query });
 }
 
+// /api/import-memory — thin-client bridge for the curated-memory importer.
+// Curated memory files live on the CLIENT (e.g. ~/.claude/projects/<slug>/memory),
+// and project-slug derivation needs the client's real project dirs — so the client
+// scans + maps locally and POSTs pre-mapped experiences here. The server (where
+// Qdrant + embeddings live) embeds and stores them seed-like via
+// storeImportedExperience (stable-id upsert, earned-counter preserving).
+async function handleImportMemory(req, res) {
+  if (!requireAuth(req, res)) return;
+  const body = await readBody(req);
+  const experiences = Array.isArray(body.experiences) ? body.experiences : null;
+  if (!experiences) return error(res, 'experiences[] is required');
+  if (experiences.length > 500) return error(res, 'too many experiences (max 500 per call)');
+  const { storeImportedExperience } = require('./.experience/src/evolution');
+  const stats = { count: experiences.length, stored: 0, upserted: 0, failed: 0 };
+  const results = [];
+  for (const e of experiences) {
+    if (!e || typeof e.id !== 'string' || !KNOWN_COLLECTIONS.has(e.collection) || !e.qa || typeof e.qa !== 'object') {
+      stats.failed++; results.push({ id: e?.id || null, ok: false, reason: 'invalid' }); continue;
+    }
+    try {
+      const r = await storeImportedExperience(e.qa, {
+        id: e.id, collection: e.collection,
+        tier: Number(e.tier) || 2, confidence: Number(e.confidence) || 0.6,
+        runtime: typeof e.runtime === 'string' ? e.runtime : 'claude',
+      });
+      if (r.stored) { stats.stored++; if (r.upserted) stats.upserted++; results.push({ id: e.id, ok: true, upserted: !!r.upserted }); }
+      else { stats.failed++; results.push({ id: e.id, ok: false, reason: r.reason || 'not_stored' }); }
+    } catch (err) {
+      stats.failed++;
+      results.push({ id: e.id, ok: false, reason: String(err?.message || err) });
+      slog('error', 'import_memory_store_error', { id: String(e.id).slice(0, 8), error: String(err?.message || err) });
+    }
+  }
+  stats.new = stats.stored - stats.upserted;
+  return json(res, { ...stats, results });
+}
+
 async function handleSearch(req, res) {
   if (!requireAuth(req, res)) return;
   const body = await readBody(req);
@@ -1496,6 +1533,7 @@ const server = http.createServer(async (req, res) => {
       if (p === '/api/brain') return await handleBrainProxy(req, res);
       if (p === '/api/search') return await handleSearch(req, res);
       if (p === '/api/recall') return await handleRecall(req, res);
+      if (p === '/api/import-memory') return await handleImportMemory(req, res);
       if (p === '/api/pil-context') return await handlePilContext(req, res);
       if (p === '/api/phase-outcome') return await handlePhaseOutcome(req, res);
       if (p === '/api/project-brief') return await handleProjectBrief(req, res, url);

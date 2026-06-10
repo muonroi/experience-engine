@@ -156,6 +156,15 @@ test('scan: end-to-end map skips user, keeps feedback+project', () => {
   }
 });
 
+test('toWireExperience: shapes the /api/import-memory payload', () => {
+  const m = mi.mapMemoryToExperience(rec({ type: 'feedback' }));
+  const wire = mi.toWireExperience(m, rec({ type: 'feedback' }));
+  assert.deepEqual(Object.keys(wire).sort(), ['collection', 'confidence', 'id', 'qa', 'runtime', 'tier']);
+  assert.equal(wire.runtime, 'claude');
+  assert.equal(wire.collection, mi.BEHAVIORAL_COLLECTION);
+  assert.equal(wire.qa.solution, 'sol body');
+});
+
 // --- adapter-registry extensibility ---
 
 test('stub adapters (codex/gemini/antigravity) enumerate nothing', () => {
