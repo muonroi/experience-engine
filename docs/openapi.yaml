@@ -696,14 +696,22 @@ paths:
     post:
       summary: Active recall (agent-initiated self-query)
       description: >
-        Agent-initiated, on-demand recall of learned experience. Unlike
-        /api/search (raw vector hits, no signal), recall runs the full intercept
-        pipeline: scope-filtered + scored retrieval across the experience tiers
-        (T0 principles, T1 behavioral, T2 seeds, self-QA), formatted with
-        `[id col]` feedback handles, and records a SURFACE event per returned
-        entry (bumps surfaceCount, NOT hitCount). The agent then reports
-        usefulness via /api/feedback so actively pulled context reinforces
-        precisely and filters noise faster than passive hints. Full auth token.
+        Agent-initiated, on-demand recall of learned experience, run in
+        SEMANTIC-SEARCH MODE. Unlike /api/search (raw vector hits, no signal)
+        and unlike passive hints, recall ranks by RAW COSINE similarity and
+        deliberately drops the passive-hint noise-control gates: the positive
+        lang/framework/project scope filters and the min-search-score floor are
+        NOT applied (that floor is a noise guard for hints, not a relevance
+        ceiling for a deliberate query — so cross-repo / cross-language lessons
+        can surface). Integrity gates STILL apply: superseded, permanent-noise
+        (ignore>=20 & hit=0), irrelevant>=3, learned lang/project exclusions,
+        and the min-confidence quality floor. Retrieval spans the experience
+        tiers (T0 principles, T1 behavioral, T2 seeds, self-QA), is formatted
+        with `[id col]` feedback handles, and records a SURFACE event per
+        returned entry (bumps surfaceCount, NOT hitCount). The agent then
+        reports usefulness via /api/feedback so actively pulled context
+        reinforces precisely and filters noise faster than passive hints.
+        Full auth token.
       requestBody:
         required: true
         content:

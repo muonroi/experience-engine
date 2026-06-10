@@ -73,7 +73,7 @@ Important endpoints:
 | `GET /api/timeline?topic=...` | Semantic timeline across principles, behavioral, and self-QA |
 | `GET /api/graph?id=...` | Experience graph edges |
 | `GET/POST /api/project-brief` | Breadth-first SessionStart digest: top-N project-scoped entries ranked by confidence×hits×recency (not similarity). GET (read-token) for observability/curl; POST for the SessionStart hook transport |
-| `POST /api/recall` | Active agent self-query: scope-filtered + scored retrieval across experience tiers (T0 principles / T1 behavioral / T2 seeds / self-QA), formatted with `[id col]`, records SURFACE (not hit). Reinforces via `/api/feedback`. Called by `exp-recall.js` |
+| `POST /api/recall` | Active agent self-query in **semantic-search mode** (`recallMode`): ranks by **raw cosine**, drops the passive-hint noise-control gates (positive lang/project/framework scope filters + min-search-score floor) so cross-repo/-language lessons surface; integrity gates kept (superseded / permanent-noise / irrelevant≥3 / learned exclusions / min-confidence). Spans T0/T1/T2/self-QA, formatted with `[id col]`, records SURFACE (not hit). Reinforces via `/api/feedback`. Called by `exp-recall.js`. Wiring: `server.js handleRecall` → `interceptWithMeta(…, {recallMode:true})`; toggles in `scoring.js rerankByQuality({rawCosineRank})` + `format.js formatPoints({skipSearchScoreGate})` |
 | `POST /api/feedback` | Record agent verdict on a surfaced suggestion |
 | `POST /api/principles/share` | Export a principle |
 | `POST /api/principles/import` | Import a principle |

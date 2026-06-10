@@ -75,6 +75,11 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   const runtime = _utils.resolveRuntimeFromSourceMeta(sourceMeta, _utils.detectRuntime(toolName));
   const hookRealtimeFastPath = _intercept.isHookRealtimeFastPath(toolName, sourceMeta);
   const skipRoute = !!(options && options.skipRoute);
+  // Active recall (semantic-search mode): rank by raw cosine and drop the
+  // passive-hint noise-control gates (positive scope filters + min-search-score
+  // floor). Integrity gates (superseded / permanent-noise / irrelevant / learned
+  // exclusions / min-confidence) remain in force. See /api/recall (server.js).
+  const recallMode = !!(options && options.recallMode);
   if (_intercept.isReadOnlyCommand(toolName, toolInput)) return { suggestions: null, surfacedIds: [] };
 
   const query = _utils.buildQuery(toolName, toolInput);
@@ -174,7 +179,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     // worst case: every cross-language seed surfaces. Drop the entire
     // strict-collection batch and keep only the permissive principles
     // collection visible until the caller provides scope.
-    if (!filePath && !callerLang) {
+    if (!recallMode && !filePath && !callerLang) {
       return STRICT_SCOPE_COLLECTIONS.has(collectionName || '') ? [] : points;
     }
     const fileExt = filePath ? (filePath.replace(/\\/g, '/').split('.').pop()?.toLowerCase() || '') : '';
@@ -188,6 +193,31 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
       js: 'javascript', jsx: 'javascript', nodejs: 'javascript', node: 'javascript',
     };
     const callerLangNorm = callerLang ? (LANG_ALIAS[callerLang] || callerLang) : null;
+    // Active recall: pure semantic mode. Skip the positive lang/framework/project
+    // gates entirely; honor only learned exclusions (evolve Step 3d scope
+    // narrowing from confirmed noise). Cross-repo / cross-language lessons are
+    // allowed to surface and are ranked by raw cosine upstream. Superseded /
+    // permanent-noise / irrelevant entries are still dropped by formatPoints.
+    if (recallMode) {
+      return points.filter(p => {
+        try {
+          const exp = JSON.parse(p.payload?.json || '{}');
+          if (Array.isArray(exp.scope?.lang_exclude) && callerLang) {
+            const ex = exp.scope.lang_exclude.map(x => String(x).toLowerCase().trim());
+            if (ex.includes(callerLang) || ex.includes(callerLangNorm)) return false;
+          }
+          if (Array.isArray(exp.scope?.project_exclude) && callerProjectSlug) {
+            const ex = exp.scope.project_exclude.map(x => String(x).toLowerCase().trim());
+            if (ex.includes(callerProjectSlug)) return false;
+          }
+          return true;
+        } catch (err) {
+          // Fail-open: a malformed payload must not vanish from recall. Keep + log.
+          _activity.activityLog({ op: 'recall-scope-parse-fail', id: p?.id, collection: collectionName, error: err?.message });
+          return true;
+        }
+      });
+    }
     function fileMatchesLang(scopeLang) {
       if (!scopeLang) return true;
       // Comma-joined seeds (legacy data) → match if ANY token matches.
@@ -263,9 +293,10 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     });
   }
 
-  let r0 = _utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t0, COLLECTIONS[0].name), queryDomain, queryProjectSlug, query), COLLECTIONS[0].name);
-  let r1 = _utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t1, COLLECTIONS[1].name), queryDomain, queryProjectSlug, query), COLLECTIONS[1].name);
-  let r2 = _scoring.selectProbationaryT2Points(_utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t2, COLLECTIONS[2].name), queryDomain, queryProjectSlug, query), COLLECTIONS[2].name));
+  const rankOpts = { rawCosineRank: recallMode };
+  let r0 = _utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t0, COLLECTIONS[0].name), queryDomain, queryProjectSlug, query, rankOpts), COLLECTIONS[0].name);
+  let r1 = _utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t1, COLLECTIONS[1].name), queryDomain, queryProjectSlug, query, rankOpts), COLLECTIONS[1].name);
+  let r2 = _scoring.selectProbationaryT2Points(_utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t2, COLLECTIONS[2].name), queryDomain, queryProjectSlug, query, rankOpts), COLLECTIONS[2].name));
 
   let promptPrecisionRemoved = 0;
   if (_intercept.isPromptHookPrecisionGate(toolName, sourceMeta)) {
@@ -305,10 +336,11 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     }
   }
 
+  const fmtOpts = { skipSearchScoreGate: recallMode };
   const lines = [
-    ..._format.applyBudget(_format.formatPoints(r0), COLLECTIONS[0].budgetChars),
-    ..._format.applyBudget(_format.formatPoints(r1), COLLECTIONS[1].budgetChars),
-    ..._format.applyBudget(_format.formatPoints(r2), COLLECTIONS[2].budgetChars),
+    ..._format.applyBudget(_format.formatPoints(r0, fmtOpts), COLLECTIONS[0].budgetChars),
+    ..._format.applyBudget(_format.formatPoints(r1, fmtOpts), COLLECTIONS[1].budgetChars),
+    ..._format.applyBudget(_format.formatPoints(r2, fmtOpts), COLLECTIONS[2].budgetChars),
 
   ];
 
@@ -327,7 +359,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
             const graphPoint = { ...found, score: (found.score || 0.5) * edge.weight * 0.8, _collection: coll.name, _graphEdge: edge.type };
             const graphGate = _intercept.filterPromptHookPoints([graphPoint], toolName, sourceMeta);
             promptPrecisionRemoved += graphGate.removed.length;
-            lines.push(..._format.applyBudget(_format.formatPoints(graphGate.kept), 600));
+            lines.push(..._format.applyBudget(_format.formatPoints(graphGate.kept, fmtOpts), 600));
             break;
           }
         }

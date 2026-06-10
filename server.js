@@ -1095,16 +1095,22 @@ async function handleRecall(req, res) {
   };
 
   const { interceptWithMeta } = loadExperienceCore();
-  // Reuse the proven prompt-style intercept path: embed → scope-filter →
-  // search → score → format → recordSurface. Returns formatted suggestions +
-  // surfacedIds. No 0.60 prompt-hook precision gate here — active recall wants
-  // the full relevant set (still bounded by the standard min-search-score gate
-  // in format.js, so noise stays out).
+  // Active recall = semantic-search mode. Reuses the intercept pipeline (embed →
+  // search → rank → format → recordSurface) but with recallMode:true, which:
+  //   - ranks by RAW COSINE (not the penalty-weighted effective score),
+  //   - drops the positive lang/framework/project scope gates, and
+  //   - bypasses the min-search-score floor (format.js GATE 2).
+  // The score floor is a noise-control signal for PASSIVE hints — a deliberate
+  // query has no such ceiling. Integrity gates still apply: superseded,
+  // permanent-noise (ignore≥20 & hit=0), irrelevant≥3, learned lang/project
+  // exclusions, and the min-confidence quality floor. Surfaces are still
+  // recorded so the agent's /api/feedback verdict grows + cleans the brain.
   const result = await interceptWithMeta(
     'UserPrompt',
     { command: query, _promptHook: true },
     AbortSignal.timeout(8000),
-    meta
+    meta,
+    { recallMode: true }
   );
   const entries = (result?.surfacedIds || []).map(s => ({ id: String(s.id || ''), collection: s.collection || null }));
   return json(res, { text: result?.suggestions || null, entries, count: entries.length, query });

@@ -56,7 +56,13 @@ function buildStorePayload(id, qa, domain, projectSlug) {
   };
 }
 
-function formatPoints(points) {
+// opts.skipSearchScoreGate: bypass GATE 2 (the min-search-score relevance floor).
+// Active recall (semantic-search mode) sets this — the floor is a noise-control
+// signal for passive hints, not a relevance ceiling for a deliberate query. The
+// min-confidence quality gate (GATE 1) and all HARD integrity gates (superseded,
+// permanent-noise, irrelevant) still apply regardless of this flag.
+function formatPoints(points, opts = {}) {
+  const skipSearchScoreGate = !!(opts && opts.skipSearchScoreGate);
   const lines = [];
   for (const point of points) {
     let exp;
@@ -79,7 +85,7 @@ function formatPoints(points) {
     // the min threshold, surfacing it as 💡 [Suggestion] tells the agent the
     // opposite of what the score actually says.
     const mss = getMinSearchScore();
-    if (!point._probationaryT2 && displayScore < mss) {
+    if (!skipSearchScoreGate && !point._probationaryT2 && displayScore < mss) {
       log('debug', 'format_point_rejected', {
         reason: 'score_below_min_search',
         displayScore: Number(displayScore.toFixed(3)),
