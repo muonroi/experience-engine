@@ -35,6 +35,10 @@ const home = os.homedir();
 const interceptor = process.env.EXP_INTERCEPTOR;
 const interceptorPost = process.env.EXP_INTERCEPTOR_POST;
 const interceptorPrompt = process.env.EXP_INTERCEPTOR_PROMPT;
+// SessionStart hook (Project Brief). Optional + backward-compatible: older
+// setup scripts and existing-only upgrades may not pass it, so callers without
+// it simply skip SessionStart wiring rather than failing.
+const interceptorSession = process.env.EXP_INTERCEPTOR_SESSION;
 const stop = process.env.EXP_STOP;
 const selected = (process.env.EXP_SELECTED_AGENTS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 const mode = (process.env.EXP_REGISTER_MODE || 'full').trim().toLowerCase();
@@ -86,6 +90,16 @@ const AGENTS = [
       if (!cfg.hooks.UserPromptSubmit.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor-prompt')))) {
         cfg.hooks.UserPromptSubmit.push({ hooks: [{ type:'command', command:`node "${interceptorPrompt}"`, timeout:5 }] });
       }
+      // SessionStart hook injects the breadth-first Project Brief once per
+      // session (the index of what the engine knows about this repo). Only
+      // wired when the caller provided the script path — keeps older callers
+      // and thin-clients working unchanged.
+      if (interceptorSession) {
+        cfg.hooks.SessionStart = cfg.hooks.SessionStart || [];
+        if (!cfg.hooks.SessionStart.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor-session')))) {
+          cfg.hooks.SessionStart.push({ hooks: [{ type:'command', command:`node "${interceptorSession}"`, timeout:5 }] });
+        }
+      }
       cfg.hooks.Stop = cfg.hooks.Stop || [];
       if (!cfg.hooks.Stop.some(h => (h.hooks||[]).some(e => e.command?.includes('stop-extractor')))) {
         cfg.hooks.Stop.push({ hooks: [{ type:'command', command:`node "${stop}"`, timeout:90 }] });
@@ -101,6 +115,15 @@ const AGENTS = [
       cfg.hooks.BeforeTool = cfg.hooks.BeforeTool || [];
       if (!cfg.hooks.BeforeTool.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor')))) {
         cfg.hooks.BeforeTool.unshift({ matcher:'write_file|replace|replace_in_file|shell|execute_command', hooks:[{ name:'experience', type:'command', command:`node "${interceptor}"`, timeout:5000 }] });
+      }
+      // Gemini's SessionStart is documented as the channel for loading project
+      // memories (injected as the first turn in history). Same hookSpecificOutput
+      // .additionalContext shape the session hook already emits. Timeout in ms.
+      if (interceptorSession) {
+        cfg.hooks.SessionStart = cfg.hooks.SessionStart || [];
+        if (!cfg.hooks.SessionStart.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor-session')))) {
+          cfg.hooks.SessionStart.push({ hooks:[{ name:'experience-session', type:'command', command:`node "${interceptorSession}"`, timeout:5000 }] });
+        }
       }
       cfg.hooks.AfterAgent = cfg.hooks.AfterAgent || [];
       if (!cfg.hooks.AfterAgent.some(h => (h.hooks||[]).some(e => e.command?.includes('stop-extractor')))) {
@@ -134,6 +157,15 @@ const AGENTS = [
       cfg.hooks.UserPromptSubmit = cfg.hooks.UserPromptSubmit || [];
       if (!cfg.hooks.UserPromptSubmit.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor-prompt')))) {
         cfg.hooks.UserPromptSubmit.push({ hooks:[{ type:'command', command:`node "${interceptorPrompt}"`, timeout:5 }] });
+      }
+      // Codex has a native SessionStart hook (thread-start scope) supporting the
+      // same hookSpecificOutput.additionalContext injection as Claude. No matcher
+      // → fires on all sources; the brief's TTL cache prevents per-source spam.
+      if (interceptorSession) {
+        cfg.hooks.SessionStart = cfg.hooks.SessionStart || [];
+        if (!cfg.hooks.SessionStart.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor-session')))) {
+          cfg.hooks.SessionStart.push({ hooks:[{ type:'command', command:`node "${interceptorSession}"`, timeout:5 }] });
+        }
       }
       cfg.hooks.Stop = cfg.hooks.Stop || [];
       if (!cfg.hooks.Stop.some(h => (h.hooks||[]).some(e => e.command?.includes('stop-extractor')))) {
@@ -188,6 +220,14 @@ const AGENTS = [
 
       cfg.hooks.UserPromptSubmit = drop(cfg.hooks.UserPromptSubmit, 'interceptor-prompt');
       cfg.hooks.UserPromptSubmit.push({ hooks:[{ type:'command', command:`node "${interceptorPrompt}" --runtime=antigravity`, timeout:5 }] });
+
+      // SessionStart — Antigravity mirrors Claude's hook model, so the Project
+      // Brief rides the same event. Tagged --runtime=antigravity for consistent
+      // runtime attribution; harmless no-op if the event is never emitted.
+      if (interceptorSession) {
+        cfg.hooks.SessionStart = drop(cfg.hooks.SessionStart, 'interceptor-session');
+        cfg.hooks.SessionStart.push({ hooks:[{ type:'command', command:`node "${interceptorSession}" --runtime=antigravity`, timeout:5 }] });
+      }
 
       cfg.hooks.Stop = drop(cfg.hooks.Stop, 'stop-extractor');
       cfg.hooks.Stop.push({ hooks:[{ type:'command', command:`node "${stop}" --runtime=antigravity`, timeout:90 }] });

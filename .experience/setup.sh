@@ -224,6 +224,7 @@ if [[ "$1" == "--docker" ]]; then
       cp "$SRC_DIR/stop-extractor.js" "$HOME/.experience/" 2>/dev/null
       cp "$SRC_DIR/interceptor-post.js" "$HOME/.experience/" 2>/dev/null
       cp "$SRC_DIR/interceptor-prompt.js" "$HOME/.experience/" 2>/dev/null
+      cp "$SRC_DIR/interceptor-session.js" "$HOME/.experience/" 2>/dev/null
       cp "$SRC_DIR/judge-worker.js" "$HOME/.experience/" 2>/dev/null
 
       # Write config pointing to Docker services
@@ -1028,7 +1029,7 @@ if ! cp "$SRC_DIR/experience-core.js" "$INSTALL_DIR/experience-core.js"; then
 fi
 
 # Copy hook/runtime helpers from source
-for f in interceptor.js stop-extractor.js interceptor-post.js interceptor-prompt.js judge-worker.js remote-client.js extract-compact.js exp-client-drain.js activity-watch.js health-check.sh exp-watch exp-feedback exp-feedback.js exp-open-pane exp-pane-right exp-pane-left exp-pane-bottom exp-bootstrap.sh exp-health-last exp-shell-init.sh sync-install.sh; do
+for f in interceptor.js stop-extractor.js interceptor-post.js interceptor-prompt.js interceptor-session.js judge-worker.js remote-client.js extract-compact.js exp-client-drain.js activity-watch.js health-check.sh exp-watch exp-feedback exp-feedback.js exp-open-pane exp-pane-right exp-pane-left exp-pane-bottom exp-bootstrap.sh exp-health-last exp-shell-init.sh sync-install.sh; do
   if [ -f "$SRC_DIR/$f" ]; then
     cp "$SRC_DIR/$f" "$INSTALL_DIR/$f"
   fi
@@ -1367,15 +1368,17 @@ fi
 INTERCEPTOR_PATH="$INSTALL_DIR/interceptor.js"
 INTERCEPTOR_POST_PATH="$INSTALL_DIR/interceptor-post.js"
 INTERCEPTOR_PROMPT_PATH="$INSTALL_DIR/interceptor-prompt.js"
+INTERCEPTOR_SESSION_PATH="$INSTALL_DIR/interceptor-session.js"
 STOP_PATH="$INSTALL_DIR/stop-extractor.js"
 
 # Convert to forward slashes for Node.js on Windows
 INTERCEPTOR_FWD=$(echo "$INTERCEPTOR_PATH" | sed 's|\\|/|g' | sed 's|^/\([a-zA-Z]\)/|\1:/|')
 INTERCEPTOR_POST_FWD=$(echo "$INTERCEPTOR_POST_PATH" | sed 's|\\|/|g' | sed 's|^/\([a-zA-Z]\)/|\1:/|')
 INTERCEPTOR_PROMPT_FWD=$(echo "$INTERCEPTOR_PROMPT_PATH" | sed 's|\\|/|g' | sed 's|^/\([a-zA-Z]\)/|\1:/|')
+INTERCEPTOR_SESSION_FWD=$(echo "$INTERCEPTOR_SESSION_PATH" | sed 's|\\|/|g' | sed 's|^/\([a-zA-Z]\)/|\1:/|')
 STOP_FWD=$(echo "$STOP_PATH" | sed 's|\\|/|g' | sed 's|^/\([a-zA-Z]\)/|\1:/|')
 
-EXP_SELECTED_AGENTS="$SELECTED_AGENTS" EXP_INTERCEPTOR="$INTERCEPTOR_FWD" EXP_INTERCEPTOR_POST="$INTERCEPTOR_POST_FWD" EXP_INTERCEPTOR_PROMPT="$INTERCEPTOR_PROMPT_FWD" EXP_STOP="$STOP_FWD" EXP_REGISTER_MODE="full" node "$INSTALL_DIR/register-hooks.js"
+EXP_SELECTED_AGENTS="$SELECTED_AGENTS" EXP_INTERCEPTOR="$INTERCEPTOR_FWD" EXP_INTERCEPTOR_POST="$INTERCEPTOR_POST_FWD" EXP_INTERCEPTOR_PROMPT="$INTERCEPTOR_PROMPT_FWD" EXP_INTERCEPTOR_SESSION="$INTERCEPTOR_SESSION_FWD" EXP_STOP="$STOP_FWD" EXP_REGISTER_MODE="full" node "$INSTALL_DIR/register-hooks.js"
 
 # ── Auto-inject Experience Engine instruction block into agent MD files ──
 echo ""
@@ -2057,6 +2060,7 @@ if [ -n "$REMOTE_HOST" ]; then
     "$INSTALL_DIR/interceptor.js"
     "$INSTALL_DIR/interceptor-post.js"
     "$INSTALL_DIR/interceptor-prompt.js"
+    "$INSTALL_DIR/interceptor-session.js"
     "$INSTALL_DIR/judge-worker.js"
     "$INSTALL_DIR/remote-client.js"
     "$INSTALL_DIR/extract-compact.js"

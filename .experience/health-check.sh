@@ -94,7 +94,7 @@ run_checks() {
   # remote-client when serverBaseUrl is configured. Detect mode early so we
   # check the right file set.
   local _early_server_base; _early_server_base=$(read_cfg serverBaseUrl)
-  local CORE_FILES=(interceptor.js interceptor-post.js interceptor-prompt.js stop-extractor.js remote-client.js health-check.sh)
+  local CORE_FILES=(interceptor.js interceptor-post.js interceptor-prompt.js interceptor-session.js stop-extractor.js remote-client.js health-check.sh)
   if [ -z "$_early_server_base" ]; then
     # Local / hybrid mode — experience-core.js is required
     CORE_FILES=(experience-core.js "${CORE_FILES[@]}")
@@ -480,6 +480,7 @@ print_dashboard() {
   print_check "interceptor.js"
   print_check "interceptor-post.js"
   print_check "interceptor-prompt.js"
+  print_check "interceptor-session.js"
   print_check "stop-extractor.js"
   print_check "remote-client.js"
   print_check "health-check.sh"
