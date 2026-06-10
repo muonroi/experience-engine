@@ -81,6 +81,36 @@ function loadEnricher() {
 }
 const _enricher = loadEnricher();
 
+function _loadInstalled(rel) {
+  try { return require(path.join(os.homedir(), '.experience', rel)); }
+  catch {
+    try { return require(path.join(__dirname, rel)); }
+    catch { return null; }
+  }
+}
+const _riskTriggers = _loadInstalled('src/risk-triggers.js');
+const _riskCfg = _loadInstalled('src/config.js');
+
+// Tool-level risk gate (PreToolUse): a one-line nudge when a command keyword or a
+// cross-repo file path is touched and nothing relevant surfaced. No extra recall
+// here — the intercept already searched; this just flags the risk + points at recall.
+function buildToolRiskGate(tool, toolInput, cwd) {
+  if (!_riskTriggers) return null;
+  const enabled = _riskCfg && typeof _riskCfg.getRiskGateEnabled === 'function' ? _riskCfg.getRiskGateEnabled() : true;
+  if (!enabled) return null;
+  const keywords = _riskCfg && typeof _riskCfg.getRiskKeywords === 'function' ? _riskCfg.getRiskKeywords() : undefined;
+  let triggers = [];
+  try {
+    triggers = _riskTriggers.detectRiskTriggers({ toolName: tool, toolInput, cwd, keywords, repoRootOf: _riskTriggers.gitRepoRootOf });
+  } catch (err) {
+    debugLog({ stage: 'risk_detect_failed', message: err?.message || String(err) });
+    return null;
+  }
+  if (!triggers.length) return null;
+  const top = triggers[0];
+  return { line: `⚠️ [Experience — risk gate] ${top.kind}: "${top.topic}". Run \`node ~/.experience/exp-recall.js "${top.topic}"\` before this step, or note one line why you're skipping.`, top };
+}
+
 function buildSourceMeta(data, toolInput) {
   const runtime = RUNTIME_OVERRIDE || (process.env.WSL_DISTRO_NAME ? 'codex-wsl' : 'codex-windows');
   const meta = {
@@ -503,6 +533,16 @@ process.stdin.on('end', async () => {
           process.stderr.write(`💡 Experience: ${hintCount} hint${hintCount === 1 ? '' : 's'} surfaced (Ctrl+O to expand)\n`);
         }
       } catch {}
+    }
+
+    // Risk gate: when nothing relevant surfaced for a risky tool step, append a
+    // one-line nudge naming the trigger so the agent can recall or explicitly skip.
+    if (surfacedIds.length === 0) {
+      const gate = buildToolRiskGate(tool, toolInput, data.cwd || process.cwd());
+      if (gate && gate.line) {
+        activityLog({ stage: 'risk_gate', tool, kind: gate.top.kind, topic: gate.top.topic, ...sourceMeta });
+        outputText = outputText ? outputText + '\n---\n' + gate.line : gate.line;
+      }
     }
 
     emitPreToolUseGuidance(data, tool, outputText, { toolInput, surfacedIds });

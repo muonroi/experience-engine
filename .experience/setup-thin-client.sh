@@ -255,11 +255,15 @@ fi
 # client keeps — each requires only Node built-ins (fs/path/os/crypto), so a
 # lone copy cannot drift the client half-local (interceptors still gate on
 # isRemoteMode() and never load core):
-#   - config.js          trivial-prompt gate knobs + privacy config
+#   - config.js          trivial-prompt gate knobs + risk-gate/privacy config
+#   - risk-triggers.js   pure risk detection for the conditional recall gate
+#                        (interceptor.js / interceptor-prompt.js require it;
+#                         the recall it triggers hits /api/recall on the server)
 #   - signal-detector.js / profile-model.js  "Who Am I" v4.0 (default-off; the
 #                        Stop hook only loads them when privacyLevel != off)
 THIN_SAFE_SRC=(
   config.js
+  risk-triggers.js
   signal-detector.js
   profile-model.js
 )

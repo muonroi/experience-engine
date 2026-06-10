@@ -305,6 +305,69 @@ function _loadEnricher() {
 }
 const _promptEnricher = _loadEnricher();
 
+// Load a runtime module from the install dir, falling back to repo-local for tests.
+function _loadInstalled(rel) {
+  try { return require(path.join(os.homedir(), '.experience', rel)); }
+  catch {
+    try { return require(path.join(__dirname, rel)); }
+    catch { return null; }
+  }
+}
+const _riskTriggers = _loadInstalled('src/risk-triggers.js');
+const _expRecall = _loadInstalled('exp-recall.js');
+const _riskCfg = _loadInstalled('src/config.js');
+const RISK_RECALL_TIMEOUT_MS = timeoutFromEnv('EXPERIENCE_RISK_RECALL_TIMEOUT_MS', 1500);
+
+// Conditional risk gate — replaces the always-on generic nudge. Fires ONLY when a
+// deterministic trigger (sensitive keyword / cross-repo) matches the prompt, so it
+// keeps a high signal instead of being filed as per-turn boilerplate.
+// Returns { disabled } | null | { text, topic, count }.
+async function buildRiskGate(prompt, cwd, hasSuggestions) {
+  if (!_riskTriggers) return { unavailable: true }; // un-synced client → fall back to legacy nudge
+  const gateEnabled = _riskCfg && typeof _riskCfg.getRiskGateEnabled === 'function' ? _riskCfg.getRiskGateEnabled() : true;
+  if (!gateEnabled) return { disabled: true };
+  const keywords = _riskCfg && typeof _riskCfg.getRiskKeywords === 'function' ? _riskCfg.getRiskKeywords() : undefined;
+  let triggers = [];
+  try {
+    triggers = _riskTriggers.detectRiskTriggers({ promptText: prompt, cwd, keywords, repoRootOf: _riskTriggers.gitRepoRootOf });
+  } catch (err) {
+    debugLog({ stage: 'risk_detect_failed', message: err?.message || String(err) });
+    return null;
+  }
+  if (!triggers.length) return null;
+  const top = triggers[0];
+
+  // If the whole-prompt search already surfaced hits, don't re-run recall (avoid
+  // dup + latency) — just point the agent at the risk so it confirms relevance.
+  if (hasSuggestions) {
+    return { text: `⚠️ [Experience — risk gate] This step touches "${top.topic}" (${top.kind}). Relevant hint(s) shown above — confirm one applies, or note one line why it doesn't.`, topic: top.topic, count: null };
+  }
+
+  // Nothing surfaced from the diluted whole-prompt search → run ONE targeted recall
+  // on the specific risk topic, bounded + logged.
+  let recallRes = null;
+  if (_expRecall && typeof _expRecall.recall === 'function') {
+    try {
+      recallRes = await withTimeout(_expRecall.recall(top.topic, { cwd }), RISK_RECALL_TIMEOUT_MS);
+    } catch (err) {
+      debugLog({ stage: 'risk_recall_failed', topic: top.topic, message: err?.message || String(err) });
+    }
+  }
+  const count = (recallRes && Number(recallRes.count)) || 0;
+  if (count > 0 && recallRes.text) {
+    return {
+      text: `⚠️ [Experience — risk gate] This step touches "${top.topic}" (${top.kind}). Brain has ${count} learned entr${count === 1 ? 'y' : 'ies'} on it — read before acting, then report the verdict via exp-feedback:\n${recallRes.text}`,
+      topic: top.topic,
+      count,
+    };
+  }
+  return {
+    text: `⚠️ [Experience — risk gate] This step touches "${top.topic}" (${top.kind}) but the brain has 0 entries on it yet. Proceed — and if you bypass a safety/verification step here, note one line why (don't skip silently).`,
+    topic: top.topic,
+    count: 0,
+  };
+}
+
 function buildSourceMeta(data, _toolInput) {
   // UserPromptSubmit has no toolInput. Cwd-based enrichment derives
   // lang/framework from the session's working directory so the Qdrant scope
@@ -534,10 +597,18 @@ process.stdin.on('end', async () => {
       outputText = outputText ? outputText + '\n---\n' + routeLine : routeLine;
     }
 
-    // Active-recall nudge — only when no experience hint surfaced this turn.
-    if (RECALL_NUDGE_ENABLED && !suggestions) {
+    // Conditional risk gate — fires only on a deterministic trigger (keyword/cross-repo).
+    // When the gate is disabled (EXPERIENCE_RISK_GATE=0), fall back to the legacy
+    // always-on generic nudge so there is still an escape hatch to the old behavior.
+    const gate = await buildRiskGate(prompt, data.cwd || process.cwd(), !!suggestions);
+    if (gate && gate.text) {
+      activityLog({ stage: 'risk_gate', topic: gate.topic, count: gate.count, hadSuggestions: !!suggestions, ...sourceMeta });
+      outputText = outputText ? outputText + '\n---\n' + gate.text : gate.text;
+    } else if (gate && (gate.disabled || gate.unavailable) && RECALL_NUDGE_ENABLED && !suggestions) {
+      // Gate off or module not synced → legacy generic nudge as the escape hatch.
       outputText = outputText ? outputText + '\n---\n' + RECALL_NUDGE_TEXT : RECALL_NUDGE_TEXT;
     }
+    // gate === null → gate ran, no trigger matched → stay silent (no per-turn boilerplate).
 
     if (outputText) {
       process.stdout.write(JSON.stringify({

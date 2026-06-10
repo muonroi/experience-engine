@@ -250,6 +250,25 @@ function getSignalWindowDays() {
   return Number.isFinite(n) && n > 0 ? Math.min(365, Math.round(n)) : 30;
 }
 
+// --- Risk gate (conditional recall nudge) ---
+// Replaces the always-on per-prompt recall nudge with a gate that fires only when
+// a deterministic risk trigger matches (sensitive keyword / cross-repo). Default ON;
+// set EXPERIENCE_RISK_GATE=0 to fall back to the legacy generic nudge path.
+const DEFAULT_RISK_KEYWORDS = [
+  'rate limit', 'rate-limit', 'auth', 'oauth', 'token', 'secret', 'credential', 'password',
+  'migration', 'migrate', 'deploy', 'cors', 'interceptor', 'rm -rf', 'force push', 'force-push',
+  'drop table', 'reset --hard', 'prod', 'production', 'truncate', 'webhook',
+];
+function getRiskGateEnabled() {
+  return String(cfgValue('riskGate', 'EXPERIENCE_RISK_GATE', '1')) !== '0';
+}
+function getRiskKeywords() {
+  const raw = cfgValue('riskKeywords', 'EXPERIENCE_RISK_KEYWORDS', '');
+  if (Array.isArray(raw)) return raw.map((s) => String(s).toLowerCase().trim()).filter(Boolean);
+  const list = String(raw || '').split(',').map((s) => s.toLowerCase().trim()).filter(Boolean);
+  return list.length ? list : DEFAULT_RISK_KEYWORDS.slice();
+}
+
 // --- Activity Log ---
 let _activityLog = null;
 
@@ -275,6 +294,7 @@ module.exports = {
   getExpUser, EXP_USER,
   getHomeExpDir, getStoreDir, getActivityLogPath,
   getPrivacyLevel, getProfilePath, getSignalWindowDays,
+  getRiskGateEnabled, getRiskKeywords, DEFAULT_RISK_KEYWORDS,
   COLLECTIONS, SELFQA_COLLECTION, EDGE_COLLECTION, ROUTES_COLLECTION,
   DEDUP_THRESHOLD, QUERY_MAX_CHARS, COMPACT_DIM,
   VALID_FEEDBACK_VERDICTS, VALID_NOISE_REASONS, VALID_NOISE_DISPOSITIONS, VALID_NOISE_SOURCES,
