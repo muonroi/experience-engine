@@ -61,6 +61,7 @@ copy_file "$SRC_DIR/extract-compact.js" "extract-compact.js"
 copy_file "$SRC_DIR/health-check.sh" "health-check.sh"
 copy_file "$SRC_DIR/interceptor-post.js" "interceptor-post.js"
 copy_file "$SRC_DIR/interceptor-prompt.js" "interceptor-prompt.js"
+copy_file "$SRC_DIR/interceptor-session.js" "interceptor-session.js"
 copy_file "$SRC_DIR/interceptor.js" "interceptor.js"
 copy_file "$SRC_DIR/register-hooks.js" "register-hooks.js"
 copy_file "$SRC_DIR/judge-worker.js" "judge-worker.js"
@@ -115,6 +116,7 @@ to_fwd() {
 INTERCEPTOR_FWD=$(to_fwd "$TARGET_DIR/interceptor.js")
 INTERCEPTOR_POST_FWD=$(to_fwd "$TARGET_DIR/interceptor-post.js")
 INTERCEPTOR_PROMPT_FWD=$(to_fwd "$TARGET_DIR/interceptor-prompt.js")
+INTERCEPTOR_SESSION_FWD=$(to_fwd "$TARGET_DIR/interceptor-session.js")
 STOP_FWD=$(to_fwd "$TARGET_DIR/stop-extractor.js")
 
 if [ -f "$TARGET_DIR/register-hooks.js" ]; then
@@ -122,6 +124,7 @@ if [ -f "$TARGET_DIR/register-hooks.js" ]; then
   EXP_INTERCEPTOR="$INTERCEPTOR_FWD" \
     EXP_INTERCEPTOR_POST="$INTERCEPTOR_POST_FWD" \
     EXP_INTERCEPTOR_PROMPT="$INTERCEPTOR_PROMPT_FWD" \
+    EXP_INTERCEPTOR_SESSION="$INTERCEPTOR_SESSION_FWD" \
     EXP_STOP="$STOP_FWD" \
     EXP_REGISTER_MODE="existing-only" \
     node "$TARGET_DIR/register-hooks.js" || log "  (non-fatal: register-hooks failed)"

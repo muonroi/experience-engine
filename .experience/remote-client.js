@@ -99,6 +99,14 @@ async function requestJson(method, requestPath, body, options = {}) {
   }
 
   const headers = buildHeaders(config, options.headers || {});
+  // Force the connection closed after each hook request. undici (global fetch)
+  // pools keep-alive sockets; a socket still tearing down when a hook calls
+  // process.exit() trips a libuv assertion on Windows
+  // (`!(handle->flags & UV_HANDLE_CLOSING)`, src/win/async.c:76), crashing the
+  // child. Closing per-request keeps process teardown clean and deterministic.
+  if (headers.Connection === undefined && headers.connection === undefined) {
+    headers.Connection = 'close';
+  }
   let payload;
   if (body !== undefined && body !== null) {
     payload = JSON.stringify(body);

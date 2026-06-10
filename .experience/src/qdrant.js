@@ -11,6 +11,7 @@ const {
   getQdrantBase, getQdrantApiKey,
   getStoreDir, getExpUser, COLLECTIONS,
 } = require('./config');
+const { log } = require('./logger');
 
 // ============================================================
 //  Qdrant connection state
@@ -220,6 +221,44 @@ async function searchCollection(name, vector, topK, signal, extraFilter) {
   } catch { return fileStoreSearch(name, vector, topK); }
 }
 
+/**
+ * scrollCollection: payload-filtered enumeration with NO vector query. Used by
+ * the Project Brief (breadth-first), where ranking is by stored confidence /
+ * hit-count / recency rather than similarity to a query. `extraFilter` is a
+ * partial Qdrant Filter (must / must_not / should arrays) merged into the
+ * user-isolation filter, identical to searchCollection's contract. Returns an
+ * array of points `{ id, payload }`. FileStore fallback enumerates the whole
+ * collection (no server-side filter), leaving payload filtering to the caller.
+ */
+async function scrollCollection(name, extraFilter, limit = 100, signal) {
+  if (!(await checkQdrant())) {
+    // FileStore has no payload index — return all points; brief.js filters in-process.
+    return fileStoreRead(name).map(e => ({ id: e.id, payload: e.payload }));
+  }
+  try {
+    const filter = { must: [buildQdrantUserFilter()] };
+    if (extraFilter && typeof extraFilter === 'object') {
+      if (Array.isArray(extraFilter.must)) filter.must.push(...extraFilter.must);
+      if (Array.isArray(extraFilter.must_not)) filter.must_not = [...(filter.must_not || []), ...extraFilter.must_not];
+      if (Array.isArray(extraFilter.should)) filter.should = [...(filter.should || []), ...extraFilter.should];
+    }
+    const res = await fetch(`${getQdrantBase()}/collections/${name}/points/scroll`, {
+      method: 'POST',
+      headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ limit, with_payload: true, with_vector: false, filter }),
+      signal,
+    });
+    if (!res.ok) {
+      log('warn', 'scroll_collection_http_error', { collection: name, status: res.status });
+      return fileStoreRead(name).map(e => ({ id: e.id, payload: e.payload }));
+    }
+    return (await res.json()).result?.points ?? [];
+  } catch (err) {
+    log('error', 'scroll_collection_failed', { collection: name, error: err?.message || String(err) });
+    return fileStoreRead(name).map(e => ({ id: e.id, payload: e.payload }));
+  }
+}
+
 // ============================================================
 //  updatePointPayload — update single point in FileStore
 // ============================================================
@@ -314,6 +353,7 @@ module.exports = {
   fileStoreUpdate,
   updatePointPayload,
   searchCollection,
+  scrollCollection,
   fetchPointById,
   deleteEntry,
   syncToQdrant,

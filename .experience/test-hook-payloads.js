@@ -29,13 +29,21 @@ function writeExperienceCore(homeDir, body) {
 
 function runHook(homeDir, scriptName, input) {
   const started = Date.now();
+  const childEnv = {
+    ...process.env,
+    HOME: homeDir,
+    USERPROFILE: homeDir,
+    EXPERIENCE_HOOK_DEBUG_LOG: path.join(homeDir, '.experience', 'tmp', 'debug.jsonl'),
+  };
+  // Isolate from the host agent runtime: when the suite runs *inside* a Claude
+  // Code / Gemini / Codex session, those CLIs export markers (CLAUDE_PROJECT_DIR,
+  // etc.) that leak into the child and flip payload routing + the stderr hint
+  // indicator. Strip them so output is deterministic and matches a clean CI run.
+  for (const k of ['CLAUDE_PROJECT_DIR', 'CLAUDE_CODE_SESSION_ID', 'GEMINI_SESSION_ID', 'GEMINI_PROJECT_DIR', 'CODEX_SESSION_ID', 'CODEX_PROJECT_DIR']) {
+    delete childEnv[k];
+  }
   const result = spawnSync(process.execPath, [path.join(homeDir, '.experience', scriptName)], {
-    env: {
-      ...process.env,
-      HOME: homeDir,
-      USERPROFILE: homeDir,
-      EXPERIENCE_HOOK_DEBUG_LOG: path.join(homeDir, '.experience', 'tmp', 'debug.jsonl'),
-    },
+    env: childEnv,
     input: JSON.stringify(input),
     encoding: 'utf8',
     timeout: 8000,

@@ -180,7 +180,7 @@ function isProtectedGetPath(pathname) {
 }
 
 function isReadOnlyApiPath(pathname) {
-  return pathname === '/api/stats' || pathname === '/api/gates';
+  return pathname === '/api/stats' || pathname === '/api/gates' || pathname === '/api/project-brief';
 }
 
 async function resolvePointIdPrefix(collection, pointId) {
@@ -873,6 +873,36 @@ async function handleGraph(req, res, url) {
   json(res, { id, edges: enriched, count: enriched.length });
 }
 
+// /api/project-brief — breadth-first SessionStart digest for a project.
+// GET  /api/project-brief?project=<slug>[&cwd=<path>][&limit=N]  (read token OK)
+// POST /api/project-brief  { project, cwd, limit }              (full token; hook path)
+// One handler, both methods: the SessionStart hook posts via remote-client's
+// postJsonForHook (POST only); dashboards/curl use GET with the read token.
+async function handleProjectBrief(req, res, url) {
+  let project = null;
+  let cwd = null;
+  let limit;
+  if (req.method === 'POST') {
+    const body = await readBody(req);
+    project = typeof body?.project === 'string' ? body.project : null;
+    cwd = typeof body?.cwd === 'string' ? body.cwd : null;
+    if (Number.isFinite(body?.limit)) limit = body.limit;
+  } else {
+    project = url.searchParams.get('project');
+    cwd = url.searchParams.get('cwd');
+    const rawLimit = url.searchParams.get('limit');
+    if (rawLimit != null && Number.isFinite(Number(rawLimit))) limit = Number(rawLimit);
+  }
+  // Fall back to deriving the project slug from cwd (same path the intercept
+  // uses) so a hook that only knows the working directory still gets a brief.
+  if (!project) project = deriveCallerMeta({ project_slug: null, cwd }).project_slug;
+  if (!project) return json(res, { text: null, entries: [], projectSlug: null, count: 0 });
+
+  const { buildProjectBrief } = loadExperienceCore();
+  const brief = await buildProjectBrief(project, { limit });
+  return json(res, brief);
+}
+
 async function handleShare(req, res) {
   const body = await readBody(req);
   const v = validateBody(body, { principleId: { type: 'string', required: true } });
@@ -1360,6 +1390,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/stats' && req.method === 'GET') return await handleStats(req, res, url);
     if (p === '/api/gates' && req.method === 'GET') return await handleGates(req, res);
     if (p === '/api/graph' && req.method === 'GET') return await handleGraph(req, res, url);
+    if (p === '/api/project-brief' && req.method === 'GET') return await handleProjectBrief(req, res, url);
     if (p === '/api/timeline' && req.method === 'GET') return await handleTimeline(req, res, url);
     if (p === '/api/user' && req.method === 'GET') return handleUser(req, res);
     if (p === '/api/hint-stats' && req.method === 'GET') {
@@ -1387,6 +1418,7 @@ const server = http.createServer(async (req, res) => {
       if (p === '/api/search') return await handleSearch(req, res);
       if (p === '/api/pil-context') return await handlePilContext(req, res);
       if (p === '/api/phase-outcome') return await handlePhaseOutcome(req, res);
+      if (p === '/api/project-brief') return await handleProjectBrief(req, res, url);
     }
 
     error(res, 'Not found', 404);
