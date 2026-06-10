@@ -114,6 +114,59 @@ test('map: same record → same stable id (upsert key)', () => {
   assert.equal(mi.mapMemoryToExperience(rec()).id, mi.mapMemoryToExperience(rec()).id);
 });
 
+// --- solution cap ---
+
+test('map: oversized body → solution capped with truncation marker', () => {
+  const big = 'x'.repeat(mi.MAX_SOLUTION_CHARS + 2000);
+  const m = mi.mapMemoryToExperience(rec({ type: 'feedback', body: big }));
+  assert.ok(m.qa.solution.length < big.length);
+  assert.ok(m.qa.solution.startsWith('x'.repeat(mi.MAX_SOLUTION_CHARS)));
+  assert.match(m.qa.solution, /truncated 2000 chars on import/);
+});
+
+test('map: short body → solution untouched (no marker)', () => {
+  const m = mi.mapMemoryToExperience(rec({ type: 'feedback', body: 'short body' }));
+  assert.equal(m.qa.solution, 'short body');
+});
+
+// --- status-dump guard ---
+
+test('map: large project note, no Why/How-to → skipped as status dump', () => {
+  const dump = 'status '.repeat(mi.REFERENCE_DUMP_CHARS); // >> threshold, no **Why:**
+  assert.equal(mi.mapMemoryToExperience(rec({ type: 'project', body: dump })), null);
+});
+
+test('map: large project note WITH **Why:** → kept (capped, not skipped)', () => {
+  const dump = `${'finding. '.repeat(mi.REFERENCE_DUMP_CHARS)}\n\n**Why:** real rationale`;
+  const m = mi.mapMemoryToExperience(rec({ type: 'project', body: dump }));
+  assert.ok(m, 'why-bearing note must be kept');
+  assert.equal(m.tier, 2);
+  assert.equal(m.qa.why, 'real rationale');
+});
+
+test('map: large project dump kept with --include-reference', () => {
+  const dump = 'status '.repeat(mi.REFERENCE_DUMP_CHARS);
+  const m = mi.mapMemoryToExperience(rec({ type: 'project', body: dump }), { includeReference: true });
+  assert.ok(m);
+});
+
+// --- canonical slug / global scope ---
+
+test('isCanonicalSlug: real slug yes, path-like / single-char no', () => {
+  assert.equal(mi.isCanonicalSlug('muonroi-cli'), true);
+  assert.equal(mi.isCanonicalSlug('storyflow'), true);
+  assert.equal(mi.isCanonicalSlug('d:/sources'), false);
+  assert.equal(mi.isCanonicalSlug('c:/users'), false);
+  assert.equal(mi.isCanonicalSlug('a/b'), false);
+  assert.equal(mi.isCanonicalSlug('d'), false);
+  assert.equal(mi.isCanonicalSlug(null), false);
+});
+
+test('map: null projectSlug → no scope gate (global)', () => {
+  const m = mi.mapMemoryToExperience(rec({ type: 'feedback', projectSlug: null }));
+  assert.equal(m.qa.scope, undefined);
+});
+
 // --- scanMemorySources over a temp Claude fixture ---
 
 function makeFixture() {
