@@ -234,6 +234,22 @@ function getActivityLogPath() {
   return pathMod.join(getHomeExpDir(), 'activity.jsonl');
 }
 
+// --- "Who Am I" v4.0 personalization (slice 1: Signal Detector -> profile model) ---
+// Privacy level gates the whole feature. Default 'off' = feature dark (no profile written)
+// until the user opts in. 'minimal' = work patterns only (Tang 1); 'standard' = + decision &
+// communication style (Tang 2). 'full' (Tang 3 emotional) is reserved, NOT implemented yet.
+function getPrivacyLevel() {
+  const v = String(cfgValue('privacyLevel', 'EXPERIENCE_PRIVACY_LEVEL', 'off') || 'off').toLowerCase();
+  return ['off', 'minimal', 'standard', 'full'].includes(v) ? v : 'off';
+}
+function getProfilePath() {
+  return cfgValue('profilePath', 'EXPERIENCE_PROFILE_PATH', pathMod.join(getHomeExpDir(), 'profile.yaml'));
+}
+function getSignalWindowDays() {
+  const n = Number(cfgValue('signalWindowDays', 'EXPERIENCE_SIGNAL_WINDOW_DAYS', 30));
+  return Number.isFinite(n) && n > 0 ? Math.min(365, Math.round(n)) : 30;
+}
+
 // --- Activity Log ---
 let _activityLog = null;
 
@@ -258,6 +274,7 @@ module.exports = {
   getMinPromptLength, getPromptSkipRegex, DEFAULT_PROMPT_SKIP_WORDS,
   getExpUser, EXP_USER,
   getHomeExpDir, getStoreDir, getActivityLogPath,
+  getPrivacyLevel, getProfilePath, getSignalWindowDays,
   COLLECTIONS, SELFQA_COLLECTION, EDGE_COLLECTION, ROUTES_COLLECTION,
   DEDUP_THRESHOLD, QUERY_MAX_CHARS, COMPACT_DIM,
   VALID_FEEDBACK_VERDICTS, VALID_NOISE_REASONS, VALID_NOISE_DISPOSITIONS, VALID_NOISE_SOURCES,
