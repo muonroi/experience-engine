@@ -215,8 +215,37 @@ function selectProbationaryT2Points(points) {
   });
 }
 
+// --- Project Brief scoring (breadth-first, NOT similarity) ---
+// Used by src/brief.js to rank a project's learned entries for the SessionStart
+// digest. Unlike computeEffectiveScore (which factors cosine similarity to a
+// query), the brief has no query — it ranks by how confident + reinforced +
+// fresh the engine is about each entry: confidence × hit-count × recency.
+const BRIEF_HIT_WEIGHT = 0.25;
+
+function briefRecencyFactor(data) {
+  const confirmed = Array.isArray(data?.confirmedAt) ? data.confirmedAt : [];
+  const tsRaw = data?.lastHitAt
+    || (confirmed.length > 0 ? confirmed[confirmed.length - 1] : null)
+    || data?.createdAt
+    || null;
+  const ts = tsRaw ? new Date(tsRaw).getTime() : NaN;
+  if (!Number.isFinite(ts)) return 0.85; // unknown age — mild neutral discount
+  const daysAgo = (Date.now() - ts) / 86400000;
+  if (daysAgo <= 7) return 1.10;
+  if (daysAgo <= 30) return 1.0;
+  if (daysAgo <= 90) return 0.85;
+  return 0.70;
+}
+
+function computeBriefScore(data) {
+  const conf = computeEffectiveConfidence(data || {});
+  const hitTerm = 1 + Math.log2(1 + (data?.hitCount || 0)) * BRIEF_HIT_WEIGHT;
+  return conf * hitTerm * briefRecencyFactor(data);
+}
+
 module.exports = {
   computeEffectiveConfidence, computeEffectiveScore, rerankByQuality,
   getSurfaceCountForProbation, hasProbationaryT2Debt,
   isProbationaryT2Candidate, selectProbationaryT2Points,
+  computeBriefScore, briefRecencyFactor,
 };

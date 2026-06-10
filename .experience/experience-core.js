@@ -30,6 +30,7 @@ const _router = require('./src/router');
 const _activity = require('./src/activity');
 const _hittrack = require('./src/hittrack');
 const _intercept = require('./src/intercept');
+const _brief = require('./src/brief');
 
 // --- Constants ---
 const { COLLECTIONS, EDGE_COLLECTION } = _intercept;
@@ -428,6 +429,7 @@ module.exports = {
   evolve: _evolution.evolve,
   getEmbeddingRaw: _embedding.getEmbeddingRaw,
   searchCollection: _qdrant.searchCollection,
+  buildProjectBrief: _brief.buildProjectBrief,
   deleteEntry: _qdrant.deleteEntry,
   createEdge: _graph.createEdge,
   getEdgesForId: _graph.getEdgesForId,

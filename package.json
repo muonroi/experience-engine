@@ -28,6 +28,7 @@
     ".experience/health-check.sh",
     ".experience/interceptor-post.js",
     ".experience/interceptor-prompt.js",
+    ".experience/interceptor-session.js",
     ".experience/interceptor.js",
     ".experience/judge-worker.js",
     ".experience/remote-client.js",

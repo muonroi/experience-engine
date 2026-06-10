@@ -72,6 +72,7 @@ Important endpoints:
 | `GET /api/gates` | Server-side readiness / gate report; supports read-token auth |
 | `GET /api/timeline?topic=...` | Semantic timeline across principles, behavioral, and self-QA |
 | `GET /api/graph?id=...` | Experience graph edges |
+| `GET/POST /api/project-brief` | Breadth-first SessionStart digest: top-N project-scoped entries ranked by confidence×hits×recency (not similarity). GET (read-token) for observability/curl; POST for the SessionStart hook transport |
 | `POST /api/feedback` | Record agent verdict on a surfaced suggestion |
 | `POST /api/principles/share` | Export a principle |
 | `POST /api/principles/import` | Import a principle |
@@ -95,6 +96,7 @@ Qdrant config is resolved through `.experience/src/config.js`, so both flat keys
 |------|---------|
 | `.experience/interceptor.js` | Agent hook entry; calls local core or remote client |
 | `.experience/interceptor-prompt.js` | Prompt-side interception helpers |
+| `.experience/interceptor-session.js` | SessionStart hook; injects the breadth-first Project Brief once per session. Wired for Claude/Codex/Gemini/Antigravity (all expose a native SessionStart + `hookSpecificOutput.additionalContext`; Antigravity tagged `--runtime=antigravity`) |
 | `.experience/interceptor-post.js` | Post-tool reconciliation hook |
 | `.experience/posttool-batch-hook.js` | Batched post-tool hook path |
 | `.experience/experience-core.js` | Shared hook runtime facade and compatibility surface |
@@ -124,6 +126,7 @@ modules instead of reimplementing cross-cutting behavior.
 | `.experience/src/embedding.js` | Embedding provider and vector generation |
 | `.experience/src/brain-llm.js` | Brain LLM provider calls and fallback behavior |
 | `.experience/src/intercept.js` | Intercept pipeline and extraction orchestration |
+| `.experience/src/brief.js` | Project Brief builder: scroll project-scoped entries, rank by confidence×hits×recency, format 1-line index, per-project TTL cache |
 | `.experience/src/context.js` | Context retrieval and PIL context helpers |
 | `.experience/src/scoring.js` | Ranking, score gates, effective-score logic |
 | `.experience/src/format.js` | Suggestion formatting and output filtering |
