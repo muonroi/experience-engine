@@ -692,6 +692,55 @@ paths:
               schema:
                 type: object
 
+  /api/recall:
+    post:
+      summary: Active recall (agent-initiated self-query)
+      description: >
+        Agent-initiated, on-demand recall of learned experience. Unlike
+        /api/search (raw vector hits, no signal), recall runs the full intercept
+        pipeline: scope-filtered + scored retrieval across the experience tiers
+        (T0 principles, T1 behavioral, T2 seeds, self-QA), formatted with
+        `[id col]` feedback handles, and records a SURFACE event per returned
+        entry (bumps surfaceCount, NOT hitCount). The agent then reports
+        usefulness via /api/feedback so actively pulled context reinforces
+        precisely and filters noise faster than passive hints. Full auth token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: { type: string, description: Natural-language question/context (max 10KB) }
+                cwd: { type: string, description: Working dir used to derive project/lang scope }
+                project_slug: { type: string }
+                lang: { type: string }
+                sourceSession: { type: string }
+      responses:
+        '200':
+          description: Recall result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  text:
+                    type: string
+                    nullable: true
+                    description: Formatted experience (⚠️/💡 lines with [id col]), or null when nothing matched.
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        collection: { type: string }
+                  count: { type: integer }
+                  query: { type: string }
+        '400':
+          description: query is required / exceeds 10KB
+
   /api/timeline:
     get:
       summary: Semantic timeline

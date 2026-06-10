@@ -170,6 +170,7 @@ THIN_CLIENT_FILES=(
   health-check.sh
   exp-feedback.js
   exp-feedback
+  exp-recall.js
   exp-bootstrap.sh
   exp-health-last
   exp-shell-init.sh
@@ -193,6 +194,7 @@ chmod +x \
   "$INSTALL_DIR/health-check.sh" \
   "$INSTALL_DIR/exp-feedback.js" \
   "$INSTALL_DIR/exp-feedback" \
+  "$INSTALL_DIR/exp-recall.js" \
   "$INSTALL_DIR/exp-bootstrap.sh" \
   "$INSTALL_DIR/exp-health-last" \
   "$INSTALL_DIR/exp-shell-init.sh" \

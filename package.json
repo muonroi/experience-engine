@@ -16,6 +16,7 @@
     ".experience/exp-client-drain.js",
     ".experience/exp-feedback",
     ".experience/exp-feedback.js",
+    ".experience/exp-recall.js",
     ".experience/exp-health-last",
     ".experience/exp-open-pane",
     ".experience/exp-pane-bottom",
