@@ -259,6 +259,113 @@ async function scrollCollection(name, extraFilter, limit = 100, signal) {
   }
 }
 
+/**
+ * searchCollectionLexical: full-text (lexical) candidate retrieval for hybrid
+ * recall. Tokenizes queryText and matches the top-level `text_search` payload
+ * field with an OR over tokens (permissive — recall casts a wide net; RRF
+ * fusion ranks afterward). Requires a Qdrant `text` index on `text_search`
+ * (ensureTextIndex); if the index is missing or Qdrant is down, returns [] so
+ * recall degrades cleanly to the vector leg. Match is boolean (unscored) — the
+ * caller ranks candidates (see fusion.lexicalRank). Returns `{ id, payload }`.
+ */
+function tokenizeForLexical(queryText) {
+  return [...new Set(
+    String(queryText || '')
+      .toLowerCase()
+      .split(/[^a-z0-9_]+/i)
+      .filter(t => t.length >= 2)
+  )].slice(0, 24);
+}
+
+async function searchCollectionLexical(name, queryText, limit, signal, extraFilter) {
+  const tokens = tokenizeForLexical(queryText);
+  if (tokens.length === 0) return [];
+  // FileStore has no full-text index — lexical leg is a no-op there (vector leg
+  // still serves recall). Callers fuse whatever each leg returns.
+  if (!(await checkQdrant())) return [];
+  try {
+    const filter = {
+      must: [buildQdrantUserFilter()],
+      should: tokens.map(t => ({ key: 'text_search', match: { text: t } })),
+    };
+    if (extraFilter && typeof extraFilter === 'object') {
+      if (Array.isArray(extraFilter.must)) filter.must.push(...extraFilter.must);
+      if (Array.isArray(extraFilter.must_not)) filter.must_not = [...(filter.must_not || []), ...extraFilter.must_not];
+    }
+    const res = await fetch(`${getQdrantBase()}/collections/${name}/points/scroll`, {
+      method: 'POST',
+      headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ limit, with_payload: true, with_vector: false, filter }),
+      signal,
+    });
+    if (!res.ok) {
+      log('warn', 'lexical_search_http_error', { collection: name, status: res.status });
+      return [];
+    }
+    return (await res.json()).result?.points ?? [];
+  } catch (err) {
+    log('warn', 'lexical_search_failed', { collection: name, error: err?.message || String(err) });
+    return [];
+  }
+}
+
+/**
+ * ensureTextIndex: idempotently create a Qdrant full-text payload index on a
+ * field (default `text_search`) so MatchText queries work. Safe to call on
+ * every startup — Qdrant returns ok if the index already exists; any error is
+ * logged and non-fatal (lexical leg degrades to empty until the index lands).
+ */
+async function ensureTextIndex(collection, field = 'text_search', signal) {
+  if (!(await checkQdrant())) return false;
+  try {
+    const res = await fetch(`${getQdrantBase()}/collections/${collection}/index`, {
+      method: 'PUT',
+      headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        field_name: field,
+        field_schema: { type: 'text', tokenizer: 'word', lowercase: true, min_token_len: 2, max_token_len: 30 },
+      }),
+      signal: signal || AbortSignal.timeout(10000),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      // "already exists" is success-equivalent for our purposes.
+      if (/exist/i.test(body)) return true;
+      log('warn', 'ensure_text_index_failed', { collection, field, status: res.status, body: body.slice(0, 200) });
+      return false;
+    }
+    return true;
+  } catch (err) {
+    log('warn', 'ensure_text_index_error', { collection, field, error: err?.message || String(err) });
+    return false;
+  }
+}
+
+/**
+ * setPayloadFields: merge top-level fields into a point's payload (Qdrant
+ * set-payload merges, leaving other keys intact). Used by the text_search
+ * backfill. No-op without Qdrant. Returns true on success.
+ */
+async function setPayloadFields(collection, pointId, fields, signal) {
+  if (!(await checkQdrant())) return false;
+  try {
+    const res = await fetch(`${getQdrantBase()}/collections/${collection}/points/payload`, {
+      method: 'POST',
+      headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ points: [pointId], payload: fields }),
+      signal: signal || AbortSignal.timeout(5000),
+    });
+    if (!res.ok) {
+      log('warn', 'set_payload_fields_failed', { collection, pointId: String(pointId).slice(0, 8), status: res.status });
+      return false;
+    }
+    return true;
+  } catch (err) {
+    log('warn', 'set_payload_fields_error', { collection, pointId: String(pointId).slice(0, 8), error: err?.message || String(err) });
+    return false;
+  }
+}
+
 // ============================================================
 //  updatePointPayload — update single point in FileStore
 // ============================================================
@@ -353,10 +460,14 @@ module.exports = {
   fileStoreUpdate,
   updatePointPayload,
   searchCollection,
+  searchCollectionLexical,
   scrollCollection,
+  ensureTextIndex,
+  setPayloadFields,
   fetchPointById,
   deleteEntry,
   syncToQdrant,
   buildQdrantUserFilter,
   cosineSimilarity,
+  tokenizeForLexical,
 };

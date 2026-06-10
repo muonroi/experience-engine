@@ -697,13 +697,20 @@ paths:
       summary: Active recall (agent-initiated self-query)
       description: >
         Agent-initiated, on-demand recall of learned experience, run in
-        SEMANTIC-SEARCH MODE. Unlike /api/search (raw vector hits, no signal)
-        and unlike passive hints, recall ranks by RAW COSINE similarity and
-        deliberately drops the passive-hint noise-control gates: the positive
-        lang/framework/project scope filters and the min-search-score floor are
-        NOT applied (that floor is a noise guard for hints, not a relevance
-        ceiling for a deliberate query — so cross-repo / cross-language lessons
-        can surface). Integrity gates STILL apply: superseded, permanent-noise
+        HYBRID SEMANTIC-SEARCH MODE. Unlike /api/search (raw vector hits, no
+        signal) and unlike passive hints, recall runs TWO retrieval legs — a
+        dense-vector kNN leg (semantic) and a full-text lexical leg (exact
+        terms / identifiers the embedding may miss) — and fuses them per tier
+        with Reciprocal Rank Fusion (the same fusion Elasticsearch uses), so an
+        experience that matches strongly on EITHER leg surfaces. Recall also
+        casts a wider net (recallTopK) and deliberately drops the passive-hint
+        noise-control gates: the positive lang/framework/project scope filters
+        and the min-search-score floor are NOT applied (that floor is a noise
+        guard for hints, not a relevance ceiling for a deliberate query — so
+        cross-repo / cross-language lessons can surface). The lexical leg uses a
+        Qdrant full-text index on the top-level `text_search` payload field and
+        degrades to empty if the index is missing (recall falls back to
+        vector-only). Integrity gates STILL apply: superseded, permanent-noise
         (ignore>=20 & hit=0), irrelevant>=3, learned lang/project exclusions,
         and the min-confidence quality floor. Retrieval spans the experience
         tiers (T0 principles, T1 behavioral, T2 seeds, self-QA), is formatted

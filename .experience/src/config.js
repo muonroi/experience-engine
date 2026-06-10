@@ -163,10 +163,14 @@ const EXP_USER = getExpUser();
 // below entries with hit history. Larger top-K gives correct hints headroom to
 // survive rerank, then budgetChars caps the final display volume. Net cost is
 // one Qdrant payload per extra slot — negligible vs the wrong-content cost.
+// topK: per-collection candidate count for passive hints (precision-tuned).
+// recallTopK: wider net for active recall — recall drops the score floor and
+// fuses a lexical leg (RRF), so fetching more candidates per leg then ranking
+// is strictly better than the precision-tuned passive topK.
 const COLLECTIONS = [
-  { name: 'experience-principles', topK: 4, budgetChars: 800 },
-  { name: 'experience-behavioral', topK: 6, budgetChars: 1200 },
-  { name: 'experience-selfqa',     topK: 4, budgetChars: 1000 },
+  { name: 'experience-principles', topK: 4, recallTopK: 10, budgetChars: 800 },
+  { name: 'experience-behavioral', topK: 6, recallTopK: 15, budgetChars: 1200 },
+  { name: 'experience-selfqa',     topK: 4, recallTopK: 20, budgetChars: 1000 },
 ];
 const SELFQA_COLLECTION = 'experience-selfqa';
 const EDGE_COLLECTION = 'experience-edges';

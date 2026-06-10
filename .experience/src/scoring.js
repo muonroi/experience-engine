@@ -172,17 +172,21 @@ function computeEffectiveScore(point, data, queryDomain, queryProjectSlug, query
 // penalty-weighted effective score. Used by active recall (semantic-search mode)
 // where the penalty stack — which exists to suppress passive-hint noise — must
 // not reorder a deliberate query's results. Default path is unchanged.
+// opts.rawCosineRank: rank by raw cosine instead of the penalty stack.
+// opts.preserveOrder: keep the input order (used by hybrid recall, where RRF
+//   fusion has already determined the order); still attaches _effectiveScore
+//   from the point's display score so formatPoints labels render sensibly.
 function rerankByQuality(points, queryDomain, queryProjectSlug, queryText = '', opts = {}) {
-  return points
-    .map(p => {
-      let data = {};
-      try { data = JSON.parse(p.payload?.json || '{}'); } catch { /* default */ }
-      const eff = opts && opts.rawCosineRank
-        ? (p.score || 0)
-        : computeEffectiveScore(p, data, queryDomain, queryProjectSlug, queryText);
-      return { ...p, _effectiveScore: eff };
-    })
-    .sort((a, b) => b._effectiveScore - a._effectiveScore);
+  const mapped = points.map(p => {
+    let data = {};
+    try { data = JSON.parse(p.payload?.json || '{}'); } catch { /* default */ }
+    const eff = (opts && (opts.rawCosineRank || opts.preserveOrder))
+      ? (p.score || 0)
+      : computeEffectiveScore(p, data, queryDomain, queryProjectSlug, queryText);
+    return { ...p, _effectiveScore: eff };
+  });
+  if (opts && opts.preserveOrder) return mapped; // RRF-fused order is authoritative
+  return mapped.sort((a, b) => b._effectiveScore - a._effectiveScore);
 }
 
 function getSurfaceCountForProbation(data) {

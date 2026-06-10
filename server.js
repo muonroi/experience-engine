@@ -1063,6 +1063,34 @@ async function ensureCollections() {
       slog('error', 'collection_ensure_error', { collection: col, error: String(err) });
     }
   }
+
+  // Hybrid recall: ensure a full-text index on the top-level `text_search`
+  // payload field for the experience collections so the lexical leg's MatchText
+  // queries work. Idempotent — Qdrant treats an existing index as success; any
+  // failure is logged and non-fatal (lexical leg returns [] until the index
+  // lands, so recall degrades cleanly to vector-only).
+  for (const col of ['experience-principles', 'experience-behavioral', 'experience-selfqa']) {
+    try {
+      const idx = await fetch(`${QDRANT_BASE}/collections/${col}/index`, {
+        method: 'PUT',
+        headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          field_name: 'text_search',
+          field_schema: { type: 'text', tokenizer: 'word', lowercase: true, min_token_len: 2, max_token_len: 30 },
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (idx.ok) {
+        slog('info', 'text_index_ensured', { collection: col });
+      } else {
+        const body = await idx.text();
+        if (/exist/i.test(body)) slog('info', 'text_index_exists', { collection: col });
+        else slog('warn', 'text_index_failed', { collection: col, status: idx.status, body: body.slice(0, 200) });
+      }
+    } catch (err) {
+      slog('warn', 'text_index_error', { collection: col, error: String(err) });
+    }
+  }
 }
 
 // /api/recall — agent-initiated active recall of learned experience.

@@ -31,6 +31,7 @@ const _activity = require('./src/activity');
 const _hittrack = require('./src/hittrack');
 const _intercept = require('./src/intercept');
 const _brief = require('./src/brief');
+const _fusion = require('./src/fusion');
 
 // Wire the config-level activityLog stub to the real file logger. config.js
 // exposes activityLog as a setter-guarded no-op (to avoid a require cycle with
@@ -165,12 +166,34 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     return hasAny ? extra : undefined;
   })();
 
-  const [t0, t1, t2, routeResult] = await Promise.all([
-    _qdrant.searchCollection(COLLECTIONS[0].name, vector, COLLECTIONS[0].topK, signal, queryFilter),
-    _qdrant.searchCollection(COLLECTIONS[1].name, vector, COLLECTIONS[1].topK, signal, queryFilter),
-    _qdrant.searchCollection(COLLECTIONS[2].name, vector, COLLECTIONS[2].topK, signal, queryFilter),
+  // Active recall casts a wider net (recallTopK) than precision-tuned passive
+  // hints (topK), because recall drops the score floor and fuses a lexical leg.
+  const tkFor = (i) => (recallMode ? (COLLECTIONS[i].recallTopK || COLLECTIONS[i].topK) : COLLECTIONS[i].topK);
+
+  const searchResults = await Promise.all([
+    _qdrant.searchCollection(COLLECTIONS[0].name, vector, tkFor(0), signal, queryFilter),
+    _qdrant.searchCollection(COLLECTIONS[1].name, vector, tkFor(1), signal, queryFilter),
+    _qdrant.searchCollection(COLLECTIONS[2].name, vector, tkFor(2), signal, queryFilter),
     routePromise,
   ]);
+  let t0 = searchResults[0], t1 = searchResults[1], t2 = searchResults[2];
+  const routeResult = searchResults[3];
+
+  // Hybrid recall (recall only): run a lexical full-text leg alongside the
+  // dense-vector leg and fuse per collection with Reciprocal Rank Fusion, so an
+  // experience that matches strongly on EITHER semantics OR exact terms
+  // surfaces. Passive hints stay vector-only + precision-gated. The lexical leg
+  // degrades to [] if the text index is missing, so this never breaks recall.
+  if (recallMode) {
+    const [lx0, lx1, lx2] = await Promise.all([
+      _qdrant.searchCollectionLexical(COLLECTIONS[0].name, query, tkFor(0), signal, queryFilter),
+      _qdrant.searchCollectionLexical(COLLECTIONS[1].name, query, tkFor(1), signal, queryFilter),
+      _qdrant.searchCollectionLexical(COLLECTIONS[2].name, query, tkFor(2), signal, queryFilter),
+    ]);
+    t0 = _fusion.hybridFuse(t0, lx0, query);
+    t1 = _fusion.hybridFuse(t1, lx1, query);
+    t2 = _fusion.hybridFuse(t2, lx2, query);
+  }
 
   // Collections whose seeds are language/framework-specific. For these we
   // enforce strict scope: unscoped hints, mismatched lang, mismatched
@@ -308,7 +331,9 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     });
   }
 
-  const rankOpts = { rawCosineRank: recallMode };
+  // Recall: preserve the RRF-fused order (hybridFuse already ranked); passive
+  // hints use the penalty-weighted effective-score sort.
+  const rankOpts = recallMode ? { preserveOrder: true } : {};
   let r0 = _utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t0, COLLECTIONS[0].name), queryDomain, queryProjectSlug, query, rankOpts), COLLECTIONS[0].name);
   let r1 = _utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t1, COLLECTIONS[1].name), queryDomain, queryProjectSlug, query, rankOpts), COLLECTIONS[1].name);
   let r2 = _scoring.selectProbationaryT2Points(_utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t2, COLLECTIONS[2].name), queryDomain, queryProjectSlug, query, rankOpts), COLLECTIONS[2].name));
