@@ -32,6 +32,15 @@ const _hittrack = require('./src/hittrack');
 const _intercept = require('./src/intercept');
 const _brief = require('./src/brief');
 
+// Wire the config-level activityLog stub to the real file logger. config.js
+// exposes activityLog as a setter-guarded no-op (to avoid a require cycle with
+// activity.js); modules that log through ./config — notably src/embedding.js
+// logCostCall('embed', …) — silently drop their events until this runs. Without
+// it, no embed cost-calls are ever written and /health embed status is stuck at
+// "unknown". experience-core is the shared entry the server loads, so wiring
+// here covers every server-side embedding path.
+_config.setActivityLog(_activity.activityLog);
+
 // --- Constants ---
 const { COLLECTIONS, EDGE_COLLECTION } = _intercept;
 
