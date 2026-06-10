@@ -318,11 +318,16 @@ const t = setTimeout(() => {
   process.exit(0);
 }, STDIN_TIMEOUT_MS);
 
+// Watchdog: force-quit only if natural drain hangs. Unref'd so it never keeps
+// the loop alive on its own — when the handler finishes and undici sockets
+// close, the process exits naturally (avoiding the Windows libuv double-close
+// assertion that process.exit() trips while sockets are mid-teardown).
 const hardExit = setTimeout(() => {
   debugLog({ stage: 'hard_exit' });
   activityLog({ stage: 'hard_exit' });
   process.exit(0);
 }, HARD_EXIT_TIMEOUT_MS);
+hardExit.unref();
 
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', c => { input += c; });
@@ -353,11 +358,11 @@ process.stdin.on('end', async () => {
     activityLog({ stage: 'parsed', tool, matches, keys: Object.keys(toolInput || {}).slice(0, 12), query: toolInput?.command || toolInput?.cmd || null, ...sourceMeta });
     if (!matches) {
       emitPreToolUseGuidance(data, tool);
-      process.exit(0);
+      process.exitCode = 0; return;
     }
     if (isReadOnlyCommand(tool, toolInput)) {
       emitPreToolUseGuidance(data, tool);
-      process.exit(0);
+      process.exitCode = 0; return;
     }
 
     const ctrl = new AbortController();
@@ -421,7 +426,7 @@ process.stdin.on('end', async () => {
     }
     if (timedOut || !resultMeta) {
       emitPreToolUseGuidance(data, tool);
-      process.exit(0);
+      process.exitCode = 0; return;
     }
     const result = resultMeta?.suggestions ?? (typeof resultMeta === 'string' ? resultMeta : null);
     const surfacedIds = resultMeta?.surfacedIds || [];
@@ -515,6 +520,7 @@ process.stdin.on('end', async () => {
       }
     } catch {}
   }
-  clearTimeout(hardExit);
-  process.exit(0);
+  // Exit naturally so undici sockets close cleanly; hardExit (unref'd) is the
+  // watchdog if drain ever hangs. See hardExit comment above.
+  process.exitCode = 0;
 });

@@ -361,11 +361,17 @@ const t = setTimeout(() => {
   process.exit(0);
 }, STDIN_TIMEOUT_MS);
 
+// Watchdog: force-quit only if natural drain hangs. Unref'd so it never keeps
+// the loop alive on its own — when the handler finishes and undici sockets
+// close, the process exits naturally (avoiding the Windows libuv double-close
+// assertion that process.exit() trips while sockets are mid-teardown). It fires
+// only if a genuinely stuck ref'd handle keeps the loop alive past the timeout.
 const hardExit = setTimeout(() => {
   debugLog({ stage: 'hard_exit' });
   activityLog({ stage: 'hard_exit' });
   process.exit(0);
 }, HARD_EXIT_TIMEOUT_MS);
+hardExit.unref();
 
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', c => { input += c; });
@@ -383,7 +389,7 @@ process.stdin.on('end', async () => {
     if (hookEvent !== 'UserPromptSubmit') {
       debugLog({ stage: 'skip', reason: 'not UserPromptSubmit', hookEvent });
       activityLog({ stage: 'skip', reason: 'not UserPromptSubmit', hookEvent, ...sourceMeta });
-      process.exit(0);
+      process.exitCode = 0; return;
     }
 
     // Extract the user's prompt text
@@ -412,7 +418,7 @@ process.stdin.on('end', async () => {
     if (!prompt || prompt.length < MIN_PROMPT_LENGTH || SKIP_PATTERNS.test(prompt.trim())) {
       debugLog({ stage: 'skip', reason: 'trivial prompt' });
       activityLog({ stage: 'skip', reason: 'trivial prompt', promptLen: prompt.length, ...sourceMeta });
-      process.exit(0);
+      process.exitCode = 0; return;
     }
 
     const ctrl = new AbortController();
@@ -485,7 +491,7 @@ process.stdin.on('end', async () => {
         ...sourceMeta,
       });
     }
-    if (timedOut || !resultMeta) process.exit(0);
+    if (timedOut || !resultMeta) { process.exitCode = 0; return; }
 
     let suggestions = resultMeta?.suggestions || null;
     let surfacedIds = resultMeta?.surfacedIds || [];
@@ -546,6 +552,9 @@ process.stdin.on('end', async () => {
     debugLog({ stage: 'error', message: error?.message || String(error) });
     activityLog({ stage: 'error', message: error?.message || String(error) });
   }
-  clearTimeout(hardExit);
-  process.exit(0);
+  // Exit naturally: let the event loop drain so undici sockets close cleanly.
+  // Force-exit (process.exit) here trips the Windows libuv double-close
+  // assertion when concurrent fetches (flushQueueForHook batch) are mid-teardown.
+  // hardExit (unref'd) remains armed as a watchdog if drain ever hangs.
+  process.exitCode = 0;
 });
