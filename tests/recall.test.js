@@ -109,6 +109,28 @@ test('rerankByQuality rawCosineRank: orders by raw cosine and differs from defau
   assert.ok(def.some(p => p._effectiveScore !== (p.score)), 'default mode must reweight, not pass cosine through');
 });
 
+test('rerankByQuality preserveOrder: keeps input (RRF-fused) order, still sets _effectiveScore', () => {
+  // Input order is the fused order; a lower-cosine item deliberately precedes a
+  // higher-cosine one. preserveOrder must NOT re-sort.
+  const pts = [
+    { id: 'X', score: 0.30, payload: { json: JSON.stringify({ solution: 'x', confidence: 0.9 }) } },
+    { id: 'Y', score: 0.90, payload: { json: JSON.stringify({ solution: 'y', confidence: 0.9 }) } },
+  ];
+  const out = rerankByQuality(pts, null, null, 'q', { preserveOrder: true });
+  assert.deepEqual(out.map(p => p.id), ['X', 'Y'], 'fused order preserved (no re-sort)');
+  assert.equal(out[0]._effectiveScore, 0.30);
+  assert.equal(out[1]._effectiveScore, 0.90);
+});
+
+test('formatPoints footer: closes the loop with followed / ignored / noise', () => {
+  const lines = formatPoints([makePoint('cccccccc', getMinSearchScore() + 0.2)]);
+  assert.equal(lines.length, 1);
+  const out = lines[0];
+  assert.match(out, /exp-feedback\.js followed cccccccc experience-behavioral/);
+  assert.match(out, /exp-feedback\.js ignored cccccccc experience-behavioral/);
+  assert.match(out, /exp-feedback\.js noise cccccccc experience-behavioral/);
+});
+
 // --------------------------- server integration ------------------------------
 
 function getFreePort() {

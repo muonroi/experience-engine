@@ -164,12 +164,15 @@ function formatPoints(points, opts = {}) {
     const pid = String(point.id).slice(0, 8);
     const coll = point._collection || 'experience-behavioral';
     line += `\n   [id:${pid} col:${coll}]`;
-    // v3: inline feedback — agent reports noisy/wrong hints via the local
-    // exp-feedback helper. The helper reads serverBaseUrl + auth token from
-    // ~/.experience/config.json so the same line works on thin clients
-    // (raw `POST /api/feedback` defaulted to localhost:8082 which is unreachable
-    // when the engine runs on a remote VPS).
-    line += `\n   ↩ Wrong? node ~/.experience/exp-feedback.js noise ${pid} ${coll} wrong_repo`;
+    // v3: inline feedback — agent reports the verdict via the local exp-feedback
+    // helper (reads serverBaseUrl + auth token from ~/.experience/config.json so
+    // it works on thin clients; raw `POST /api/feedback` defaults to localhost
+    // and no-ops on a remote VPS). All three verdicts are shown so the loop is
+    // closed both ways: `followed` (the asymmetric signal Gate-4 precision needs)
+    // and `ignored` keep the entry alive; only `noise` pushes it toward removal.
+    line += `\n   ✓ helped: node ~/.experience/exp-feedback.js followed ${pid} ${coll}`;
+    line += `\n   · n/a:    node ~/.experience/exp-feedback.js ignored ${pid} ${coll}`;
+    line += `\n   ↩ wrong:  node ~/.experience/exp-feedback.js noise ${pid} ${coll} <stale_rule|wrong_repo|wrong_language|wrong_task>`;
     lines.push(line);
   }
   return lines;
@@ -316,10 +319,31 @@ function normalizeTechLabel(label) {
   return normalized;
 }
 
+// buildTextSearch: the lexical-search text for a stored entry. Concatenates the
+// human-meaningful fields (trigger, question, solution, judgment, failureMode)
+// into one normalized string that gets stored as a TOP-LEVEL payload field so
+// Qdrant can full-text index it (the canonical text lives inside payload.json,
+// which Qdrant cannot tokenize). Used by the write path (upsertEntry), the
+// backfill tool, and — implicitly via the index — the hybrid recall lexical leg.
+function buildTextSearch(data) {
+  if (!data || typeof data !== 'object') return '';
+  const parts = [
+    data.trigger, data.question, data.solution,
+    data.judgment, data.failureMode, data.principle,
+  ];
+  return parts
+    .filter(p => typeof p === 'string' && p.trim())
+    .join(' ')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 2000);
+}
+
 module.exports = {
   buildStorePayload, formatPoints, applyBudget,
   ensureSignalMetrics, normalizeEvidenceClass, normalizeConditions,
   normalizeFailureMode, normalizeJudgment, ensureAbstractionFields,
   ensureNovelCaseEvidence, isPrincipleLikeEntry, buildPrincipleText,
-  normalizeTechLabel,
+  normalizeTechLabel, buildTextSearch,
 };

@@ -27,6 +27,7 @@ const {
   ensureSignalMetrics, ensureNovelCaseEvidence,
   buildPrincipleText, buildStorePayload,
   normalizeFailureMode, normalizeJudgment, normalizeEvidenceClass,
+  buildTextSearch,
 } = require('./format');
 const { computeEffectiveConfidence } = require('./scoring');
 const { getValidatedHitCount } = require('./utils');
@@ -963,7 +964,8 @@ function buildScopeFlatFields(data) {
 }
 
 async function upsertEntry(collection, id, vector, data) {
-  const payload = { json: JSON.stringify(data), user: getExpUser(), ...buildScopeFlatFields(data) };
+  // text_search: top-level lexical field for the hybrid-recall full-text index.
+  const payload = { json: JSON.stringify(data), user: getExpUser(), text_search: buildTextSearch(data), ...buildScopeFlatFields(data) };
   if (!(await checkQdrant())) {
     fileStoreUpsert(collection, id, vector, payload);
     return;
