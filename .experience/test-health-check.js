@@ -79,7 +79,7 @@ test('health-check reports thin-client server state and remediation hints', { sk
   fs.mkdirSync(path.join(expDir, 'offline-queue'), { recursive: true });
   fs.writeFileSync(path.join(expDir, 'offline-queue', 'queued.json'), '{}');
 
-  for (const file of ['experience-core.js', 'interceptor.js', 'interceptor-post.js', 'interceptor-prompt.js', 'stop-extractor.js', 'remote-client.js', 'health-check.sh', 'exp-server-maintain.js', 'exp-portable-backup.js', 'exp-portable-restore.js']) {
+  for (const file of ['experience-core.js', 'interceptor.js', 'interceptor-post.js', 'interceptor-prompt.js', 'interceptor-session.js', 'stop-extractor.js', 'remote-client.js', 'health-check.sh', 'exp-server-maintain.js', 'exp-portable-backup.js', 'exp-portable-restore.js']) {
     fs.writeFileSync(path.join(expDir, file), '# stub\n');
   }
   fs.writeFileSync(path.join(expDir, 'experience-core.js'), `
@@ -151,7 +151,7 @@ test('health-check treats local server nodes as healthy without client hooks', {
   fs.writeFileSync(path.join(expDir, 'config.json'), JSON.stringify(config, null, 2));
   fs.writeFileSync(path.join(expDir, 'activity.jsonl'), JSON.stringify({ ts: new Date().toISOString(), op: 'intercept', result: null }) + '\n');
 
-  for (const file of ['experience-core.js', 'interceptor.js', 'interceptor-post.js', 'interceptor-prompt.js', 'stop-extractor.js', 'remote-client.js', 'health-check.sh', 'exp-server-maintain.js', 'exp-portable-backup.js', 'exp-portable-restore.js']) {
+  for (const file of ['experience-core.js', 'interceptor.js', 'interceptor-post.js', 'interceptor-prompt.js', 'interceptor-session.js', 'stop-extractor.js', 'remote-client.js', 'health-check.sh', 'exp-server-maintain.js', 'exp-portable-backup.js', 'exp-portable-restore.js']) {
     fs.writeFileSync(path.join(expDir, file), '# stub\n');
   }
 
