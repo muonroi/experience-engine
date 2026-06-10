@@ -1043,7 +1043,7 @@ for f in exp-server-maintain.js exp-portable-backup.js exp-portable-restore.js; 
   fi
 done
 
-chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js" "$INSTALL_DIR/interceptor-post.js" "$INSTALL_DIR/interceptor-prompt.js" "$INSTALL_DIR/judge-worker.js" "$INSTALL_DIR/remote-client.js" "$INSTALL_DIR/extract-compact.js" "$INSTALL_DIR/exp-client-drain.js" "$INSTALL_DIR/activity-watch.js" "$INSTALL_DIR/health-check.sh" "$INSTALL_DIR/exp-server-maintain.js" "$INSTALL_DIR/exp-portable-backup.js" "$INSTALL_DIR/exp-portable-restore.js" "$INSTALL_DIR/exp-watch" "$INSTALL_DIR/exp-feedback" "$INSTALL_DIR/exp-feedback.js" "$INSTALL_DIR/exp-open-pane" "$INSTALL_DIR/exp-pane-right" "$INSTALL_DIR/exp-pane-left" "$INSTALL_DIR/exp-pane-bottom" "$INSTALL_DIR/exp-bootstrap.sh" "$INSTALL_DIR/exp-health-last" "$INSTALL_DIR/exp-shell-init.sh" "$INSTALL_DIR/sync-install.sh" 2>/dev/null
+chmod +x "$INSTALL_DIR/interceptor.js" "$INSTALL_DIR/stop-extractor.js" "$INSTALL_DIR/interceptor-post.js" "$INSTALL_DIR/interceptor-prompt.js" "$INSTALL_DIR/judge-worker.js" "$INSTALL_DIR/remote-client.js" "$INSTALL_DIR/extract-compact.js" "$INSTALL_DIR/exp-client-drain.js" "$INSTALL_DIR/activity-watch.js" "$INSTALL_DIR/health-check.sh" "$INSTALL_DIR/exp-server-maintain.js" "$INSTALL_DIR/exp-portable-backup.js" "$INSTALL_DIR/exp-portable-restore.js" "$INSTALL_DIR/exp-watch" "$INSTALL_DIR/exp-feedback" "$INSTALL_DIR/exp-feedback.js" "$INSTALL_DIR/exp-recall.js" "$INSTALL_DIR/exp-open-pane" "$INSTALL_DIR/exp-pane-right" "$INSTALL_DIR/exp-pane-left" "$INSTALL_DIR/exp-pane-bottom" "$INSTALL_DIR/exp-bootstrap.sh" "$INSTALL_DIR/exp-health-last" "$INSTALL_DIR/exp-shell-init.sh" "$INSTALL_DIR/sync-install.sh" 2>/dev/null
 
 mkdir -p "$HOME/.local/bin"
 ln -sf "$INSTALL_DIR/exp-watch" "$HOME/.local/bin/exp-watch"
@@ -2070,6 +2070,7 @@ if [ -n "$REMOTE_HOST" ]; then
     "$INSTALL_DIR/health-check.sh"
     "$INSTALL_DIR/exp-feedback.js"
     "$INSTALL_DIR/exp-feedback"
+    "$INSTALL_DIR/exp-recall.js"
     "$INSTALL_DIR/exp-server-maintain.js"
     "$INSTALL_DIR/exp-portable-backup.js"
     "$INSTALL_DIR/exp-portable-restore.js"

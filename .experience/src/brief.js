@@ -141,7 +141,7 @@ async function buildProjectBrief(projectSlug, opts = {}) {
     const id8 = String(c.point.id).slice(0, 8);
     return `- ${oneLineGist(c.data)} [id:${id8} col:${c.collection}]`;
   });
-  const header = `[Project Brief] ${slug} — top ${lines.length} learned facts ranked by confidence×hits×recency. Fetch full detail by id (node ~/.experience/exp-feedback.js / GET /api/graph?id=).`;
+  const header = `[Project Brief] ${slug} — top ${lines.length} learned facts ranked by confidence×hits×recency. Need more context mid-task? Actively query the brain instead of waiting for hints: node ~/.experience/exp-recall.js "<your question>" (searches T0 principles → T1 behavioral → T2 seeds → self-QA; records a surface so your /api/feedback verdict reinforces it). Fetch one entry by id via GET /api/graph?id=.`;
   const text = `${header}\n${lines.join('\n')}`;
   const entries = top.map(c => ({ id: String(c.point.id), collection: c.collection, score: Number(c.score.toFixed(4)) }));
 

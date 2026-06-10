@@ -1065,6 +1065,47 @@ async function ensureCollections() {
   }
 }
 
+// /api/recall — agent-initiated active recall of learned experience.
+// Unlike /api/search (raw vector hits, no signal), recall runs the full
+// intercept pipeline: scope-filtered retrieval, scored + formatted with
+// [id col] feedback handles, and records a SURFACE event for each returned
+// entry. Surfacing bumps surfaceCount only (NOT hitCount) — the agent then
+// reports usefulness via /api/feedback (followed/ignored/noise), so actively
+// pulled context reinforces precisely and filters noise faster than passive
+// hints (the agent chose to ask, so its verdict is high-signal).
+async function handleRecall(req, res) {
+  const body = await readBody(req);
+  const query = typeof body.query === 'string' ? body.query.trim() : '';
+  if (!query) return error(res, 'query is required');
+  if (query.length > 10_000) return error(res, 'query exceeds 10KB');
+
+  const derived = deriveCallerMeta(body);
+  const meta = {
+    sourceKind: body.sourceKind || 'recall-api',
+    sourceRuntime: body.sourceRuntime || 'api',
+    sourceSession: body.sourceSession || null,
+    cwd: body.cwd || null,
+    lang: derived.lang,
+    framework: derived.framework,
+    project_slug: derived.project_slug,
+  };
+
+  const { interceptWithMeta } = loadExperienceCore();
+  // Reuse the proven prompt-style intercept path: embed → scope-filter →
+  // search → score → format → recordSurface. Returns formatted suggestions +
+  // surfacedIds. No 0.60 prompt-hook precision gate here — active recall wants
+  // the full relevant set (still bounded by the standard min-search-score gate
+  // in format.js, so noise stays out).
+  const result = await interceptWithMeta(
+    'UserPrompt',
+    { command: query, _promptHook: true },
+    AbortSignal.timeout(8000),
+    meta
+  );
+  const entries = (result?.surfacedIds || []).map(s => ({ id: String(s.id || ''), collection: s.collection || null }));
+  return json(res, { text: result?.suggestions || null, entries, count: entries.length, query });
+}
+
 async function handleSearch(req, res) {
   if (!requireAuth(req, res)) return;
   const body = await readBody(req);
@@ -1416,6 +1457,7 @@ const server = http.createServer(async (req, res) => {
       if (p === '/api/route-feedback') return await handleRouteFeedback(req, res);
       if (p === '/api/brain') return await handleBrainProxy(req, res);
       if (p === '/api/search') return await handleSearch(req, res);
+      if (p === '/api/recall') return await handleRecall(req, res);
       if (p === '/api/pil-context') return await handlePilContext(req, res);
       if (p === '/api/phase-outcome') return await handlePhaseOutcome(req, res);
       if (p === '/api/project-brief') return await handleProjectBrief(req, res, url);
