@@ -98,6 +98,10 @@ function getEmbedKey()       { return cfgValue('embedKey', 'EXPERIENCE_EMBED_KEY
 function getBrainEndpoint()  { return cfgValue('brainEndpoint', 'EXPERIENCE_BRAIN_ENDPOINT', ''); }
 function getBrainKey()       { return cfgValue('brainKey', 'EXPERIENCE_BRAIN_KEY', ''); }
 function getEmbedDim()       { return cfgValue('embedDim', 'EXPERIENCE_EMBED_DIM', 768); }
+// Per-request embedding timeout (ms). Provider tail-latency (observed: siliconflow
+// p99 ~2.6s, occasional spikes >5s) was being converted into hard failures by a
+// hardcoded 5000ms abort; 10s gives the tail headroom while still bounding hangs.
+function getEmbedTimeoutMs() { return Number(cfgValue('embedTimeoutMs', 'EXPERIENCE_EMBED_TIMEOUT_MS', 10000)) || 10000; }
 function getMinConfidence()  { return cfgValue('minConfidence', 'EXPERIENCE_MIN_CONFIDENCE', 0.42); }
 function getHighConfidence() { return cfgValue('highConfidence', 'EXPERIENCE_HIGH_CONFIDENCE', 0.60); }
 function getMinSearchScore() { return cfgValue('minSearchScore', 'EXPERIENCE_MIN_SEARCH_SCORE', 0.40); }
@@ -224,7 +228,7 @@ module.exports = {
   getConfig, refreshConfig, cfgValue, cfgNestedValue,
   getQdrantBase, getQdrantApiKey,
   getOllamaBase, getOllamaEmbedUrl, getOllamaGenerateUrl,
-  getEmbedProvider, getEmbedModel, getEmbedEndpoint, getEmbedKey, getEmbedDim,
+  getEmbedProvider, getEmbedModel, getEmbedEndpoint, getEmbedKey, getEmbedDim, getEmbedTimeoutMs,
   getBrainProvider, getBrainModel, getBrainExtractModel, getBrainModelForSource, getBrainEndpoint, getBrainKey,
   getMinConfidence, getHighConfidence, getMinSearchScore,
   getMinPromptLength, getPromptSkipRegex, DEFAULT_PROMPT_SKIP_WORDS,

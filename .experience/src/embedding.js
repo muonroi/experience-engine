@@ -6,9 +6,32 @@
 
 const {
   getOllamaEmbedUrl,
-  getEmbedProvider, getEmbedModel, getEmbedEndpoint, getEmbedKey,
+  getEmbedProvider, getEmbedModel, getEmbedEndpoint, getEmbedKey, getEmbedTimeoutMs,
   activityLog,
 } = require('./config');
+
+// ============================================================
+//  Failure classification (No-Silent-Catch)
+//  Providers used to `catch { return null }` / `if(!res.ok) return null`, which
+//  discarded the HTTP status + body + error name — the exact signals needed to
+//  tell a transient timeout apart from a 4xx auth/quota error. We now return
+//  { vector, err } so getEmbedding can log the cause and record it on the
+//  cost-call (visible in activity.jsonl without a code change next incident).
+// ============================================================
+
+function classifyError(err) {
+  const name = err?.name || '';
+  // AbortSignal.timeout fires an AbortError / TimeoutError on deadline.
+  if (name === 'TimeoutError' || name === 'AbortError') return 'timeout';
+  if (err?.cause?.code || /fetch failed|ECONN|ENOTFOUND|socket/i.test(err?.message || '')) return 'network';
+  return 'error';
+}
+
+function logEmbedFailure(provider, err) {
+  console.error(
+    `[embedding] ${provider} embed failed (${err.kind}${err.status ? ' ' + err.status : ''}): ${err.message}`,
+  );
+}
 
 // ============================================================
 //  LRU embedding cache (server-side)
@@ -50,58 +73,59 @@ function setCachedEmbedding(text, vector) {
 //  Embedding Providers
 // ============================================================
 
-async function embedOllama(text, signal) {
+// Each provider returns { vector, err }. On HTTP non-2xx the status + a
+// truncated body are captured; on throw the error is classified (timeout /
+// network / error). err is null on success.
+async function embedFetch(provider, url, init, extract, signal) {
   try {
-    const res = await fetch(getOllamaEmbedUrl(), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: getEmbedModel(), input: text }),
-      signal: signal || AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return null;
-    return (await res.json()).embeddings?.[0] || null;
-  } catch { return null; }
+    const res = await fetch(url, { ...init, signal: signal || AbortSignal.timeout(getEmbedTimeoutMs()) });
+    if (!res.ok) {
+      let body = '';
+      try { body = (await res.text()).slice(0, 300); } catch { /* body unreadable */ }
+      const err = { kind: res.status >= 500 ? 'http5xx' : 'http4xx', status: res.status, message: body || res.statusText };
+      logEmbedFailure(provider, err);
+      return { vector: null, err };
+    }
+    return { vector: extract(await res.json()) || null, err: null };
+  } catch (e) {
+    const err = { kind: classifyError(e), status: 0, message: e?.message || String(e) };
+    logEmbedFailure(provider, err);
+    return { vector: null, err };
+  }
 }
 
-async function embedOpenAI(text, signal) {
+function embedOllama(text, signal) {
+  return embedFetch('ollama', getOllamaEmbedUrl(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: getEmbedModel(), input: text }),
+  }, (j) => j.embeddings?.[0], signal);
+}
+
+function embedOpenAI(text, signal) {
   const endpoint = getEmbedEndpoint() || 'https://api.openai.com/v1/embeddings';
-  try {
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getEmbedKey()}` },
-      body: JSON.stringify({ model: getEmbedModel() || 'text-embedding-3-small', input: text.slice(0, 8000) }),
-      signal: signal || AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return null;
-    return (await res.json()).data?.[0]?.embedding || null;
-  } catch { return null; }
+  return embedFetch('openai', endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getEmbedKey()}` },
+    body: JSON.stringify({ model: getEmbedModel() || 'text-embedding-3-small', input: text.slice(0, 8000) }),
+  }, (j) => j.data?.[0]?.embedding, signal);
 }
 
-async function embedGemini(text, signal) {
-  try {
-    const model = getEmbedModel() || 'text-embedding-004';
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${getEmbedKey()}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: { parts: [{ text: text.slice(0, 8000) }] } }),
-      signal: signal || AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return null;
-    return (await res.json()).embedding?.values || null;
-  } catch { return null; }
+function embedGemini(text, signal) {
+  const model = getEmbedModel() || 'text-embedding-004';
+  return embedFetch('gemini', `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${getEmbedKey()}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: { parts: [{ text: text.slice(0, 8000) }] } }),
+  }, (j) => j.embedding?.values, signal);
 }
 
-async function embedVoyageAI(text, signal) {
-  try {
-    const res = await fetch('https://api.voyageai.com/v1/embeddings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getEmbedKey()}` },
-      body: JSON.stringify({ model: getEmbedModel() || 'voyage-code-3', input: [text.slice(0, 8000)] }),
-      signal: signal || AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return null;
-    return (await res.json()).data?.[0]?.embedding || null;
-  } catch { return null; }
+function embedVoyageAI(text, signal) {
+  return embedFetch('voyageai', 'https://api.voyageai.com/v1/embeddings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getEmbedKey()}` },
+    body: JSON.stringify({ model: getEmbedModel() || 'voyage-code-3', input: [text.slice(0, 8000)] }),
+  }, (j) => j.data?.[0]?.embedding, signal);
 }
 
 const EMBED_PROVIDERS = {
@@ -144,38 +168,31 @@ async function getEmbedding(text, signal, meta = {}) {
   const provider = getEmbedProvider();
   const p = EMBED_PROVIDERS[provider] || EMBED_PROVIDERS.ollama;
   const units = estimateTextUnits(text, 8000);
-  const startedAt = Date.now();
-  let vector = await p.fn(text, signal);
-  logCostCall('embed', provider, meta.source || 'general', units, {
-    ok: !!vector,
-    durationMs: Date.now() - startedAt,
-  });
-  if (vector) {
-    setCachedEmbedding(text, vector);
+
+  // Records a cost-call with the failure cause (errKind/status) on miss, so an
+  // incident is diagnosable from activity.jsonl without re-instrumenting.
+  const attempt = async (prov, fn, source) => {
+    const startedAt = Date.now();
+    const { vector, err } = await fn(text, signal);
+    logCostCall('embed', prov, meta.source || source, units, {
+      ok: !!vector,
+      durationMs: Date.now() - startedAt,
+      ...(err ? { errKind: err.kind, status: err.status } : {}),
+    });
     return vector;
-  }
+  };
+
+  let vector = await attempt(provider, p.fn, 'general');
+  if (vector) { setCachedEmbedding(text, vector); return vector; }
 
   // Retry once after 500ms backoff
   await new Promise(r => setTimeout(r, 500));
-  const retryStart = Date.now();
-  vector = await p.fn(text, signal);
-  logCostCall('embed', provider, meta.source || 'general-retry', units, {
-    ok: !!vector,
-    durationMs: Date.now() - retryStart,
-  });
-  if (vector) {
-    setCachedEmbedding(text, vector);
-    return vector;
-  }
+  vector = await attempt(provider, p.fn, 'general-retry');
+  if (vector) { setCachedEmbedding(text, vector); return vector; }
 
   // Fallback to Ollama if primary provider is not already Ollama
   if (provider !== 'ollama' && EMBED_PROVIDERS.ollama) {
-    const fallbackStart = Date.now();
-    vector = await EMBED_PROVIDERS.ollama.fn(text, signal);
-    logCostCall('embed', 'ollama', meta.source || 'general-fallback', units, {
-      ok: !!vector,
-      durationMs: Date.now() - fallbackStart,
-    });
+    vector = await attempt('ollama', EMBED_PROVIDERS.ollama.fn, 'general-fallback');
     if (vector) setCachedEmbedding(text, vector);
   }
   return vector;
@@ -199,4 +216,5 @@ module.exports = {
   embedVoyageAI,
   estimateTextUnits,
   logCostCall,
+  classifyError,
 };
