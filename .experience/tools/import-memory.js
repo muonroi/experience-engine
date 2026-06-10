@@ -35,7 +35,10 @@ const rc = require('../remote-client');
 
 const expDir = path.join(os.homedir(), '.experience');
 const MARKER_PATH = path.join(expDir, '.memory-import-marker.json');
-const POST_BATCH = 200;
+// Small batches: the server embeds + upserts each experience sequentially
+// (embedding is a network call), so a large batch overruns the client timeout.
+const POST_BATCH = 10;
+const POST_TIMEOUT_MS = 90_000;
 
 function parseArgs(argv) {
   const args = { runtimes: null, project: null, dryRun: false, verbose: false, resetMarker: false, includeReference: false };
@@ -111,7 +114,7 @@ async function main() {
       const batch = work.slice(i, i + POST_BATCH);
       const experiences = batch.map(({ record, mapped }) => toWireExperience(mapped, record));
       let resp;
-      try { resp = await rc.postJson('/api/import-memory', { experiences }); }
+      try { resp = await rc.postJson('/api/import-memory', { experiences }, { timeoutMs: POST_TIMEOUT_MS }); }
       catch (err) {
         stats.failed += batch.length;
         console.error(`[import-memory] POST batch failed: ${err?.message}${err?.status ? ` (HTTP ${err.status})` : ''}`);
