@@ -55,11 +55,10 @@ const PROMPT_HOOK_MIN_SCORE = timeoutFromEnv('EXPERIENCE_PROMPT_HOOK_MIN_SCORE',
 // doubling up is redundant. Disable with EXPERIENCE_RECALL_NUDGE=0.
 const RECALL_NUDGE_ENABLED = process.env.EXPERIENCE_RECALL_NUDGE !== '0';
 const RECALL_NUDGE_TEXT = [
-  '💡 [Experience] Unfamiliar/risky step, or want prior lessons before you act?',
-  'Don\'t wait for passive hints — actively query the brain:',
+  '📌 [Experience — operating rule] Your CLAUDE.md / AGENTS.md mandate "recall-first": BEFORE an unfamiliar or risky step, actively query the brain — this is a standing instruction in your agent config, not an optional tip.',
   '`node ~/.experience/exp-recall.js "<your question>"`',
   '(semantic search across T0 principles → T1 behavioral → T2 seeds → self-QA; records a surface).',
-  'After acting, report the verdict so the brain learns:',
+  'After acting, report the verdict so the brain learns (also required by the same rule):',
   '`node ~/.experience/exp-feedback.js followed|ignored|noise <id> <col>`.',
 ].join(' ');
 
