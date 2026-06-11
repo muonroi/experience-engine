@@ -259,11 +259,15 @@ fi
 #   - risk-triggers.js   pure risk detection for the conditional recall gate
 #                        (interceptor.js / interceptor-prompt.js require it;
 #                         the recall it triggers hits /api/recall on the server)
+#   - surface-trigger.js shared trigger→targeted-recall layer both hooks call
+#                        (§4); built on risk-triggers/config/exp-recall, all of
+#                        which are thin-safe — node built-ins + lazy requires only
 #   - signal-detector.js / profile-model.js  "Who Am I" v4.0 (default-off; the
 #                        Stop hook only loads them when privacyLevel != off)
 THIN_SAFE_SRC=(
   config.js
   risk-triggers.js
+  surface-trigger.js
   signal-detector.js
   profile-model.js
 )

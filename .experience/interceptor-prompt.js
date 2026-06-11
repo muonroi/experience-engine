@@ -313,9 +313,7 @@ function _loadInstalled(rel) {
     catch { return null; }
   }
 }
-const _riskTriggers = _loadInstalled('src/risk-triggers.js');
-const _expRecall = _loadInstalled('exp-recall.js');
-const _riskCfg = _loadInstalled('src/config.js');
+const _surfaceTrigger = _loadInstalled('src/surface-trigger.js');
 // Default 2500ms: a fast recall (options.fast → no brain LLM rerank) returns in
 // ~1.5-2s, so this delivers the [id col] payload while keeping the synchronous
 // UserPromptSubmit hook responsive. The old 1500ms could not fit even a fast
@@ -327,19 +325,13 @@ const RISK_RECALL_TIMEOUT_MS = timeoutFromEnv('EXPERIENCE_RISK_RECALL_TIMEOUT_MS
 // keeps a high signal instead of being filed as per-turn boilerplate.
 // Returns { disabled } | null | { text, topic, count }.
 async function buildRiskGate(prompt, cwd, hasSuggestions) {
-  if (!_riskTriggers) return { unavailable: true }; // un-synced client → fall back to legacy nudge
-  const gateEnabled = _riskCfg && typeof _riskCfg.getRiskGateEnabled === 'function' ? _riskCfg.getRiskGateEnabled() : true;
-  if (!gateEnabled) return { disabled: true };
-  const keywords = _riskCfg && typeof _riskCfg.getRiskKeywords === 'function' ? _riskCfg.getRiskKeywords() : undefined;
-  let triggers = [];
-  try {
-    triggers = _riskTriggers.detectRiskTriggers({ promptText: prompt, cwd, keywords, repoRootOf: _riskTriggers.gitRepoRootOf });
-  } catch (err) {
-    debugLog({ stage: 'risk_detect_failed', message: err?.message || String(err) });
-    return null;
-  }
-  if (!triggers.length) return null;
-  const top = triggers[0];
+  if (!_surfaceTrigger) return { unavailable: true }; // un-synced client → fall back to legacy nudge
+  const res = _surfaceTrigger.detectTopTrigger({ promptText: prompt, cwd });
+  if (!res) return null;                       // no trigger fired
+  if (res.unavailable) return { unavailable: true };
+  if (res.disabled) return { disabled: true };
+  if (res.error) return null;                  // detect threw (already logged)
+  const top = res.top;
 
   // If the whole-prompt search already surfaced hits, don't re-run recall (avoid
   // dup + latency) — just point the agent at the risk so it confirms relevance.
@@ -347,22 +339,12 @@ async function buildRiskGate(prompt, cwd, hasSuggestions) {
     return { text: `⚠️ [Experience — risk gate] This step touches "${top.topic}" (${top.kind}). Relevant hint(s) shown above — confirm one applies, or note one line why it doesn't.`, topic: top.topic, count: null };
   }
 
-  // Nothing surfaced from the diluted whole-prompt search → run ONE targeted recall
-  // on the specific risk topic, bounded + logged.
-  let recallRes = null;
-  if (_expRecall && typeof _expRecall.recall === 'function') {
-    try {
-      // fast:true → skips the ~8s brainRelevanceFilter LLM rerank so the recall
-      // returns within the synchronous-hook budget. Without it the full recall
-      // (~10s) always exceeded RISK_RECALL_TIMEOUT_MS and the gate silently fell
-      // through to the "0 entries" branch — push-injection never delivered.
-      // logLocal:false — this is an automatic gate recall, not an agent-initiated
-      // stitch; it must not inflate the runbook-candidate signal (stop-extractor).
-      recallRes = await withTimeout(_expRecall.recall(top.topic, { cwd, fast: true, logLocal: false }), RISK_RECALL_TIMEOUT_MS);
-    } catch (err) {
-      debugLog({ stage: 'risk_recall_failed', topic: top.topic, message: err?.message || String(err) });
-    }
-  }
+  // Nothing surfaced from the diluted whole-prompt search → run ONE targeted,
+  // fast (no brain LLM rerank), non-logged recall on the specific risk topic.
+  // fast:true keeps it inside RISK_RECALL_TIMEOUT_MS; logLocal:false keeps this
+  // automatic recall out of the runbook-candidate stitch signal. Both live in
+  // surface-trigger.runTargetedRecall (shared with future positive triggers).
+  const recallRes = await _surfaceTrigger.runTargetedRecall(top.topic, cwd, { timeoutMs: RISK_RECALL_TIMEOUT_MS });
   const count = (recallRes && Number(recallRes.count)) || 0;
   if (count > 0 && recallRes.text) {
     return {
