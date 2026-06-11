@@ -1134,12 +1134,17 @@ async function handleRecall(req, res) {
   // permanent-noise (ignore≥20 & hit=0), irrelevant≥3, learned lang/project
   // exclusions, and the min-confidence quality floor. Surfaces are still
   // recorded so the agent's /api/feedback verdict grows + cleans the brain.
+  // body.fast → fast recall: skip the brainRelevanceFilter LLM rerank (~8s) so
+  // latency-bound callers (the prompt risk gate) get a ~1.5-2s recall that still
+  // carries [id col]. Full pipeline otherwise. Bound the internal budget tighter
+  // in fast mode so a slow embed can't blow the caller's hook deadline.
+  const fast = !!body.fast;
   const result = await interceptWithMeta(
     'UserPrompt',
     { command: query, _promptHook: true },
-    AbortSignal.timeout(8000),
+    AbortSignal.timeout(fast ? 4000 : 8000),
     meta,
-    { recallMode: true }
+    { recallMode: true, fast }
   );
   const entries = (result?.surfacedIds || []).map(s => ({ id: String(s.id || ''), collection: s.collection || null }));
   // P1: record the recall on activity.jsonl so the engine can later detect a

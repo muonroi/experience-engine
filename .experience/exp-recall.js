@@ -42,7 +42,7 @@ function resolveServerConfig(homeDir = os.homedir()) {
 function usage() {
   return [
     'Usage:',
-    '  exp-recall [--json] [--project <slug>] [--cwd <path>] [--session <id>] <query...>',
+    '  exp-recall [--json] [--fast] [--project <slug>] [--cwd <path>] [--session <id>] <query...>',
     '',
     'Examples:',
     '  exp-recall "how do we restart the experience-engine server"',
@@ -99,11 +99,12 @@ function parseArgs(argv) {
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
     return { ok: false, code: args.length === 0 ? 1 : 0, help: usage() };
   }
-  const opts = { json: false, project: null, cwd: null, session: null };
+  const opts = { json: false, project: null, cwd: null, session: null, fast: false };
   const words = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--json') opts.json = true;
+    else if (a === '--fast') opts.fast = true;
     else if (a === '--project') opts.project = args[++i] || null;
     else if (a === '--cwd') opts.cwd = args[++i] || null;
     else if (a === '--session') opts.session = args[++i] || null;
@@ -120,6 +121,7 @@ async function recall(query, opts = {}, homeDir = os.homedir()) {
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
   const body = { query, cwd: opts.cwd || process.cwd() };
   if (opts.project) body.project_slug = opts.project;
+  if (opts.fast) body.fast = true;
   const sessionId = resolveSessionId(opts, process.env, homeDir);
   if (sessionId) body.sourceSession = sessionId;
 
