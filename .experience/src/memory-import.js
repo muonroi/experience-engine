@@ -87,6 +87,22 @@ function parseFrontmatter(raw) {
   return { frontmatter: fm, body };
 }
 
+/**
+ * Parse a frontmatter id list into a string[] (or null). parseFrontmatter flattens
+ * a value to its raw string, so a runbook's `derivedFromId` may arrive as
+ * `[a, b]`, `a, b`, or `a b`. Tolerate all three: strip surrounding brackets,
+ * split on commas/whitespace, trim, drop empties.
+ */
+function parseIdList(raw) {
+  if (!raw) return null;
+  const ids = String(raw)
+    .replace(/^\[/, '').replace(/\]$/, '')
+    .split(/[\s,]+/)
+    .map((s) => s.replace(/^["']|["']$/g, '').trim())
+    .filter(Boolean);
+  return ids.length ? ids : null;
+}
+
 /** Extract the `**Why:**` rationale line(s) if present (curated feedback shape). */
 function extractWhy(body) {
   const m = String(body || '').match(/\*\*Why:\*\*\s*([\s\S]*?)(?:\n\s*\n|\n\*\*How|\n##|$)/);
@@ -194,10 +210,17 @@ const claudeAdapter = {
     const type = (frontmatter.type || '').toLowerCase() || null;
     const description = frontmatter.description || name;
     if (!body) { log('debug', 'memory_import_empty_body', { file }); return null; }
+    // Runbook marker: a memory file declares itself a procedure index via
+    // `metadata.node_type: runbook` (flattened to frontmatter.node_type) plus an
+    // optional `derivedFromId` list of the atomic entry ids it stitches. These
+    // ride through mapMemoryToExperience → qa → buildStorePayload's nodeKind /
+    // derivedFromId fields (createdFrom stays seed-memory-import).
+    const nodeKind = String(frontmatter.node_type || '').toLowerCase() === 'runbook' ? 'runbook' : null;
+    const derivedFromId = parseIdList(frontmatter.derivedFromId);
     // dirSlug = parent of the memory/ dir
     const dirSlug = path.basename(path.dirname(path.dirname(file)));
     const projectSlug = dirSlugToProjectSlug(dirSlug);
-    return { runtime: 'claude', name, type, description, body, projectSlug, file };
+    return { runtime: 'claude', name, type, description, body, projectSlug, file, nodeKind, derivedFromId };
   },
 };
 
@@ -299,6 +322,11 @@ function mapMemoryToExperience(record, opts = {}) {
     failureMode: null,
     judgment: null,
     sourceSession: null,
+    // Runbook marker + stitched atomic ids (null for ordinary memory). Threaded
+    // into buildStorePayload's dedicated nodeKind/derivedFromId payload fields so
+    // recall's runbook-float (§3.2) and the candidate detector can see them.
+    nodeKind: record.nodeKind || null,
+    derivedFromId: Array.isArray(record.derivedFromId) ? record.derivedFromId : null,
   };
   return { id, collection: route.collection, tier: route.tier, confidence: route.confidence, type, qa, record };
 }
@@ -323,6 +351,7 @@ module.exports = {
   scanMemorySources,
   mapMemoryToExperience,
   parseFrontmatter,
+  parseIdList,
   extractWhy,
   dirSlugToRealPath,
   dirSlugToProjectSlug,
