@@ -39,6 +39,7 @@ const os = require('node:os');
 const { parseSince, loadEvents, filterEvents, computeStats, loadTop5 } = require('./tools/exp-stats');
 const { checkGates } = require('./tools/exp-gates');
 const { validateBody } = require('./.experience/src/validate');
+const { activityLog, buildRecallEvent } = require('./.experience/src/activity');
 const runtimeConfig = require('./.experience/src/config');
 const logger = require('./.experience/src/logger');
 const { canonicalizeProjectSlug } = require('./lib/path-canonical');
@@ -1141,6 +1142,10 @@ async function handleRecall(req, res) {
     { recallMode: true }
   );
   const entries = (result?.surfacedIds || []).map(s => ({ id: String(s.id || ''), collection: s.collection || null }));
+  // P1: record the recall on activity.jsonl so the engine can later detect a
+  // session that stitched ≥N recalls (runbook-candidate signal). activityLog
+  // never throws (it self-guards), so this cannot break the response path.
+  activityLog(buildRecallEvent(query, meta, entries));
   return json(res, { text: result?.suggestions || null, entries, count: entries.length, query });
 }
 

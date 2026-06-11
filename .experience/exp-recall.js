@@ -42,7 +42,7 @@ function resolveServerConfig(homeDir = os.homedir()) {
 function usage() {
   return [
     'Usage:',
-    '  exp-recall [--json] [--project <slug>] [--cwd <path>] <query...>',
+    '  exp-recall [--json] [--project <slug>] [--cwd <path>] [--session <id>] <query...>',
     '',
     'Examples:',
     '  exp-recall "how do we restart the experience-engine server"',
@@ -51,18 +51,62 @@ function usage() {
   ].join('\n');
 }
 
+// Encode an absolute path the way Claude Code names its per-project transcript
+// directory: every ':' and path separator collapses to '-'. e.g.
+// "D:\\sources\\Core\\muonroi-cli" -> "D--sources-Core-muonroi-cli".
+function encodeProjectDir(cwd) {
+  return String(cwd || '').replace(/[:\\/]/g, '-');
+}
+
+// Resolve a STABLE per-session id to attribute this recall to a session, so the
+// engine can later detect "agent ran N recalls in one session and stitched the
+// results" (the runbook-candidate signal). Precedence:
+//   1. explicit --session
+//   2. $EXP_SESSION (set by the hook wrapper when available — the reliable path)
+//   3. best-effort: newest *.jsonl transcript under the cwd's Claude project dir
+//      (the active session's transcript is the most-recently-appended file)
+//   4. null (unattributed — recall still works, just not session-grouped)
+function resolveSessionId(opts = {}, env = process.env, homeDir = os.homedir()) {
+  if (opts.session) return String(opts.session);
+  if (env && env.EXP_SESSION) return String(env.EXP_SESSION);
+  // Best-effort transcript probe. Intentionally swallow fs errors (no projects
+  // dir, perms, etc.): session attribution is optional and must never break a
+  // recall. Surfaced at debug level per the No-Silent-Catch rule.
+  try {
+    const cwd = opts.cwd || process.cwd();
+    const dir = path.join(homeDir, '.claude', 'projects', encodeProjectDir(cwd));
+    let newest = null;
+    let newestMtime = -1;
+    for (const name of fs.readdirSync(dir)) {
+      if (!name.endsWith('.jsonl')) continue;
+      const mtime = fs.statSync(path.join(dir, name)).mtimeMs;
+      if (mtime > newestMtime) {
+        newestMtime = mtime;
+        newest = name.slice(0, -'.jsonl'.length);
+      }
+    }
+    return newest;
+  } catch (err) {
+    if (env && env.EXP_RECALL_DEBUG) {
+      console.error(`[exp-recall] session-id transcript probe failed: ${err?.message}`);
+    }
+    return null;
+  }
+}
+
 function parseArgs(argv) {
   const args = argv.slice(2);
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
     return { ok: false, code: args.length === 0 ? 1 : 0, help: usage() };
   }
-  const opts = { json: false, project: null, cwd: null };
+  const opts = { json: false, project: null, cwd: null, session: null };
   const words = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--json') opts.json = true;
     else if (a === '--project') opts.project = args[++i] || null;
     else if (a === '--cwd') opts.cwd = args[++i] || null;
+    else if (a === '--session') opts.session = args[++i] || null;
     else words.push(a);
   }
   const query = words.join(' ').trim();
@@ -76,6 +120,8 @@ async function recall(query, opts = {}, homeDir = os.homedir()) {
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
   const body = { query, cwd: opts.cwd || process.cwd() };
   if (opts.project) body.project_slug = opts.project;
+  const sessionId = resolveSessionId(opts, process.env, homeDir);
+  if (sessionId) body.sourceSession = sessionId;
 
   const res = await fetch(`${baseUrl}/api/recall`, {
     method: 'POST',
@@ -118,4 +164,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { parseArgs, resolveServerConfig, recall };
+module.exports = { parseArgs, resolveServerConfig, recall, resolveSessionId, encodeProjectDir };

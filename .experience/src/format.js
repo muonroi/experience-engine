@@ -52,6 +52,15 @@ function buildStorePayload(id, qa, domain, projectSlug) {
     domain: domain || null,
     _projectSlug: projectSlug || null, // P0: project-aware filtering
     naturalLang,
+    // Runbook convention: a runbook is a thin "procedure index" entry whose body
+    // is an ordered step list delegating detail to atomic entries via [[links]].
+    // It enters through the memory-import path (createdFrom='seed-memory-import',
+    // an authoritative seed that escapes session-extractor pruning), so the
+    // marker is a dedicated field, NOT createdFrom (which import overwrites).
+    // derivedFromId records the atomic entries it stitches, so a future pass can
+    // flag the runbook for re-confirm when a linked entry is superseded.
+    nodeKind: qa.nodeKind || null,
+    derivedFromId: Array.isArray(qa.derivedFromId) ? qa.derivedFromId : null,
     createdAt: new Date().toISOString(), createdFrom: 'session-extractor',
   };
 }
