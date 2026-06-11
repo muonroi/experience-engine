@@ -129,7 +129,13 @@ ad-hoc stitches, so no auto-write.
   unchanged; closes the Gate-4 credit loop.
 - A runbook that is repeatedly `ignored` decays and is pruned like any low-value entry.
 - When a `derivedFrom` atomic entry is superseded, flag the runbook for re-confirm (do not
-  auto-edit it) — future pass, out of scope here.
+  auto-edit it). **Shipped** — `evolution.js` Step 4e: after the supersede passes (3b/3c) set
+  their flags, one final scan collects superseded 8-char id prefixes and stamps `needsReconfirm`
+  + `reconfirmReason` + `reconfirmTriggeredBy` on any runbook whose `derivedFromId` intersects
+  them, emitting an `op:'runbook-needs-reconfirm'` activity row. The pure decision lives in
+  `computeRunbookReconfirm(data, supersededShortIds)` (idempotent — only re-flags when a NEW
+  superseded id appears; exempts an already-superseded runbook). The body is never auto-edited;
+  auto-rebuild stays out of scope (§3.5).
 
 ## 4. Risk-gate (folded in from the pending plan)
 
@@ -168,7 +174,8 @@ runbooks) and are the minimum honest foundation — without them, detection is f
 ## 7. Explicitly out of scope
 
 - Auto-writing runbook bodies (§3.5).
-- Auto-rebuilding a runbook when a linked atomic entry changes (§3.6 — flag only).
+- Auto-rebuilding a runbook when a linked atomic entry changes — §3.6 ships the FLAG
+  (`needsReconfirm`) only; rebuilding the body remains out of scope.
 - The storyflow `post-donor` runbook *content* itself — that is a storyflow corpus decision for
   the user, created via the normal memory-import path once the convention (step 3) exists.
 
@@ -188,6 +195,7 @@ All five prerequisite steps (§5) plus the §3.2 float and §4 shared layer are 
 | §4 shared `surface-trigger.js` | both hooks | ✅ `7b5e7c8` |
 | Import-path `nodeKind`/`derivedFromId` | `memory-import.mapMemoryToExperience` + `claudeAdapter.parse` | ✅ this commit |
 | muonroi-cli MCP/builtin recall mirror | `src/ee/search.recallEE` | ✅ muonroi-cli PR #67 |
+| §3.6 runbook reconfirm flag | `evolution.computeRunbookReconfirm` + `evolve` Step 4e | ✅ this commit |
 
 **Storyflow runbook content (the §7 corpus decision)** is delivered as a reviewable artifact at
 `docs/proposals/storyflow-post-donor-runbook.example.md` — a ready-to-import memory file using the
