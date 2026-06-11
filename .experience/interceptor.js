@@ -88,26 +88,18 @@ function _loadInstalled(rel) {
     catch { return null; }
   }
 }
-const _riskTriggers = _loadInstalled('src/risk-triggers.js');
-const _riskCfg = _loadInstalled('src/config.js');
+const _surfaceTrigger = _loadInstalled('src/surface-trigger.js');
 
 // Tool-level risk gate (PreToolUse): a one-line nudge when a command keyword or a
 // cross-repo file path is touched and nothing relevant surfaced. No extra recall
-// here — the intercept already searched; this just flags the risk + points at recall.
+// here — the intercept already searched; this just flags the risk + points at
+// recall. Trigger detection is shared with the prompt hook via surface-trigger.js
+// (§4); only the one-line framing is local.
 function buildToolRiskGate(tool, toolInput, cwd) {
-  if (!_riskTriggers) return null;
-  const enabled = _riskCfg && typeof _riskCfg.getRiskGateEnabled === 'function' ? _riskCfg.getRiskGateEnabled() : true;
-  if (!enabled) return null;
-  const keywords = _riskCfg && typeof _riskCfg.getRiskKeywords === 'function' ? _riskCfg.getRiskKeywords() : undefined;
-  let triggers = [];
-  try {
-    triggers = _riskTriggers.detectRiskTriggers({ toolName: tool, toolInput, cwd, keywords, repoRootOf: _riskTriggers.gitRepoRootOf });
-  } catch (err) {
-    debugLog({ stage: 'risk_detect_failed', message: err?.message || String(err) });
-    return null;
-  }
-  if (!triggers.length) return null;
-  const top = triggers[0];
+  if (!_surfaceTrigger) return null;
+  const res = _surfaceTrigger.detectTopTrigger({ toolName: tool, toolInput, cwd });
+  if (!res || res.unavailable || res.disabled || res.error || !res.top) return null;
+  const top = res.top;
   return { line: `⚠️ [Experience — risk gate] ${top.kind}: "${top.topic}". Run \`node ~/.experience/exp-recall.js "${top.topic}"\` before this step, or note one line why you're skipping.`, top };
 }
 

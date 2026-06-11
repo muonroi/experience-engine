@@ -414,8 +414,12 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     const merged = [...r0, ...r1, ...r2].sort(
       (a, b) => (b._effectiveScore ?? b.score ?? 0) - (a._effectiveScore ?? a.score ?? 0),
     );
+    // §3.2: float runbook entries (the procedure index) above same-relevance
+    // atomic siblings — recallMode only, stable, so cosine order is otherwise
+    // preserved. Passive hints never reach this branch.
+    const ordered = _scoring.floatRunbooks(merged);
     const combinedBudget = budgetFor(0) + budgetFor(1) + budgetFor(2);
-    lines = _format.applyBudget(_format.formatPoints(merged, fmtOpts), combinedBudget);
+    lines = _format.applyBudget(_format.formatPoints(ordered, fmtOpts), combinedBudget);
   } else {
     lines = [
       ..._format.applyBudget(_format.formatPoints(r0, fmtOpts), budgetFor(0)),

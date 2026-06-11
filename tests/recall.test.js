@@ -22,7 +22,7 @@ const { spawn } = require('node:child_process');
 const REPO_ROOT = path.join(__dirname, '..');
 const { parseArgs } = require('../.experience/exp-recall.js');
 const { formatPoints } = require('../.experience/src/format.js');
-const { rerankByQuality } = require('../.experience/src/scoring.js');
+const { rerankByQuality, floatRunbooks, isRunbookPoint } = require('../.experience/src/scoring.js');
 const { getMinSearchScore, getMinConfidence } = require('../.experience/src/config.js');
 
 // Build a formatPoints-ready point. `eff` is the display/effective score the
@@ -90,6 +90,34 @@ test('formatPoints: integrity gates still drop even with skipSearchScoreGate', (
 
   // Control: a clean above-floor point with the same opts DOES surface.
   assert.equal(formatPoints([makePoint('b4000000', above)], opts).length, 1);
+});
+
+test('floatRunbooks: floats a runbook above same/higher-cosine atomic siblings, stable otherwise', () => {
+  // merged recall order is cosine-descending; the runbook sits BELOW two atomic
+  // entries. After floating it must lead, and the atomic entries keep their order.
+  const atomicHi = makePoint('a1111111', 0.71);
+  const atomicMid = makePoint('a2222222', 0.55);
+  const runbook = makePoint('rb000000', 0.50, { nodeKind: 'runbook', derivedFromId: ['a1111111', 'a2222222'] });
+  const merged = [atomicHi, atomicMid, runbook];
+
+  assert.equal(isRunbookPoint(runbook), true);
+  assert.equal(isRunbookPoint(atomicHi), false);
+
+  const ordered = floatRunbooks(merged);
+  assert.deepEqual(ordered.map((p) => p.id), ['rb000000', 'a1111111', 'a2222222']);
+});
+
+test('floatRunbooks: no runbook present → identity (order untouched)', () => {
+  const merged = [makePoint('a1111111', 0.71), makePoint('a2222222', 0.55)];
+  assert.deepEqual(floatRunbooks(merged).map((p) => p.id), ['a1111111', 'a2222222']);
+});
+
+test('floatRunbooks: multiple runbooks keep their mutual (cosine) order at the front', () => {
+  const rbHi = makePoint('rb111111', 0.62, { nodeKind: 'runbook' });
+  const atomic = makePoint('a2222222', 0.60);
+  const rbLo = makePoint('rb333333', 0.40, { nodeKind: 'runbook' });
+  const ordered = floatRunbooks([rbHi, atomic, rbLo]);
+  assert.deepEqual(ordered.map((p) => p.id), ['rb111111', 'rb333333', 'a2222222']);
 });
 
 test('rerankByQuality rawCosineRank: orders by raw cosine and differs from default', () => {

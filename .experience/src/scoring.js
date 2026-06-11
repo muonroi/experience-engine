@@ -269,9 +269,35 @@ function computeBriefScore(data) {
   return conf * hitTerm * briefRecencyFactor(data);
 }
 
+// True when a point's stored experience is a runbook (nodeKind === 'runbook').
+// Reads the payload.json blob where buildStorePayload threads the marker.
+function isRunbookPoint(point) {
+  try {
+    return JSON.parse(point?.payload?.json || '{}').nodeKind === 'runbook';
+  } catch {
+    return false;
+  }
+}
+
+// §3.2 runbook-float (recallMode only): a runbook is a procedure INDEX for the
+// atomic entries it links, so surface it above same-relevance siblings — the
+// agent should see the table-of-contents before the individual steps. STABLE:
+// preserves the input's relative order within both the runbook group and the
+// rest, so the upstream cosine ranking is otherwise untouched. Pure: callers
+// (experience-core recall path) pass the already-sorted merged points. Passive
+// hints never call this, so their per-leg precision ordering is unchanged.
+function floatRunbooks(points) {
+  if (!Array.isArray(points) || points.length < 2) return points;
+  const runbooks = [];
+  const rest = [];
+  for (const p of points) (isRunbookPoint(p) ? runbooks : rest).push(p);
+  return runbooks.length ? [...runbooks, ...rest] : points;
+}
+
 module.exports = {
   computeEffectiveConfidence, computeEffectiveScore, rerankByQuality,
   getSurfaceCountForProbation, hasProbationaryT2Debt,
   isProbationaryT2Candidate, selectProbationaryT2Points,
   computeBriefScore, briefRecencyFactor,
+  isRunbookPoint, floatRunbooks,
 };
