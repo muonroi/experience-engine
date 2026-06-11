@@ -181,7 +181,12 @@ function applyBudget(lines, maxChars) {
   const result = [];
   let total = 0;
   for (const line of lines) {
-    if (total + line.length > maxChars) break;
+    // Skip (continue), don't stop (break): a single oversized line must not
+    // discard every line after it. Recall-format lines run ~2000 chars each;
+    // with `break` one fat first line zeroed the whole collection leg, so recall
+    // surfaced ≤1 entry per collection regardless of budget. continue keeps
+    // packing smaller lines that still fit, while the total stays bounded.
+    if (total + line.length > maxChars) continue;
     result.push(line);
     total += line.length;
   }

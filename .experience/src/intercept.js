@@ -17,10 +17,20 @@ const _hittrack = require('./hittrack');
 const _logger = require('./logger');
 
 // --- Constants ---
+// This is the COLLECTIONS array experience-core.js actually destructures
+// (`const { COLLECTIONS } = _intercept`), so recall's wide-net (recallTopK) and
+// depth (recallBudgetChars) fields MUST live here. They were previously only on
+// config.js's separate COLLECTIONS copy — which core never reads — so core's
+// `recallTopK || topK` / `recallBudgetChars || budgetChars` always fell back to
+// the tight passive values, silently capping active recall at the passive topK
+// and an ~800-1200 char budget (one ~2000-char recall line per leg). That made
+// recall surface ≤1 entry regardless of how many strong matches existed.
+// budgetChars/topK = passive hints (precision-tuned, interruptive). recall* =
+// active recall (deliberate query → wider net + room for several full entries).
 const COLLECTIONS = [
-  { name: 'experience-principles', topK: 2, budgetChars: 800 },
-  { name: 'experience-behavioral', topK: 3, budgetChars: 1200 },
-  { name: 'experience-selfqa',     topK: 10, budgetChars: 1000 },
+  { name: 'experience-principles', topK: 2,  recallTopK: 10, budgetChars: 800,  recallBudgetChars: 6000 },
+  { name: 'experience-behavioral', topK: 3,  recallTopK: 15, budgetChars: 1200, recallBudgetChars: 12000 },
+  { name: 'experience-selfqa',     topK: 10, recallTopK: 20, budgetChars: 1000, recallBudgetChars: 12000 },
 ];
 
 const ROUTES_COLLECTION = 'experience-routes';
