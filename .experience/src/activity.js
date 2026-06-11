@@ -39,6 +39,24 @@ function logCostCall(kind, provider, source, units, extra = {}) {
   });
 }
 
+// Build the activity row for an active-recall call (op:'recall'). Pure (no I/O)
+// so it is unit-testable without the server. Caller passes it to activityLog().
+// This is the per-session observability foundation the runbook-candidate signal
+// reads back from activity.jsonl ("agent ran N recalls in one session").
+function buildRecallEvent(query, meta = {}, entries = []) {
+  const ids = Array.isArray(entries)
+    ? entries.map((e) => (e && e.id != null ? String(e.id) : '')).filter(Boolean)
+    : [];
+  return {
+    op: 'recall',
+    query: String(query || '').slice(0, 200),
+    sourceSession: meta.sourceSession || null,
+    project_slug: meta.project_slug || null,
+    surfacedIds: ids,
+    count: ids.length,
+  };
+}
+
 function logMistakeSeen(mistakes, projectPath) {
   if (!Array.isArray(mistakes) || mistakes.length === 0) return;
   const counts = new Map();
@@ -56,5 +74,6 @@ module.exports = {
   estimateTextUnits,
   logCostCall,
   logMistakeSeen,
+  buildRecallEvent,
   ACTIVITY_LOG,
 };
