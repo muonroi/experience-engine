@@ -63,3 +63,40 @@ test('recall: without fast, body carries no fast flag', async () => {
   await withStubbedFetch(captured, () => recall('deploy', { cwd: '/x' }, home));
   assert.equal(captured.body.fast, undefined);
 });
+
+// Client-side op:'recall' logging — the data source for the session-end runbook
+// nudge. Must land in the homeDir-relative activity.jsonl (test-isolated) and be
+// suppressible for the risk-gate's internal auto-recall.
+function readActivity(home) {
+  const p = path.join(home, '.experience', 'activity.jsonl');
+  try {
+    return fs.readFileSync(p, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  } catch { return []; }
+}
+
+test('recall: logs a local op:recall row (homeDir-relative, isolated)', async () => {
+  const home = tmpHome();
+  const captured = {};
+  // stub returns one entry so surfacedIds is non-empty
+  const orig = global.fetch;
+  global.fetch = async (url, init) => {
+    captured.body = JSON.parse(init.body);
+    return { ok: true, status: 200, text: async () => JSON.stringify({ text: 't', entries: [{ id: 'X1', collection: 'c' }], count: 1 }) };
+  };
+  try {
+    await recall('deploy migration', { cwd: '/x', session: 'sess-1' }, home);
+  } finally { global.fetch = orig; }
+  const rows = readActivity(home).filter((e) => e.op === 'recall');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].sourceSession, 'sess-1');
+  assert.deepEqual(rows[0].surfacedIds, ['X1']);
+  assert.equal(rows[0].count, 1);
+  assert.ok(rows[0].ts, 'row carries a ts');
+});
+
+test('recall: logLocal=false suppresses the local row (risk-gate path)', async () => {
+  const home = tmpHome();
+  const captured = {};
+  await withStubbedFetch(captured, () => recall('deploy', { cwd: '/x', session: 'sess-2', logLocal: false }, home));
+  assert.equal(readActivity(home).filter((e) => e.op === 'recall').length, 0);
+});

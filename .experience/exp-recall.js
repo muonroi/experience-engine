@@ -138,7 +138,25 @@ async function recall(query, opts = {}, homeDir = os.homedir()) {
     err.status = res.status;
     throw err;
   }
-  return json || { text: null, entries: [], count: 0 };
+  const out = json || { text: null, entries: [], count: 0 };
+
+  // Mirror this recall as a LOCAL op:'recall' activity row. handleRecall logs the
+  // same row SERVER-side, but thin clients read their LOCAL activity.jsonl — which
+  // otherwise never sees recalls (they POST to a remote VPS), so the session-end
+  // runbook nudge (stop-extractor) would have no data. homeDir-relative so unit
+  // tests stay isolated. Suppressed (opts.logLocal === false) for the risk-gate's
+  // internal auto-recall, so only agent-INITIATED recalls count toward the stitch.
+  if (opts.logLocal !== false) {
+    try {
+      const { buildRecallEvent } = require('./src/activity.js');
+      const ev = buildRecallEvent(query, { sourceSession: sessionId || null, project_slug: body.project_slug || null }, out.entries || []);
+      const logPath = process.env.EXPERIENCE_ACTIVITY_LOG || path.join(homeDir, '.experience', 'activity.jsonl');
+      fs.appendFileSync(logPath, JSON.stringify({ ts: new Date().toISOString(), ...ev }) + '\n');
+    } catch (err) {
+      if (process.env.EXP_RECALL_DEBUG) console.error(`[exp-recall] local activity log failed: ${err?.message}`);
+    }
+  }
+  return out;
 }
 
 async function main() {

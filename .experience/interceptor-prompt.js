@@ -356,7 +356,9 @@ async function buildRiskGate(prompt, cwd, hasSuggestions) {
       // returns within the synchronous-hook budget. Without it the full recall
       // (~10s) always exceeded RISK_RECALL_TIMEOUT_MS and the gate silently fell
       // through to the "0 entries" branch — push-injection never delivered.
-      recallRes = await withTimeout(_expRecall.recall(top.topic, { cwd, fast: true }), RISK_RECALL_TIMEOUT_MS);
+      // logLocal:false — this is an automatic gate recall, not an agent-initiated
+      // stitch; it must not inflate the runbook-candidate signal (stop-extractor).
+      recallRes = await withTimeout(_expRecall.recall(top.topic, { cwd, fast: true, logLocal: false }), RISK_RECALL_TIMEOUT_MS);
     } catch (err) {
       debugLog({ stage: 'risk_recall_failed', topic: top.topic, message: err?.message || String(err) });
     }
