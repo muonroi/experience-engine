@@ -280,6 +280,22 @@ function extractBashIntent(command) {
  * @returns {string}
  */
 function buildSemanticQuery(toolName, toolInput, opts = {}) {
+  // Prompt hooks (UserPromptSubmit passive hints AND /api/recall active recall)
+  // pass the user's natural-language query/prompt in toolInput.command with
+  // _promptHook:true. That text is ALREADY natural language — the closest
+  // possible form to brain entry text — so embed it directly. The intent
+  // extraction below exists to convert CODE diffs / shell commands into NL
+  // intent; running it on an NL prompt discards the query entirely (none of
+  // new_string/content/old_string are set, and `command` is only read for Bash),
+  // collapsing every prompt to the constant "[tool:<name>] using <name>" and
+  // embedding noise. Evidence: activity.jsonl op:intercept tool:UserPrompt rows
+  // logged query="[tool:UserPrompt] using UserPrompt" with surfaced generic
+  // principles at ~0.63 cosine, never the queried-for content (2026-06-11).
+  if (toolInput && toolInput._promptHook && typeof toolInput.command === 'string') {
+    const promptText = toolInput.command.replace(/\s+/g, ' ').trim();
+    if (promptText) return promptText.slice(0, 500);
+  }
+
   const filePath = toolInput?.file_path || toolInput?.path || '';
   const lang = detectContext(filePath);
   const action = getToolAction(toolName);
