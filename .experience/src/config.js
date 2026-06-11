@@ -269,6 +269,22 @@ function getRiskKeywords() {
   return list.length ? list : DEFAULT_RISK_KEYWORDS.slice();
 }
 
+// --- Runbook-candidate detection (session-end nudge) ---
+// When an agent runs >= getRunbookStitchMin() recalls in one session that reuse
+// the same atomic entries and none of them is a runbook, the stop-extractor
+// proposes "crystallize a runbook?". Detection is deterministic (counts only,
+// no LLM) and observes recorded op:'recall' activity rows. Default ON; set
+// EXPERIENCE_RUNBOOK_NUDGE=0 to silence the session-end nudge.
+function getRunbookNudgeEnabled() {
+  return String(cfgValue('runbookNudge', 'EXPERIENCE_RUNBOOK_NUDGE', '1')) !== '0';
+}
+function getRunbookStitchMin() {
+  const n = Number(cfgValue('runbookStitchMin', 'EXPERIENCE_RUNBOOK_STITCH_MIN', 3));
+  // Floor of 2: the signal also requires >= 2 atomic entries to recur, so a
+  // stitch threshold below 2 can never produce a candidate.
+  return Number.isFinite(n) && n >= 2 ? Math.round(n) : 3;
+}
+
 // --- Activity Log ---
 let _activityLog = null;
 
@@ -295,6 +311,7 @@ module.exports = {
   getHomeExpDir, getStoreDir, getActivityLogPath,
   getPrivacyLevel, getProfilePath, getSignalWindowDays,
   getRiskGateEnabled, getRiskKeywords, DEFAULT_RISK_KEYWORDS,
+  getRunbookNudgeEnabled, getRunbookStitchMin,
   COLLECTIONS, SELFQA_COLLECTION, EDGE_COLLECTION, ROUTES_COLLECTION,
   DEDUP_THRESHOLD, QUERY_MAX_CHARS, COMPACT_DIM,
   VALID_FEEDBACK_VERDICTS, VALID_NOISE_REASONS, VALID_NOISE_DISPOSITIONS, VALID_NOISE_SOURCES,

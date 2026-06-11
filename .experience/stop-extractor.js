@@ -756,6 +756,62 @@ function maybeUpdateProfile(homeDir = getHomeDir(), now = Date.now()) {
   }
 }
 
+// Session-end runbook nudge (proposal §3.4). Deterministic, LLM-free: reads the
+// recorded op:'recall' activity rows for THIS session and, if the agent stitched
+// >= getRunbookStitchMin() recalls over recurring atomic entries with no runbook
+// among them, returns a candidate the caller surfaces as a one-line nudge. Fires
+// once per session end (never per turn) and never throws into the Stop path.
+function maybeNudgeRunbookCandidate(homeDir = getHomeDir(), session = null, now = Date.now()) {
+  let config;
+  try {
+    config = require(path.join(homeDir, '.experience', 'src', 'config.js'));
+  } catch (err) {
+    // module not present on an older sync — optional infra, skip silently
+    return null;
+  }
+  if (typeof config.getRunbookNudgeEnabled !== 'function' || !config.getRunbookNudgeEnabled()) return null;
+
+  try {
+    const { detectRunbookCandidates, readActivityEvents } = require(path.join(homeDir, '.experience', 'src', 'signal-detector.js'));
+    if (typeof detectRunbookCandidates !== 'function') return null;  // older sync
+
+    // Correlate to THIS session the same way exp-recall.js attributes a recall:
+    // $EXP_SESSION when the hook wrapper set it, else the transcript basename.
+    let sessionId = process.env.EXP_SESSION || null;
+    if (!sessionId && session && session.file) {
+      sessionId = path.basename(String(session.file)).replace(/\.jsonl$/i, '');
+    }
+    if (!sessionId) return null;  // unattributed recalls can't be grouped to a session
+
+    const windowDays = typeof config.getSignalWindowDays === 'function' ? config.getSignalWindowDays() : 30;
+    const sinceMs = now - windowDays * 86400000;
+    const { events } = readActivityEvents(config.getActivityLogPath(), sinceMs);
+    const minStitch = typeof config.getRunbookStitchMin === 'function' ? config.getRunbookStitchMin() : 3;
+    const candidate = detectRunbookCandidates(events, { sessionId, minStitch });
+    if (!candidate) return null;
+
+    // Record the proposal so forensics can measure nudge rate vs. crystallized runbooks.
+    try {
+      const core = getCore(homeDir);
+      if (core && typeof core._activityLog === 'function') {
+        core._activityLog({
+          op: 'runbook-candidate',
+          sessionId: candidate.sessionId,
+          project: candidate.project_slug,
+          recallCount: candidate.recallCount,
+          ids: candidate.recurringIds,
+        });
+      }
+    } catch (err) {
+      console.error(`[stop-extractor] runbook-candidate activity log failed: ${err?.message}`);
+    }
+    return candidate;
+  } catch (err) {
+    console.error(`[stop-extractor] runbook-candidate detection failed: ${err?.message}`);
+    return null;
+  }
+}
+
 async function runStopExtractor(options = {}) {
   // Auto-extraction disabled — user syncs manually via bulk-extract.
   // Only evolve is kept so cron-triggered evolution still works.
@@ -766,7 +822,10 @@ async function runStopExtractor(options = {}) {
     : await maybeEvolve(homeDir);
   // Update the "Who Am I" profile (gated; default-off no-op). Independent of extraction.
   maybeUpdateProfile(homeDir);
-  return { session: null, extracted: 0, skipped: 'auto-extract-disabled', evolveResult };
+  // Session-end runbook nudge (gated; default ON). Best-effort, never throws here.
+  const session = findCurrentSession(homeDir);
+  const runbookCandidate = maybeNudgeRunbookCandidate(homeDir, session);
+  return { session: null, extracted: 0, skipped: 'auto-extract-disabled', evolveResult, runbookCandidate };
 }
 
 // Backfill mode — process every session newer than its marker entry, up to
@@ -814,6 +873,16 @@ async function main() {
       );
     }
   }
+
+  const rc = result.runbookCandidate;
+  if (rc) {
+    const ids = (rc.recurringIds || []).join(', ');
+    process.stderr.write(
+      `Experience: you ran ${rc.recallCount} recalls on "${rc.topic}" reusing [${ids}] with no runbook among them. ` +
+      `Crystallize a runbook? Save a nodeKind:'runbook' entry whose body links those ids in order ` +
+      `(see docs/proposals/runbook-and-risk-gate.md §3.1).\n`
+    );
+  }
 }
 
 if (require.main === module) {
@@ -852,6 +921,7 @@ module.exports = {
   countImportantSignals,
   runStopExtractor,
   maybeUpdateProfile,
+  maybeNudgeRunbookCandidate,
   runBackfillExtractor,
   readMarker,
   writeMarker,

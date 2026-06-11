@@ -214,6 +214,98 @@ function detectSignals({ transcript = '', activityEvents = [] } = {}) {
   return { signals, stats };
 }
 
+// --- runbook-candidate detection (pure) ---------------------------------
+
+const RUNBOOK_STITCH_MIN_DEFAULT = 3;
+
+/**
+ * Detect a "you stitched N recalls and should crystallize a runbook" signal
+ * from recorded op:'recall' activity rows (see activity.buildRecallEvent). Pure:
+ * the caller supplies the parsed events + an optional isRunbookId predicate so
+ * the function never touches the filesystem or the brain.
+ *
+ * A candidate fires when, within one session (opts.sessionId), the agent ran
+ * >= minStitch DISTINCT recalls whose surfaced entries overlap (>= 2 atomic
+ * ids recur across >= 2 recalls) AND none of the surfaced ids is already a
+ * runbook (isRunbookId). This mirrors proposal §3.3 — the engine only PROPOSES
+ * the candidate (observed ids + queries); ordering/causality is left to the
+ * agent/human (§3.5), so we never synthesize a body here.
+ *
+ * isRunbookId defaults to () => false: activity rows carry only ids, not
+ * nodeKind, so without an injected resolver we conservatively assume no runbook
+ * is present and still propose. That is the intended bias — a spurious "want a
+ * runbook?" prompt is cheap; a missed one is the gap we are closing.
+ *
+ * @param {Array<object>} activityEvents  parsed activity.jsonl rows
+ * @param {object} [opts]
+ * @param {string|null} [opts.sessionId]  restrict to rows with this sourceSession
+ * @param {number} [opts.minStitch=3]     distinct-recall threshold
+ * @param {(id:string)=>boolean} [opts.isRunbookId]  true if an id is a runbook entry
+ * @returns {null | {sessionId, recallCount, queries:string[], recurringIds:string[], project_slug:(string|null), topic:string}}
+ */
+function detectRunbookCandidates(activityEvents = [], opts = {}) {
+  const minStitch = Number.isFinite(opts.minStitch) && opts.minStitch >= 2
+    ? Math.round(opts.minStitch)
+    : RUNBOOK_STITCH_MIN_DEFAULT;
+  const isRunbookId = typeof opts.isRunbookId === 'function' ? opts.isRunbookId : () => false;
+  const sessionId = opts.sessionId != null ? String(opts.sessionId) : null;
+
+  let rows = (Array.isArray(activityEvents) ? activityEvents : []).filter((e) => e && e.op === 'recall');
+  if (sessionId) {
+    rows = rows.filter((e) => e && e.sourceSession != null && String(e.sourceSession) === sessionId);
+  }
+  if (rows.length < minStitch) return null;
+
+  // Collapse exact-duplicate recalls (same query + same surfaced set) — a re-run
+  // is not a separate stitch. Each distinct recall votes once per id it surfaced.
+  const seen = new Set();
+  const distinct = [];
+  for (const e of rows) {
+    const ids = Array.isArray(e.surfacedIds)
+      ? Array.from(new Set(e.surfacedIds.map((x) => String(x)).filter(Boolean)))
+      : [];
+    const sig = `${String(e.query || '')} ${ids.slice().sort().join(',')}`;
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    distinct.push({ query: e.query ? String(e.query) : '', ids, project_slug: e.project_slug || null });
+  }
+  if (distinct.length < minStitch) return null;
+
+  const idRowCount = new Map();   // id -> # distinct recalls that surfaced it
+  const projectCounts = new Map();
+  const queries = [];
+  let runbookPresent = false;
+  for (const r of distinct) {
+    for (const id of r.ids) {
+      idRowCount.set(id, (idRowCount.get(id) || 0) + 1);
+      if (isRunbookId(id)) runbookPresent = true;
+    }
+    if (r.query) queries.push(r.query);
+    if (r.project_slug) projectCounts.set(r.project_slug, (projectCounts.get(r.project_slug) || 0) + 1);
+  }
+
+  // A runbook already covers this stitch → nothing to crystallize (§3.3).
+  if (runbookPresent) return null;
+
+  const recurringIds = [...idRowCount.entries()].filter(([, n]) => n >= 2).map(([id]) => id);
+  if (recurringIds.length < 2) return null;   // §3.3 "≥2 distinct atomic entries recur"
+
+  let project_slug = null;
+  let best = 0;
+  for (const [p, n] of projectCounts) {
+    if (n > best) { best = n; project_slug = p; }
+  }
+
+  return {
+    sessionId,
+    recallCount: distinct.length,
+    queries,
+    recurringIds,
+    project_slug,
+    topic: project_slug || trunc(queries[0] || '', 80),
+  };
+}
+
 // --- I/O boundary -------------------------------------------------------
 
 /**
@@ -248,9 +340,11 @@ function readActivityEvents(logPath, sinceMs = 0) {
 
 module.exports = {
   detectSignals,
+  detectRunbookCandidates,
   parseTranscriptTurns,
   classifyQuestion,
   classifyResponse,
   readActivityEvents,
   SESSION_GAP_MS,
+  RUNBOOK_STITCH_MIN_DEFAULT,
 };
