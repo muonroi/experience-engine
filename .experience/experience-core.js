@@ -83,7 +83,12 @@ async function callBrainWithFallback(prompt, meta = {}) {
 async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   const sourceMeta = _utils.normalizeSourceMeta(meta);
   const runtime = _utils.resolveRuntimeFromSourceMeta(sourceMeta, _utils.detectRuntime(toolName));
-  const hookRealtimeFastPath = _intercept.isHookRealtimeFastPath(toolName, sourceMeta);
+  // options.fast forces the realtime fast path (skips the ~8s brainRelevanceFilter
+  // LLM call + router). Used by latency-bound callers like the prompt risk gate,
+  // where a synchronous hook cannot block for the full ~10s recall: a fast recall
+  // (embed + raw-cosine search, no LLM rerank) returns in ~1.5-2s and still carries
+  // [id col] handles. Explicit exp-recall.js / MCP ee.query keep the full pipeline.
+  const hookRealtimeFastPath = _intercept.isHookRealtimeFastPath(toolName, sourceMeta) || !!(options && options.fast);
   const skipRoute = !!(options && options.skipRoute);
   // Active recall (semantic-search mode): rank by raw cosine and drop the
   // passive-hint noise-control gates (positive scope filters + min-search-score

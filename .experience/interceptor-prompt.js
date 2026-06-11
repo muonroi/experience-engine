@@ -316,7 +316,11 @@ function _loadInstalled(rel) {
 const _riskTriggers = _loadInstalled('src/risk-triggers.js');
 const _expRecall = _loadInstalled('exp-recall.js');
 const _riskCfg = _loadInstalled('src/config.js');
-const RISK_RECALL_TIMEOUT_MS = timeoutFromEnv('EXPERIENCE_RISK_RECALL_TIMEOUT_MS', 1500);
+// Default 2500ms: a fast recall (options.fast → no brain LLM rerank) returns in
+// ~1.5-2s, so this delivers the [id col] payload while keeping the synchronous
+// UserPromptSubmit hook responsive. The old 1500ms could not fit even a fast
+// recall's embed+search on a cold call. Override via env.
+const RISK_RECALL_TIMEOUT_MS = timeoutFromEnv('EXPERIENCE_RISK_RECALL_TIMEOUT_MS', 2500);
 
 // Conditional risk gate — replaces the always-on generic nudge. Fires ONLY when a
 // deterministic trigger (sensitive keyword / cross-repo) matches the prompt, so it
@@ -348,7 +352,11 @@ async function buildRiskGate(prompt, cwd, hasSuggestions) {
   let recallRes = null;
   if (_expRecall && typeof _expRecall.recall === 'function') {
     try {
-      recallRes = await withTimeout(_expRecall.recall(top.topic, { cwd }), RISK_RECALL_TIMEOUT_MS);
+      // fast:true → skips the ~8s brainRelevanceFilter LLM rerank so the recall
+      // returns within the synchronous-hook budget. Without it the full recall
+      // (~10s) always exceeded RISK_RECALL_TIMEOUT_MS and the gate silently fell
+      // through to the "0 entries" branch — push-injection never delivered.
+      recallRes = await withTimeout(_expRecall.recall(top.topic, { cwd, fast: true }), RISK_RECALL_TIMEOUT_MS);
     } catch (err) {
       debugLog({ stage: 'risk_recall_failed', topic: top.topic, message: err?.message || String(err) });
     }
