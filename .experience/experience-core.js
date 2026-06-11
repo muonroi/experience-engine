@@ -440,7 +440,17 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
       return { collection: p._collection, id: p.id, solution: exp.solution || null, domain: exp.domain || null, projectSlug: exp._projectSlug || null, scope: exp.scope || null, createdAt: exp.createdAt || null, lastHitAt: exp.lastHitAt || null, hitCount: exp.hitCount || 0, ignoreCount: exp.ignoreCount || 0, superseded };
     } catch { return { collection: p._collection, id: p.id, solution: null }; }
   });
-  if (surfacedMeta.length > 0) {
+  // Session-dedup is a PASSIVE-hint noise control: don't re-inject the same
+  // unsolicited hint twice in one session. It is WRONG for active recall —
+  // recall is a deliberate query, and the CLI (exp-recall.js) sends no
+  // sourceSession, so every recall across every agent session collapses into
+  // ONE shared null-session bucket. trackSuggestions then splices already-seen
+  // entries, so recall decays to empty for everyone as the null bucket fills
+  // (verified: literal-null session → 0 surfaced, fresh session → 15). recordSurface
+  // (hit tracking) above is unaffected — only the dedup splice + ignore-penalty
+  // are skipped, since penalizing an explicitly-requested entry as "ignored" is
+  // also incorrect.
+  if (surfacedMeta.length > 0 && !recallMode) {
     const { flagged, filtered } = _session.trackSuggestions(surfacedMeta, sourceMeta);
     if (filtered.length > 0) {
       for (let i = lines.length - 1; i >= 0; i--) {
