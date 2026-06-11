@@ -362,7 +362,7 @@ function shouldPromoteBehavioralToPrinciple(data, now = Date.now()) {
 // --- Evolve ---
 
 async function evolve(trigger) {
-  const results = { promoted: 0, abstracted: 0, demoted: 0, archived: 0 };
+  const results = { promoted: 0, abstracted: 0, demoted: 0, archived: 0, flagged: 0 };
   // Entries promoted earlier in THIS run must not be demoted in the same pass.
   // Without this guard the Step 1c orphan-repair -> Step 3 ignore-demote loop
   // ping-pongs the same entries (promoted~=demoted churn every cron cycle).
@@ -849,6 +849,46 @@ async function evolve(trigger) {
     }
   }
 
+  // Step 4e: Runbook reconfirm flagging (proposal §3.6).
+  //
+  // A runbook entry (nodeKind:'runbook') stitches several atomic entries via
+  // derivedFromId (8-char id prefixes, mirroring activityLog's id.slice(0,8)).
+  // When one of those atomic entries is superseded its procedure step may now
+  // be stale, but the runbook body is human-authored ground truth — we do NOT
+  // auto-edit it (§3.5/§3.6: flag only). Instead we set needsReconfirm so the
+  // session-end nudge / dashboard can surface "this runbook references a retired
+  // entry; re-confirm". Idempotent: only (re)flags when a NEW superseded id
+  // appears in the trigger set, so it does not churn payloads every cron run.
+  try {
+    const RUNBOOK_SCAN_COLLECTIONS = ['experience-behavioral', 'experience-selfqa', 'experience-principles'];
+    const supersededShortIds = new Set();
+    const runbookEntries = []; // { colName, entry, data }
+    for (const colName of RUNBOOK_SCAN_COLLECTIONS) {
+      const entries = await getAllEntries(colName);
+      for (const entry of entries) {
+        const data = parsePayload(entry);
+        if (!data) continue;
+        if (data.superseded === true) supersededShortIds.add(String(entry.id).slice(0, 8));
+        if (data.nodeKind === 'runbook') runbookEntries.push({ colName, entry, data });
+      }
+    }
+    for (const { colName, entry, data } of runbookEntries) {
+      const res = computeRunbookReconfirm(data, supersededShortIds);
+      if (!res) continue;
+      data.needsReconfirm = true;
+      data.reconfirmAt = new Date().toISOString();
+      data.reconfirmReason = `derivedFrom superseded: ${res.merged.join(',')}`;
+      data.reconfirmTriggeredBy = res.merged;
+      const vector = entry.vector || await getEmbedding(`${data.trigger} ${data.solution}`);
+      if (!vector) continue;
+      await upsertEntry(colName, entry.id, vector, data);
+      results.flagged++;
+      activityLog({ op: 'runbook-needs-reconfirm', id: String(entry.id).slice(0, 8), triggeredBy: res.merged });
+    }
+  } catch (err) {
+    log(`[evolution] Step 4e runbook reconfirm flagging failed: ${err?.message}`);
+  }
+
   // Step 5: Route collection compaction
   const ROUTE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
   const ROUTE_MAX_ENTRIES = 5000;
@@ -901,6 +941,27 @@ async function evolve(trigger) {
 
 function parsePayload(entry) {
   try { return JSON.parse(entry.payload?.json || '{}'); } catch { return null; }
+}
+
+// Pure §3.6 helper: given a runbook entry's payload and the set of currently
+// superseded 8-char id prefixes, decide whether the runbook needs re-confirm.
+// Returns null when nothing changed (not a live runbook, no derived match, or
+// already flagged for the same trigger set) so the caller can skip the upsert;
+// otherwise returns { matched, merged } where `merged` is the union of the
+// previously-recorded triggers and the newly-matched ones. No I/O — unit-tested.
+function computeRunbookReconfirm(data, supersededShortIds) {
+  if (!data || data.nodeKind !== 'runbook' || data.superseded === true) return null;
+  if (!Array.isArray(data.derivedFromId) || data.derivedFromId.length === 0) return null;
+  const ss = supersededShortIds instanceof Set ? supersededShortIds : new Set(supersededShortIds || []);
+  const matched = data.derivedFromId
+    .map((x) => String(x).slice(0, 8))
+    .filter((short) => ss.has(short));
+  if (matched.length === 0) return null;
+  const prev = Array.isArray(data.reconfirmTriggeredBy) ? data.reconfirmTriggeredBy.map((x) => String(x).slice(0, 8)) : [];
+  const merged = Array.from(new Set([...prev, ...matched]));
+  // Already flagged and no NEW superseded id appeared → idempotent no-op.
+  if (data.needsReconfirm === true && merged.length === prev.length) return null;
+  return { matched, merged };
 }
 
 function clusterByCosine(entries, threshold) {
@@ -1137,7 +1198,7 @@ module.exports = {
   findOrganicSupportCandidate, applyOrganicSupportUpdate,
   uniqueConfirmationCount, hasRepeatedSessionConfirmations,
   resetPromotionProbation, shouldPromoteBehavioralToPrinciple,
-  parsePayload, clusterByCosine, sharePrinciple, importPrinciple,
+  parsePayload, computeRunbookReconfirm, clusterByCosine, sharePrinciple, importPrinciple,
   migrateQdrantUserTags, storeExperience, storeImportedExperience, evolve,
   getAllEntries, upsertEntry,
   _inheritClusterScope,
