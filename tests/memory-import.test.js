@@ -98,6 +98,54 @@ test('map: user → skipped (null)', () => {
   assert.equal(mi.mapMemoryToExperience(rec({ type: 'user' })), null);
 });
 
+// --- runbook import (§7: nodeKind + derivedFromId threading) ---
+
+test('parseIdList: tolerates [a, b] / a, b / a b / empty', () => {
+  assert.deepEqual(mi.parseIdList('[4c81b5ca, 1e5f095f]'), ['4c81b5ca', '1e5f095f']);
+  assert.deepEqual(mi.parseIdList('4c81b5ca, 1e5f095f'), ['4c81b5ca', '1e5f095f']);
+  assert.deepEqual(mi.parseIdList('4c81b5ca 1e5f095f'), ['4c81b5ca', '1e5f095f']);
+  assert.equal(mi.parseIdList(''), null);
+  assert.equal(mi.parseIdList(undefined), null);
+});
+
+test('map: runbook record threads nodeKind + derivedFromId into qa', () => {
+  const m = mi.mapMemoryToExperience(rec({ type: 'project', nodeKind: 'runbook', derivedFromId: ['4c81b5ca', '1e5f095f'] }));
+  assert.equal(m.qa.nodeKind, 'runbook');
+  assert.deepEqual(m.qa.derivedFromId, ['4c81b5ca', '1e5f095f']);
+  // collection routing is unchanged — nodeKind is orthogonal to type→tier.
+  assert.equal(m.collection, mi.SELFQA_COLLECTION);
+});
+
+test('map: ordinary record leaves nodeKind/derivedFromId null', () => {
+  const m = mi.mapMemoryToExperience(rec({ type: 'project' }));
+  assert.equal(m.qa.nodeKind, null);
+  assert.equal(m.qa.derivedFromId, null);
+});
+
+test('claudeAdapter.parse: reads metadata.node_type=runbook + derivedFromId from frontmatter', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mem-runbook-'));
+  const memDir = path.join(dir, 'D--sources-Core-storyflow', 'memory');
+  fs.mkdirSync(memDir, { recursive: true });
+  const file = path.join(memDir, 'post-donor-enrich-runbook.md');
+  fs.writeFileSync(file, [
+    '---',
+    'name: post-donor-enrich-runbook',
+    'description: storyflow post-donor enrich procedure',
+    'metadata:',
+    '  type: project',
+    '  node_type: runbook',
+    '  derivedFromId: [4c81b5ca, 1e5f095f]',
+    '---',
+    '',
+    '1) enrich. 2) gap census. 3) relaunch container.',
+  ].join('\n'));
+  const r = mi.claudeAdapter.parse(file);
+  assert.equal(r.nodeKind, 'runbook');
+  assert.deepEqual(r.derivedFromId, ['4c81b5ca', '1e5f095f']);
+  assert.equal(r.type, 'project');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('map: reference → skipped by default, imported with --include-reference', () => {
   assert.equal(mi.mapMemoryToExperience(rec({ type: 'reference' })), null);
   const m = mi.mapMemoryToExperience(rec({ type: 'reference' }), { includeReference: true });

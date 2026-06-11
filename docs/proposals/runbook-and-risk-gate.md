@@ -171,3 +171,38 @@ runbooks) and are the minimum honest foundation — without them, detection is f
 - Auto-rebuilding a runbook when a linked atomic entry changes (§3.6 — flag only).
 - The storyflow `post-donor` runbook *content* itself — that is a storyflow corpus decision for
   the user, created via the normal memory-import path once the convention (step 3) exists.
+
+## 8. Implementation status (2026-06-11)
+
+All five prerequisite steps (§5) plus the §3.2 float and §4 shared layer are SHIPPED on `develop`:
+
+| Item | Where | State |
+|---|---|---|
+| P1 emit `op:recall` rows | `server.js handleRecall` + `activity.buildRecallEvent` | ✅ `82c906f` |
+| P2 thread `sourceSession` | `exp-recall.js` | ✅ `82c906f` |
+| Runbook convention (`nodeKind`/`derivedFromId`) | `format.buildStorePayload` | ✅ `82c906f` |
+| Detection (`detectRunbookCandidates`) | `signal-detector.js` | ✅ `be07e31` |
+| Session-end nudge | `stop-extractor.maybeNudgeRunbookCandidate` | ✅ `be07e31` |
+| Client-side recall log (CLI) | `exp-recall.js recall()` | ✅ `b459a91` |
+| §3.2 runbook-float | `scoring.floatRunbooks` + recall merge | ✅ `7b5e7c8` |
+| §4 shared `surface-trigger.js` | both hooks | ✅ `7b5e7c8` |
+| Import-path `nodeKind`/`derivedFromId` | `memory-import.mapMemoryToExperience` + `claudeAdapter.parse` | ✅ this commit |
+| muonroi-cli MCP/builtin recall mirror | `src/ee/search.recallEE` | ✅ muonroi-cli PR #67 |
+
+**Storyflow runbook content (the §7 corpus decision)** is delivered as a reviewable artifact at
+`docs/proposals/storyflow-post-donor-runbook.example.md` — a ready-to-import memory file using the
+thin-body design (steps delegate detail to the linked atomic entries `4c81b5ca` /  `d1934712` /
+`1e5f095f`, all verified present in the brain). It is NOT auto-written to production: this session
+could not verify the storyflow step commands/order against the live repo, and §3.5 forbids
+asserting an unverified procedure as an authoritative seed.
+
+**To apply (after confirming the steps against the storyflow repo):**
+```bash
+# 1. Review/edit the file, then copy it into the storyflow project memory dir:
+cp docs/proposals/storyflow-post-donor-runbook.example.md \
+   ~/.claude/projects/D--sources-Core-storyflow/memory/post-donor-enrich-runbook.md
+# 2. Import (stable-id upsert; createdFrom=seed-memory-import, nodeKind=runbook):
+node .experience/tools/import-memory.js          # scans memory dirs, imports incrementally
+# 3. Verify the float + recall:
+node .experience/exp-recall.js "post donor enrich next step"   # runbook should lead
+```
