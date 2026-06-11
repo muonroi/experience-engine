@@ -561,48 +561,56 @@ process.stdin.on('end', async () => {
         ...sourceMeta,
       });
     }
-    if (timedOut || !resultMeta) { process.exitCode = 0; return; }
-
-    let suggestions = resultMeta?.suggestions || null;
-    let surfacedIds = resultMeta?.surfacedIds || [];
-    const precisionResult = filterPromptSuggestionsForPrecision(suggestions, surfacedIds);
-    suggestions = precisionResult.suggestions;
-    surfacedIds = precisionResult.surfacedIds;
-    const routeInfo = resultMeta?.route || null;
-    try {
-      const remote = getRemoteClient();
-      if (remote) remote.maybeSpawnExtractDrain();
-    } catch {}
-    debugLog({ stage: 'done', hasSuggestions: !!suggestions, hasRoute: !!routeInfo });
-    activityLog({
-      stage: 'done',
-      hasSuggestions: !!suggestions,
-      hasRoute: !!routeInfo,
-      surfacedCount: surfacedIds.length,
-      surfaced: surfacedIds.slice(0, 8).map(s => ({ collection: s.collection, pointId: String(s.id || '').slice(0, 8) })),
-      promptPrecisionRemoved: Math.max(0, (resultMeta?.surfacedIds || []).length - surfacedIds.length),
-      routeTier: routeInfo?.tier || null,
-      routeModel: routeInfo?.model || null,
-      routeSource: routeInfo?.source || null,
-      preview: suggestions ? suggestions.slice(0, 240) : null,
-      ...sourceMeta
-    });
-
-    if (suggestions) {
-      writeLastSuggestionsState('UserPrompt', surfacedIds, sourceMeta, {
-        prompt,
-        cwd: data.cwd || process.cwd(),
-      });
-    }
-
-    // Build output
+    // A passive-search timeout must NOT suppress the risk gate below. The passive
+    // whole-prompt search runs the FULL pipeline for non-codex runtimes (only
+    // codex hooks hit the realtime fast path — see isHookRealtimeFastPath), so it
+    // routinely exceeds INTERCEPT_TIMEOUT_MS. The risk gate's recall is independent
+    // and fast (options.fast), so on a passive timeout we skip only the
+    // suggestion/route output and still fall through to buildRiskGate. Previously
+    // an early return here meant the gate never fired for slow passive searches.
+    const passiveTimedOut = timedOut || !resultMeta;
+    let suggestions = null;
     let outputText = '';
-    if (suggestions) {
-      outputText = suggestions;
-    }
-    if (sourceMeta.sourceKind !== 'codex-hook' && routeInfo && routeInfo.tier) {
-      const routeLine = `[Model Route] tier=${routeInfo.tier} model=${routeInfo.model || '?'} confidence=${(routeInfo.confidence || 0).toFixed(2)} source=${routeInfo.source || 'default'}`;
-      outputText = outputText ? outputText + '\n---\n' + routeLine : routeLine;
+    if (!passiveTimedOut) {
+      let surfacedIds = resultMeta?.surfacedIds || [];
+      suggestions = resultMeta?.suggestions || null;
+      const precisionResult = filterPromptSuggestionsForPrecision(suggestions, surfacedIds);
+      suggestions = precisionResult.suggestions;
+      surfacedIds = precisionResult.surfacedIds;
+      const routeInfo = resultMeta?.route || null;
+      try {
+        const remote = getRemoteClient();
+        if (remote) remote.maybeSpawnExtractDrain();
+      } catch {}
+      debugLog({ stage: 'done', hasSuggestions: !!suggestions, hasRoute: !!routeInfo });
+      activityLog({
+        stage: 'done',
+        hasSuggestions: !!suggestions,
+        hasRoute: !!routeInfo,
+        surfacedCount: surfacedIds.length,
+        surfaced: surfacedIds.slice(0, 8).map(s => ({ collection: s.collection, pointId: String(s.id || '').slice(0, 8) })),
+        promptPrecisionRemoved: Math.max(0, (resultMeta?.surfacedIds || []).length - surfacedIds.length),
+        routeTier: routeInfo?.tier || null,
+        routeModel: routeInfo?.model || null,
+        routeSource: routeInfo?.source || null,
+        preview: suggestions ? suggestions.slice(0, 240) : null,
+        ...sourceMeta
+      });
+
+      if (suggestions) {
+        writeLastSuggestionsState('UserPrompt', surfacedIds, sourceMeta, {
+          prompt,
+          cwd: data.cwd || process.cwd(),
+        });
+        outputText = suggestions;
+      }
+      if (sourceMeta.sourceKind !== 'codex-hook' && routeInfo && routeInfo.tier) {
+        const routeLine = `[Model Route] tier=${routeInfo.tier} model=${routeInfo.model || '?'} confidence=${(routeInfo.confidence || 0).toFixed(2)} source=${routeInfo.source || 'default'}`;
+        outputText = outputText ? outputText + '\n---\n' + routeLine : routeLine;
+      }
+    } else {
+      debugLog({ stage: 'passive_timeout', note: 'continuing to risk gate' });
+      activityLog({ stage: 'passive_timeout', ...sourceMeta });
     }
 
     // Conditional risk gate — fires only on a deterministic trigger (keyword/cross-repo).
