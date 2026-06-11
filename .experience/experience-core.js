@@ -395,11 +395,29 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   // Recall casts a wide net and wants depth → larger display budget than the
   // tight passive-hint budget (which would drop whole entries).
   const budgetFor = (i) => (recallMode ? (COLLECTIONS[i].recallBudgetChars || COLLECTIONS[i].budgetChars) : COLLECTIONS[i].budgetChars);
-  const lines = [
-    ..._format.applyBudget(_format.formatPoints(r0, fmtOpts), budgetFor(0)),
-    ..._format.applyBudget(_format.formatPoints(r1, fmtOpts), budgetFor(1)),
-    ..._format.applyBudget(_format.formatPoints(r2, fmtOpts), budgetFor(2)),
-  ];
+  let lines;
+  if (recallMode) {
+    // Active recall ranks by relevance ACROSS collections. A deliberate query
+    // ("storyflow chapter pagination …") wants the most semantically-relevant
+    // entries first, wherever they live. The passive per-leg order
+    // (principles → behavioral → selfqa) otherwise buries high-cosine selfqa
+    // matches beneath low-cosine generic behavioral/principle entries — verified
+    // live: storyflow selfqa scored 0.61-0.63 but printed AFTER behavioral
+    // entries at 0.43-0.53 because selfqa is the last leg. Merge, sort by the
+    // raw-cosine display score (preserveOrder set _effectiveScore = p.score for
+    // recall), then apply ONE combined budget so the strongest matches lead.
+    const merged = [...r0, ...r1, ...r2].sort(
+      (a, b) => (b._effectiveScore ?? b.score ?? 0) - (a._effectiveScore ?? a.score ?? 0),
+    );
+    const combinedBudget = budgetFor(0) + budgetFor(1) + budgetFor(2);
+    lines = _format.applyBudget(_format.formatPoints(merged, fmtOpts), combinedBudget);
+  } else {
+    lines = [
+      ..._format.applyBudget(_format.formatPoints(r0, fmtOpts), budgetFor(0)),
+      ..._format.applyBudget(_format.formatPoints(r1, fmtOpts), budgetFor(1)),
+      ..._format.applyBudget(_format.formatPoints(r2, fmtOpts), budgetFor(2)),
+    ];
+  }
 
   try {
     const allIds = [...r0, ...r1, ...r2].map(p => p.id).filter(Boolean);
