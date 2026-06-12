@@ -268,12 +268,25 @@ test('toWireExperience: shapes the /api/import-memory payload', () => {
 
 // --- adapter-registry extensibility ---
 
-test('stub adapters (codex) enumerate nothing', () => {
-  for (const rt of ['codex']) {
-    const a = mi.ADAPTERS.find((x) => x.runtime === rt);
-    assert.ok(a, `adapter registered: ${rt}`);
-    assert.deepEqual(a.enumerate('/any'), []);
-    assert.equal(a.parse('/any/file.md'), null);
+test('stubAdapter enumerates nothing and parses to null', () => {
+  const a = mi.stubAdapter('future-runtime');
+  assert.equal(a.runtime, 'future-runtime');
+  assert.deepEqual(a.enumerate('/any'), []);
+  assert.equal(a.parse('/any/file.md'), null);
+});
+
+test('scan: codex adapter finds memory files', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mi-codex-'));
+  const mem = path.join(home, '.codex', 'projects', 'testproj', 'memory');
+  fs.mkdirSync(mem, { recursive: true });
+  fs.writeFileSync(path.join(mem, 'feedback_a.md'), `---\nname: fb-a\ntype: feedback\ndescription: rule A\n---\nbody A`);
+  try {
+    const records = mi.scanMemorySources({ homeDir: home, runtimes: ['codex'] });
+    assert.equal(records.length, 1);
+    assert.equal(records[0].runtime, 'codex');
+    assert.equal(records[0].body, 'body A');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
   }
 });
 
@@ -362,6 +375,59 @@ test('scan: gemini adapter parses MEMORY.md file correctly', () => {
     assert.equal(records[2].name, 'Coordinate System (UI vs Store)');
     assert.ok(records[2].body.includes('Store (Absolute)'));
     assert.ok(records[2].body.includes('Gantt UI (Relative)'));
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('parseMemoryMd: inline [type] marker overrides the default project tier', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mi-mem-type-'));
+  const mem = path.join(home, '.codex', 'projects', 'testproj', 'memory');
+  fs.mkdirSync(mem, { recursive: true });
+  fs.writeFileSync(
+    path.join(mem, 'MEMORY.md'),
+    `## Rules\n- **[feedback] Library-first**: prefer the shared lib over a local copy.\n- **Plain Lesson**: a project-scoped note.\n- [user] runs on Windows/PowerShell.\n`,
+  );
+  try {
+    const records = mi.scanMemorySources({ homeDir: home, runtimes: ['codex'] });
+    assert.equal(records.length, 3);
+    // [feedback] marker stripped from name, type promoted to feedback.
+    assert.equal(records[0].name, 'Library-first');
+    assert.equal(records[0].type, 'feedback');
+    // No marker → default project.
+    assert.equal(records[1].name, 'Plain Lesson');
+    assert.equal(records[1].type, 'project');
+    // Non-bold [user] marker stripped from name AND description.
+    assert.equal(records[2].type, 'user');
+    assert.ok(!records[2].name.startsWith('[user]'));
+    assert.ok(!records[2].description.includes('[user]'));
+    // The feedback bullet maps to the T1 behavioral collection; user is skipped.
+    const fb = mi.mapMemoryToExperience(records[0]);
+    assert.equal(fb.tier, 1);
+    assert.equal(fb.collection, mi.BEHAVIORAL_COLLECTION);
+    assert.equal(mi.mapMemoryToExperience(records[2]), null); // type=user → skipped
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('parseMemoryMd: numbered bullets are parsed and duplicate names de-duped', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mi-mem-num-'));
+  const mem = path.join(home, '.codex', 'projects', 'testproj', 'memory');
+  fs.mkdirSync(mem, { recursive: true });
+  fs.writeFileSync(
+    path.join(mem, 'MEMORY.md'),
+    `## Steps\n1. **Build**: run the build.\n2) **Build**: run it again.\n`,
+  );
+  try {
+    const records = mi.scanMemorySources({ homeDir: home, runtimes: ['codex'] });
+    assert.equal(records.length, 2); // numbered `1.` and `2)` both parsed
+    assert.equal(records[0].name, 'Build');
+    assert.equal(records[1].name, 'Build #2'); // collision de-duped, not clobbered
+    // Distinct names → distinct stableIds → no upsert clobber.
+    const id0 = mi.stableId(records[0].runtime, records[0].projectSlug, records[0].name);
+    const id1 = mi.stableId(records[1].runtime, records[1].projectSlug, records[1].name);
+    assert.notEqual(id0, id1);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
