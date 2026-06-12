@@ -176,57 +176,72 @@ function dirSlugToProjectSlug(dirSlug) {
 
 // --- adapters ---
 
-const claudeAdapter = {
-  runtime: 'claude',
-  enumerate(homeDir) {
-    const projectsDir = path.join(homeDir, '.claude', 'projects');
-    const out = [];
-    let slugs;
-    try { slugs = fs.readdirSync(projectsDir, { withFileTypes: true }); }
-    catch (err) {
-      log('debug', 'memory_import_enumerate_skip', { runtime: 'claude', dir: projectsDir, error: err?.message });
-      return out;
-    }
-    for (const ent of slugs) {
-      if (!ent.isDirectory()) continue;
-      const memDir = path.join(projectsDir, ent.name, 'memory');
-      let files;
-      try { files = fs.readdirSync(memDir); } catch { continue; }
-      for (const f of files) {
-        if (!f.endsWith('.md') || f === 'MEMORY.md') continue;
-        const file = path.join(memDir, f);
-        try { out.push({ file, mtimeMs: fs.statSync(file).mtimeMs }); }
-        catch (err) { log('debug', 'memory_import_stat_fail', { file, error: err?.message }); }
+function createStandardAdapter(runtime, relativeProjectsPath) {
+  return {
+    runtime,
+    enumerate(homeDir) {
+      const projectsDir = path.join(homeDir, ...relativeProjectsPath);
+      const out = [];
+      let slugs;
+      try {
+        slugs = fs.readdirSync(projectsDir, { withFileTypes: true });
+      } catch (err) {
+        log('debug', 'memory_import_enumerate_skip', { runtime, dir: projectsDir, error: err?.message });
+        return out;
       }
-    }
-    return out;
-  },
-  parse(file) {
-    let raw;
-    try { raw = fs.readFileSync(file, 'utf8'); }
-    catch (err) { log('warn', 'memory_import_read_fail', { file, error: err?.message }); return null; }
-    const { frontmatter, body } = parseFrontmatter(raw);
-    const name = frontmatter.name || path.basename(file, '.md');
-    const type = (frontmatter.type || '').toLowerCase() || null;
-    const description = frontmatter.description || name;
-    if (!body) { log('debug', 'memory_import_empty_body', { file }); return null; }
-    // Runbook marker: a memory file declares itself a procedure index via
-    // `metadata.node_type: runbook` (flattened to frontmatter.node_type) plus an
-    // optional `derivedFromId` list of the atomic entry ids it stitches. These
-    // ride through mapMemoryToExperience → qa → buildStorePayload's nodeKind /
-    // derivedFromId fields (createdFrom stays seed-memory-import).
-    const nodeKind = String(frontmatter.node_type || '').toLowerCase() === 'runbook' ? 'runbook' : null;
-    const derivedFromId = parseIdList(frontmatter.derivedFromId);
-    // dirSlug = parent of the memory/ dir
-    const dirSlug = path.basename(path.dirname(path.dirname(file)));
-    const projectSlug = dirSlugToProjectSlug(dirSlug);
-    return { runtime: 'claude', name, type, description, body, projectSlug, file, nodeKind, derivedFromId };
-  },
-};
+      for (const ent of slugs) {
+        if (!ent.isDirectory()) continue;
+        const memDir = path.join(projectsDir, ent.name, 'memory');
+        let files;
+        try {
+          files = fs.readdirSync(memDir);
+        } catch {
+          continue;
+        }
+        for (const f of files) {
+          if (!f.endsWith('.md') || f === 'MEMORY.md') continue;
+          const file = path.join(memDir, f);
+          try {
+            out.push({ file, mtimeMs: fs.statSync(file).mtimeMs });
+          } catch (err) {
+            log('debug', 'memory_import_stat_fail', { file, error: err?.message });
+          }
+        }
+      }
+      return out;
+    },
+    parse(file) {
+      let raw;
+      try {
+        raw = fs.readFileSync(file, 'utf8');
+      } catch (err) {
+        log('warn', 'memory_import_read_fail', { file, error: err?.message });
+        return null;
+      }
+      const { frontmatter, body } = parseFrontmatter(raw);
+      const name = frontmatter.name || path.basename(file, '.md');
+      const type = (frontmatter.type || '').toLowerCase() || null;
+      const description = frontmatter.description || name;
+      if (!body) {
+        log('debug', 'memory_import_empty_body', { file });
+        return null;
+      }
+      const nodeKind = String(frontmatter.node_type || '').toLowerCase() === 'runbook' ? 'runbook' : null;
+      const derivedFromId = parseIdList(frontmatter.derivedFromId);
+      const dirSlug = path.basename(path.dirname(path.dirname(file)));
+      const projectSlug = dirSlugToProjectSlug(dirSlug);
+      return { runtime, name, type, description, body, projectSlug, file, nodeKind, derivedFromId };
+    },
+  };
+}
+
+const claudeAdapter = createStandardAdapter('claude', ['.claude', 'projects']);
+const geminiAdapter = createStandardAdapter('gemini', ['.gemini', 'projects']);
+const antigravityAdapter = createStandardAdapter('antigravity', ['.gemini', 'antigravity', 'projects']);
 
 // Stub adapters — registered so the registry/CLI already cover these runtimes;
 // they enumerate nothing until a real parser is added (Codex format is untyped/
-// semi-raw → deferred; Gemini/Antigravity produce no curated memory today).
+// semi-raw → deferred).
 function stubAdapter(runtime) {
   return {
     runtime,
@@ -237,9 +252,9 @@ function stubAdapter(runtime) {
 
 const ADAPTERS = [
   claudeAdapter,
+  geminiAdapter,
+  antigravityAdapter,
   stubAdapter('codex'),
-  stubAdapter('gemini'),
-  stubAdapter('antigravity'),
 ];
 
 // --- core (runtime-agnostic) ---

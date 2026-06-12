@@ -268,12 +268,42 @@ test('toWireExperience: shapes the /api/import-memory payload', () => {
 
 // --- adapter-registry extensibility ---
 
-test('stub adapters (codex/gemini/antigravity) enumerate nothing', () => {
-  for (const rt of ['codex', 'gemini', 'antigravity']) {
+test('stub adapters (codex) enumerate nothing', () => {
+  for (const rt of ['codex']) {
     const a = mi.ADAPTERS.find((x) => x.runtime === rt);
     assert.ok(a, `adapter registered: ${rt}`);
     assert.deepEqual(a.enumerate('/any'), []);
     assert.equal(a.parse('/any/file.md'), null);
+  }
+});
+
+test('scan: gemini adapter finds memory files', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mi-gemini-'));
+  const mem = path.join(home, '.gemini', 'projects', 'testproj', 'memory');
+  fs.mkdirSync(mem, { recursive: true });
+  fs.writeFileSync(path.join(mem, 'feedback_a.md'), `---\nname: fb-a\ntype: feedback\ndescription: rule A\n---\nbody A`);
+  try {
+    const records = mi.scanMemorySources({ homeDir: home, runtimes: ['gemini'] });
+    assert.equal(records.length, 1);
+    assert.equal(records[0].runtime, 'gemini');
+    assert.equal(records[0].body, 'body A');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('scan: antigravity adapter finds memory files', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mi-antigravity-'));
+  const mem = path.join(home, '.gemini', 'antigravity', 'projects', 'testproj', 'memory');
+  fs.mkdirSync(mem, { recursive: true });
+  fs.writeFileSync(path.join(mem, 'feedback_a.md'), `---\nname: fb-a\ntype: feedback\ndescription: rule A\n---\nbody A`);
+  try {
+    const records = mi.scanMemorySources({ homeDir: home, runtimes: ['antigravity'] });
+    assert.equal(records.length, 1);
+    assert.equal(records[0].runtime, 'antigravity');
+    assert.equal(records[0].body, 'body A');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
   }
 });
 
