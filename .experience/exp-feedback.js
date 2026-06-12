@@ -99,6 +99,15 @@ async function main() {
   try {
     const result = await sendFeedback(parsed.payload);
     console.log(JSON.stringify(result, null, 2));
+    // Mirror the verdict locally (op:feedback) so the session-end nudge + forensics
+    // can compute unrated-recall debt (recalled ids minus fed-back ids). Best-effort.
+    try {
+      const { activityLog, buildFeedbackEvent } = require('./src/activity.js');
+      const pid = result?.resolvedId || parsed.payload.pointId;
+      activityLog(buildFeedbackEvent(pid, parsed.payload.collection, parsed.payload.verdict, parsed.payload.reason || null));
+    } catch (err) {
+      if (process.env.EXP_FEEDBACK_DEBUG) console.error(`[exp-feedback] local activity mirror failed: ${err?.message}`);
+    }
   } catch (error) {
     console.error(`exp-feedback failed: ${error.message}`);
     process.exit(1);

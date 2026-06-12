@@ -57,6 +57,20 @@ function buildRecallEvent(query, meta = {}, entries = []) {
   };
 }
 
+// Build the activity row for a feedback verdict (op:'feedback'). Pure (no I/O).
+// Pairs with buildRecallEvent: the session-end nudge / forensics compute unrated
+// debt as recalled surfacedIds minus fed-back pointIds. verdict is the wire form
+// (FOLLOWED|IGNORED|IRRELEVANT); reason is only present for IRRELEVANT (noise).
+function buildFeedbackEvent(pointId, collection, verdict, reason = null) {
+  return {
+    op: 'feedback',
+    pointId: String(pointId || ''),
+    collection: collection || null,
+    verdict: String(verdict || '').toUpperCase(),
+    ...(reason ? { reason: String(reason) } : {}),
+  };
+}
+
 function logMistakeSeen(mistakes, projectPath) {
   if (!Array.isArray(mistakes) || mistakes.length === 0) return;
   const counts = new Map();
@@ -75,5 +89,6 @@ module.exports = {
   logCostCall,
   logMistakeSeen,
   buildRecallEvent,
+  buildFeedbackEvent,
   ACTIVITY_LOG,
 };
