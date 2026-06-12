@@ -61,8 +61,9 @@ Full workflow, verdict table, and the noise decision tree:
 To document new lessons, core architectural decisions, specialized UI/UX workflows, or bug fixes from this session, you MUST write/update the workspace memory before you finish the task:
 - **For Gemini CLI**: Append or update bullet points under headings in `~/.gemini/projects/<project-slug>/memory/MEMORY.md`.
 - **For Antigravity**: Append or update bullet points under headings in `~/.gemini/antigravity/projects/<project-slug>/memory/MEMORY.md`.
+- **For Codex CLI**: Append or update bullet points under headings in `~/.codex/projects/<project-slug>/memory/MEMORY.md`.
 - **For Claude Code**: Create/update individual markdown files under `~/.claude/projects/<project-slug>/memory/<name>.md` with YAML frontmatter (fields: `name`, `type: feedback|project`, `description`).
-*Always create the parent directories if they do not exist. Write memories to ensure the team can automatically sync them.*
+*In a single-file MEMORY.md a bullet defaults to a project-scoped lesson; prefix the label with `[feedback]` for a behavioral rule/correction (e.g. `- **[feedback] Library-first**: …`). Dash, asterisk and numbered (`1.`) bullets are all parsed. Always create the parent directories if they do not exist. Write memories to ensure the team can automatically sync them.*
 <!-- experience-engine:end -->'
 
 

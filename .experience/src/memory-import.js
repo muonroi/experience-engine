@@ -9,10 +9,13 @@
  * bypass), upsert-by-stable-id, mtime-incremental.
  *
  * EXTENSIBILITY IS THE POINT: every runtime is one self-contained MemoryAdapter.
- * Adding Codex/Gemini/Antigravity later = append one adapter object to ADAPTERS;
- * the core (scan/map/store/CLI) is runtime-agnostic. Only Claude has curated
- * memory on disk today (Codex format is untyped/semi-raw → deferred; Gemini &
- * Antigravity produce none) so they are registered as no-op stub adapters.
+ * Adding a runtime = append one adapter object to ADAPTERS; the core
+ * (scan/map/store/CLI) is runtime-agnostic. Claude, Gemini, Antigravity and Codex
+ * all import curated memory from `~/.<runtime>/…/projects/<slug>/memory/` — a
+ * convention the agent-instruction injector teaches each agent to write to. Claude
+ * uses per-file frontmatter (`<name>.md`); the others use a single MEMORY.md whose
+ * bullets carry optional inline `[type]` tags. `stubAdapter` remains for any future
+ * runtime that has no curated memory on disk yet.
  *
  *   MemoryAdapter = {
  *     runtime: string,
@@ -109,6 +112,19 @@ function extractWhy(body) {
   return m ? m[1].trim().replace(/\s+/g, ' ') : null;
 }
 
+// A MEMORY.md bullet may opt out of the default `project` tiering with a leading
+// `[type]` marker (e.g. `- **[feedback] Library-first**: …` or `- [user] …`).
+// Only the four TYPE_ROUTING keys are honored; anything else stays inline text.
+const INLINE_TYPE_RE = /^\[(feedback|project|user|reference)\]\s*/i;
+
+/** Split a leading `[type]` marker off a bullet label → { type|null, label }. */
+function extractInlineType(label) {
+  const text = String(label || '');
+  const m = text.match(INLINE_TYPE_RE);
+  if (!m) return { type: null, label: text };
+  return { type: m[1].toLowerCase(), label: text.slice(m[0].length).trim() };
+}
+
 // --- Claude dir-slug → project slug ---
 
 /**
@@ -176,7 +192,14 @@ function dirSlugToProjectSlug(dirSlug) {
 
 // --- adapters ---
 
-/** Parse a single MEMORY.md file into multiple experiences (one per top-level bullet point). */
+/**
+ * Parse a single MEMORY.md file into multiple experiences (one per top-level
+ * bullet). Recognizes dash/asterisk AND numbered (`1.` / `1)`) bullets; an
+ * optional leading `[type]` marker on the label overrides the default `project`
+ * tiering (feedback → T1). Names are de-duplicated within the file (`Foo`,
+ * `Foo #2`, …) so two same-labelled bullets don't collide on stableId and
+ * silently clobber each other.
+ */
 function parseMemoryMd(raw, file, runtime, projectSlug) {
   const lines = raw.split(/\r?\n/);
   const items = [];
@@ -202,24 +225,29 @@ function parseMemoryMd(raw, file, runtime, projectSlug) {
       continue;
     }
 
-    const bulletMatch = line.match(/^[-*]\s+(.*)$/);
+    const bulletMatch = line.match(/^(?:[-*]|\d+[.)])\s+(.*)$/);
     if (bulletMatch) {
       if (currentItem) {
         items.push(currentItem);
       }
       const content = bulletMatch[1].trim();
       const boldMatch = content.match(/^\*\*([^*]+)\*\*:\s*(.*)$/);
-      let name = '';
+      let rawLabel = '';
       let description = '';
       if (boldMatch) {
-        name = boldMatch[1].trim();
+        rawLabel = boldMatch[1].trim();
         description = boldMatch[2].trim();
       } else {
-        name = content.slice(0, 40);
+        rawLabel = content;
         description = content;
       }
+      const { type: inlineType, label } = extractInlineType(rawLabel);
+      const name = boldMatch ? label : label.slice(0, 40);
+      // For a non-bold bullet the marker also sits in the description text — drop it.
+      if (!boldMatch && inlineType) description = label;
       currentItem = {
         name,
+        type: inlineType,
         description: currentSection ? `${currentSection} - ${description}` : description,
         bodyLines: [line],
       };
@@ -239,14 +267,20 @@ function parseMemoryMd(raw, file, runtime, projectSlug) {
     items.push(currentItem);
   }
 
+  const seenNames = new Map();
   return items.map((item) => {
     const body = item.bodyLines.join('\n').trim();
-    const type = 'project';
+    // Untyped bullet → project-scoped lesson; an inline `[type]` marker overrides.
+    const type = item.type || 'project';
+    // De-dupe identical labels within this file so stableId stays unique.
+    const seen = seenNames.get(item.name) || 0;
+    seenNames.set(item.name, seen + 1);
+    const name = seen > 0 ? `${item.name} #${seen + 1}` : item.name;
     return {
       runtime,
-      name: item.name,
+      name,
       type,
-      description: item.description || item.name,
+      description: item.description || name,
       body,
       projectSlug,
       file,
@@ -324,10 +358,13 @@ function createStandardAdapter(runtime, relativeProjectsPath, opts = {}) {
 const claudeAdapter = createStandardAdapter('claude', ['.claude', 'projects'], { excludeMemoryMd: true });
 const geminiAdapter = createStandardAdapter('gemini', ['.gemini', 'projects']);
 const antigravityAdapter = createStandardAdapter('antigravity', ['.gemini', 'antigravity', 'projects']);
+// Codex's auto-generated memory under `~/.codex/memories/` is semi-raw and global
+// (no per-project scope); we instead import the per-project curated MEMORY.md the
+// agent-instruction injector teaches Codex to write under `~/.codex/projects/<slug>/`.
+const codexAdapter = createStandardAdapter('codex', ['.codex', 'projects']);
 
-// Stub adapters — registered so the registry/CLI already cover these runtimes;
-// they enumerate nothing until a real parser is added (Codex format is untyped/
-// semi-raw → deferred).
+// Stub adapter — registered for any future runtime that has no curated memory on
+// disk yet; it enumerates nothing until a real parser/path is added.
 function stubAdapter(runtime) {
   return {
     runtime,
@@ -340,7 +377,7 @@ const ADAPTERS = [
   claudeAdapter,
   geminiAdapter,
   antigravityAdapter,
-  stubAdapter('codex'),
+  codexAdapter,
 ];
 
 // --- core (runtime-agnostic) ---
