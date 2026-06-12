@@ -85,6 +85,7 @@ if [ "$SYNC_ONLY" = "true" ]; then
   fi
   # Jump straight to session sync
   BULK_EXTRACT="$REPO_DIR/.experience/tools/bulk-extract.js"
+  IMPORT_MEMORY="$REPO_DIR/.experience/tools/import-memory.js"
   if [ ! -f "$BULK_EXTRACT" ]; then
     echo "[upgrade] bulk-extract.js not found — run full upgrade first." >&2
     exit 1
@@ -92,9 +93,18 @@ if [ "$SYNC_ONLY" = "true" ]; then
   step "Syncing agent sessions → brain (max $SYNC_MAX)..."
   if [ "$DRY_RUN" = "true" ]; then
     echo "  (dry-run) node $BULK_EXTRACT --max $SYNC_MAX --max-age 365d --dry-run"
+    if [ -f "$IMPORT_MEMORY" ]; then
+      echo "  (dry-run) node $IMPORT_MEMORY --dry-run"
+    fi
     exit 0
   fi
   node "$BULK_EXTRACT" --max "$SYNC_MAX" --max-age 365d
+  if [ -f "$IMPORT_MEMORY" ]; then
+    step "Syncing curated agent memory → brain..."
+    node "$IMPORT_MEMORY" || {
+      echo "[upgrade] Curated memory import had errors (non-fatal)."
+    }
+  fi
   # Write sync timestamp (use node os.homedir for correct Windows path)
   node -e "const p=require('path').join(require('os').homedir(),'.experience','.last-sync.json');require('fs').writeFileSync(p,JSON.stringify({ts:new Date().toISOString(),sessions:$SYNC_MAX,source:'upgrade.sh --sync-only'}))"
   step "Session sync complete."
@@ -177,12 +187,19 @@ bash "$DELEGATE" ${EXTRA_ARGS+"${EXTRA_ARGS[@]}"}
 # Extract new experiences from local Claude/Codex/Gemini sessions into brain.
 # Incremental — marker tracks which sessions already processed.
 BULK_EXTRACT="$REPO_DIR/.experience/tools/bulk-extract.js"
+IMPORT_MEMORY="$REPO_DIR/.experience/tools/import-memory.js"
 if [ "$DO_SYNC" = "true" ] && [ -f "$BULK_EXTRACT" ]; then
   step "Syncing agent sessions → brain (max $SYNC_MAX)..."
   if command -v node >/dev/null 2>&1; then
     node "$BULK_EXTRACT" --max "$SYNC_MAX" --max-age 365d || {
       echo "[upgrade] Session sync had errors (non-fatal — upgrade still succeeded)."
     }
+    if [ -f "$IMPORT_MEMORY" ]; then
+      step "Syncing curated agent memory → brain..."
+      node "$IMPORT_MEMORY" || {
+        echo "[upgrade] Curated memory import had errors (non-fatal)."
+      }
+    fi
     # Write sync timestamp for health-check staleness warning
     node -e "const p=require('path').join(require('os').homedir(),'.experience','.last-sync.json');require('fs').writeFileSync(p,JSON.stringify({ts:new Date().toISOString(),sessions:$SYNC_MAX,source:'upgrade.sh'}))" 2>/dev/null || true
   else
