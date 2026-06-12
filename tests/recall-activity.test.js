@@ -60,3 +60,27 @@ test('buildRecallEvent: tolerates missing meta and entries args', () => {
   assert.equal(ev.sourceSession, null);
   assert.deepEqual(ev.surfacedIds, []);
 });
+
+// ─── op:'feedback' mirror (recall-feedback gate, Layer 2) ────────────────────
+const { buildFeedbackEvent } = require('../.experience/src/activity.js');
+
+test('buildFeedbackEvent: followed/ignored shape (no reason)', () => {
+  const ev = buildFeedbackEvent('aaa', 'experience-behavioral', 'FOLLOWED');
+  assert.equal(ev.op, 'feedback');
+  assert.equal(ev.pointId, 'aaa');
+  assert.equal(ev.collection, 'experience-behavioral');
+  assert.equal(ev.verdict, 'FOLLOWED');
+  assert.ok(!('reason' in ev));
+});
+
+test('buildFeedbackEvent: noise carries the reason and upper-cases the verdict', () => {
+  const ev = buildFeedbackEvent('bbb', 'experience-selfqa', 'irrelevant', 'wrong_repo');
+  assert.equal(ev.verdict, 'IRRELEVANT');
+  assert.equal(ev.reason, 'wrong_repo');
+});
+
+test('buildFeedbackEvent: null collection when missing', () => {
+  const ev = buildFeedbackEvent('ccc', null, 'IGNORED');
+  assert.equal(ev.collection, null);
+  assert.ok(!('reason' in ev));
+});
