@@ -332,3 +332,38 @@ test('extensibility: a new adapter flows through scan + map unchanged', () => {
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+test('scan: gemini adapter parses MEMORY.md file correctly', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mi-gemini-mem-'));
+  const mem = path.join(home, '.gemini', 'projects', 'testproj', 'memory');
+  fs.mkdirSync(mem, { recursive: true });
+  const mdContent = `# eBerth Planner Workspace Memory
+
+## Core Architectural & Domain Decisions
+- **Tech Stack**: Angular 21, PixiJS (for 60fps Gantt rendering).
+- **Port Area Isolation**: Tab-based Port Area viewing.
+
+## Specialized UI/UX Workflows
+- **Coordinate System (UI vs Store)**:
+  - **Store (Absolute)**: fromMeterMark and toMeterMark.
+  - **Gantt UI (Relative)**: relative X coordinates.
+`;
+  fs.writeFileSync(path.join(mem, 'MEMORY.md'), mdContent);
+  try {
+    const records = mi.scanMemorySources({ homeDir: home, runtimes: ['gemini'] });
+    assert.equal(records.length, 3);
+    
+    assert.equal(records[0].name, 'Tech Stack');
+    assert.equal(records[0].description, 'Core Architectural & Domain Decisions - Angular 21, PixiJS (for 60fps Gantt rendering).');
+    assert.equal(records[0].body, '- **Tech Stack**: Angular 21, PixiJS (for 60fps Gantt rendering).');
+    
+    assert.equal(records[1].name, 'Port Area Isolation');
+    
+    assert.equal(records[2].name, 'Coordinate System (UI vs Store)');
+    assert.ok(records[2].body.includes('Store (Absolute)'));
+    assert.ok(records[2].body.includes('Gantt UI (Relative)'));
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+

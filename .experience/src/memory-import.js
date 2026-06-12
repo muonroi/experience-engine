@@ -176,7 +176,87 @@ function dirSlugToProjectSlug(dirSlug) {
 
 // --- adapters ---
 
-function createStandardAdapter(runtime, relativeProjectsPath) {
+/** Parse a single MEMORY.md file into multiple experiences (one per top-level bullet point). */
+function parseMemoryMd(raw, file, runtime, projectSlug) {
+  const lines = raw.split(/\r?\n/);
+  const items = [];
+  let currentSection = '';
+  let currentItem = null;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (currentItem) {
+        currentItem.bodyLines.push(line);
+      }
+      continue;
+    }
+
+    const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      if (currentItem) {
+        items.push(currentItem);
+        currentItem = null;
+      }
+      currentSection = headingMatch[2].trim();
+      continue;
+    }
+
+    const bulletMatch = line.match(/^[-*]\s+(.*)$/);
+    if (bulletMatch) {
+      if (currentItem) {
+        items.push(currentItem);
+      }
+      const content = bulletMatch[1].trim();
+      const boldMatch = content.match(/^\*\*([^*]+)\*\*:\s*(.*)$/);
+      let name = '';
+      let description = '';
+      if (boldMatch) {
+        name = boldMatch[1].trim();
+        description = boldMatch[2].trim();
+      } else {
+        name = content.slice(0, 40);
+        description = content;
+      }
+      currentItem = {
+        name,
+        description: currentSection ? `${currentSection} - ${description}` : description,
+        bodyLines: [line],
+      };
+      continue;
+    }
+
+    if (currentItem && (/^\s+/.test(line) || line === '')) {
+      currentItem.bodyLines.push(line);
+    } else {
+      if (currentItem) {
+        items.push(currentItem);
+        currentItem = null;
+      }
+    }
+  }
+  if (currentItem) {
+    items.push(currentItem);
+  }
+
+  return items.map((item) => {
+    const body = item.bodyLines.join('\n').trim();
+    const type = 'project';
+    return {
+      runtime,
+      name: item.name,
+      type,
+      description: item.description || item.name,
+      body,
+      projectSlug,
+      file,
+      nodeKind: null,
+      derivedFromId: null,
+    };
+  });
+}
+
+function createStandardAdapter(runtime, relativeProjectsPath, opts = {}) {
   return {
     runtime,
     enumerate(homeDir) {
@@ -199,7 +279,8 @@ function createStandardAdapter(runtime, relativeProjectsPath) {
           continue;
         }
         for (const f of files) {
-          if (!f.endsWith('.md') || f === 'MEMORY.md') continue;
+          if (!f.endsWith('.md')) continue;
+          if (f === 'MEMORY.md' && opts.excludeMemoryMd) continue;
           const file = path.join(memDir, f);
           try {
             out.push({ file, mtimeMs: fs.statSync(file).mtimeMs });
@@ -218,6 +299,11 @@ function createStandardAdapter(runtime, relativeProjectsPath) {
         log('warn', 'memory_import_read_fail', { file, error: err?.message });
         return null;
       }
+      if (path.basename(file) === 'MEMORY.md') {
+        const dirSlug = path.basename(path.dirname(path.dirname(file)));
+        const projectSlug = dirSlugToProjectSlug(dirSlug);
+        return parseMemoryMd(raw, file, runtime, projectSlug);
+      }
       const { frontmatter, body } = parseFrontmatter(raw);
       const name = frontmatter.name || path.basename(file, '.md');
       const type = (frontmatter.type || '').toLowerCase() || null;
@@ -235,7 +321,7 @@ function createStandardAdapter(runtime, relativeProjectsPath) {
   };
 }
 
-const claudeAdapter = createStandardAdapter('claude', ['.claude', 'projects']);
+const claudeAdapter = createStandardAdapter('claude', ['.claude', 'projects'], { excludeMemoryMd: true });
 const geminiAdapter = createStandardAdapter('gemini', ['.gemini', 'projects']);
 const antigravityAdapter = createStandardAdapter('antigravity', ['.gemini', 'antigravity', 'projects']);
 
@@ -283,7 +369,15 @@ function scanMemorySources(opts = {}) {
       let rec;
       try { rec = adapter.parse(file); }
       catch (err) { log('warn', 'memory_import_parse_error', { runtime: adapter.runtime, file, error: err?.message }); continue; }
-      if (rec) records.push({ ...rec, mtimeMs });
+      if (rec) {
+        if (Array.isArray(rec)) {
+          for (const item of rec) {
+            records.push({ ...item, mtimeMs });
+          }
+        } else {
+          records.push({ ...rec, mtimeMs });
+        }
+      }
     }
   }
   return records;
