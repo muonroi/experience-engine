@@ -1,2 +1,18 @@
-# Force LF for shell scripts — CRLF breaks bash
+# Normalize line endings: store as LF in the repo, checkout as LF everywhere.
+# Prevents CRLF/LF churn from Windows/WSL editors.
+* text=auto eol=lf
+
+# Shell scripts must always be LF — CRLF breaks bash
 *.sh text eol=lf
+
+# Explicit binary types (never normalize)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.woff binary
+*.woff2 binary
