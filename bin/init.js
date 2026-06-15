@@ -58,6 +58,21 @@ const THIN_SAFE_SRC = [
   'surface-trigger.js',
   'signal-detector.js',
   'profile-model.js',
+  // Needed by the `sync` tools (bulk-extract / import-memory). All leaves or
+  // depend only on other thin-safe modules — verified dep closure, no brain pull.
+  'utils.js',
+  'query-builder.js',
+  'context.js',
+  'logger.js',
+  'memory-import.js',
+];
+
+// Sync tools copied into ~/.experience/tools so `experience-engine sync` works
+// on a pure thin-client install (no repo checkout). Both resolve their deps
+// from ~/.experience (expDir) / ../src — see import-memory.js + bulk-extract.js.
+const THIN_CLIENT_TOOLS = [
+  'bulk-extract.js',
+  'import-memory.js',
 ];
 
 const LOCAL_ONLY_FILES = [
@@ -304,9 +319,27 @@ function copyRuntime(installDir, log) {
       log('  ! src/config.js missing in package — triviality gate falls open to inline defaults');
     }
   }
+  // Sync tools → ~/.experience/tools/
+  const toolsDir = path.join(installDir, 'tools');
+  fs.mkdirSync(toolsDir, { recursive: true });
+  for (const f of THIN_CLIENT_TOOLS) {
+    const src = path.join(srcExp, 'tools', f);
+    if (fs.existsSync(src)) {
+      fs.copyFileSync(src, path.join(toolsDir, f));
+      copied += 1;
+    } else {
+      log(`  ! missing in package: .experience/tools/${f}`);
+    }
+  }
   if (process.platform !== 'win32') {
     for (const f of EXECUTABLES) {
       const p = path.join(installDir, f);
+      if (fs.existsSync(p)) {
+        try { fs.chmodSync(p, 0o755); } catch { /* best-effort */ }
+      }
+    }
+    for (const f of THIN_CLIENT_TOOLS) {
+      const p = path.join(toolsDir, f);
       if (fs.existsSync(p)) {
         try { fs.chmodSync(p, 0o755); } catch { /* best-effort */ }
       }
@@ -531,5 +564,6 @@ module.exports = {
   probeHealth,
   THIN_CLIENT_FILES,
   THIN_SAFE_SRC,
+  THIN_CLIENT_TOOLS,
   LOCAL_ONLY_FILES,
 };

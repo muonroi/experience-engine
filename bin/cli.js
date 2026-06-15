@@ -13,6 +13,7 @@ function usage(out = process.stdout) {
 
 Usage:
   experience-engine init [args...]
+  experience-engine sync [args...]
   experience-engine setup [args...]
   experience-engine setup-thin-client [args...]
   experience-engine sync-install [args...]
@@ -23,6 +24,8 @@ Usage:
 Commands:
   init                Cross-platform installer (no bash) — auto-detects a brain,
                       installs the thin client, and wires agent hooks. Start here.
+  sync                Feed the brain from this machine's agent history (no bash):
+                      extract sessions + import curated memory. Run periodically.
   setup               Run the full local install wizard (bash) from this package
   setup-thin-client   Convert the current machine into a thin client (bash)
   sync-install        Sync packaged runtime files into ~/.experience
@@ -37,6 +40,8 @@ function resolveCommand(command, args = []) {
   switch (command) {
     case 'init':
       return { cmd: process.execPath, args: [path.join(root, 'bin', 'init.js'), ...args] };
+    case 'sync':
+      return { cmd: process.execPath, args: [path.join(root, 'bin', 'sync.js'), ...args] };
     case 'setup':
       return { cmd: 'bash', args: [path.join(root, '.experience', 'setup.sh'), ...args] };
     case 'setup-thin-client':

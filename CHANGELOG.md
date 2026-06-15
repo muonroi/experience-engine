@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-15
+
+### Added
+- **2026-06-15:** `experience-engine sync` (`bin/sync.js`) — cross-platform,
+  zero-bash port of `upgrade.sh`'s session-sync step. Feeds the brain from this
+  machine's local agent history without a repo checkout or Git Bash:
+  `bulk-extract.js` (sessions → `POST /api/extract`) + `import-memory.js`
+  (curated `MEMORY.md` → `POST /api/import-memory`) + `.last-sync.json` marker.
+  Flags: `--max` (default 30), `--max-age` (default 365d), `--runtime`,
+  `--project`, `--sessions-only`, `--memory-only`, `--include-reference`,
+  `--reset-marker`, `--upgrade` (refresh runtime via `init --yes` first),
+  `--dry-run`, `-v`. Both tools are thin-client aware — they read
+  `~/.experience/config.json` and POST to the configured remote brain.
+- **2026-06-15:** `npx … init` now installs the sync tools and their verified
+  dependency closure (`bulk-extract.js`, `import-memory.js` into
+  `~/.experience/tools`; `src/{utils,query-builder,context,logger,memory-import}.js`
+  added to `THIN_SAFE_SRC`). Previously these shipped only with full `setup.sh`,
+  so an `npx`-installed thin client had no way to sync.
+
+### Fixed
+- **2026-06-15:** `import-memory.js` eagerly `require`d `src/evolution.js`
+  (which pulls the entire local brain — embedding/qdrant/sparse/brain-llm).
+  On a thin client `storeImportedExperience` is never called (transport=server),
+  but the eager require crashed the tool at load on installs that ship only the
+  thin runtime. Now lazy — loaded on first use in the direct-Qdrant branch only.
+  Verified: both sync tools run `--dry-run` to exit 0 in a thin-only environment
+  with `evolution.js` absent.
+
 ## [0.3.0] - 2026-06-15
 
 ### Added
