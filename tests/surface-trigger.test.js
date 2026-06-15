@@ -76,6 +76,22 @@ test('runTargetedRecall: null on recall throw (logged, not thrown)', async () =>
 });
 
 test('runTargetedRecall: null on timeout (recall hangs past budget)', async () => {
-  const expRecall = { recall: () => new Promise(() => {}) }; // never resolves
-  assert.equal(await st.runTargetedRecall('deploy', '/cwd', { timeoutMs: 30 }, { expRecall }), null);
+  // recall never settles, so the timeout inside _withTimeout must win -> null.
+  // That timeout timer is unref'd (correct for the real hook), so it alone does
+  // NOT keep the event loop alive: with nothing else pending, node drains the
+  // loop before the timer fires and node:test cancels the still-pending test
+  // ("Promise resolution is still pending but the event loop has already
+  // resolved" — node 22 reds CI). A ref'd keep-alive timer holds the loop open
+  // until the unref'd timeout fires; settle the recall promise on the way out.
+  let resolveSlow;
+  const slow = new Promise((resolve) => { resolveSlow = resolve; });
+  const expRecall = { recall: () => slow };
+  const keepAlive = setTimeout(() => {}, 200);
+  try {
+    assert.equal(await st.runTargetedRecall('deploy', '/cwd', { timeoutMs: 30 }, { expRecall }), null);
+  } finally {
+    clearTimeout(keepAlive);
+    resolveSlow();
+    await slow;
+  }
 });
