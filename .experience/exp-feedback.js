@@ -72,10 +72,17 @@ async function sendFeedback(payload, homeDir = os.homedir()) {
   const headers = { 'Content-Type': 'application/json' };
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
 
+  // Attach the caller's cwd so the server's deriveCallerMeta() can enrich
+  // lang/project_slug from the path. Without it, noiseContextHistory entries
+  // carry null lang/project and evolution Step 3d (scope-narrowing) can never
+  // fire — so every IRRELEVANT verdict falls through to destructive supersede
+  // instead of narrowing the entry's scope. cwd is the minimum context needed.
+  const body = { cwd: process.cwd(), ...payload };
+
   const res = await fetch(`${baseUrl}/api/feedback`, {
     method: 'POST',
     headers,
-    body: JSON.stringify(payload),
+    body: JSON.stringify(body),
   });
   const text = await res.text();
   let json = null;
