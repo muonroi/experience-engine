@@ -39,40 +39,55 @@ function loadConfig() {
   try { return JSON.parse(fs.readFileSync(CFG_PATH, 'utf8')); } catch { return {}; }
 }
 
-async function readStdin() {
-  return new Promise((resolve) => {
-    let buf = '';
-    process.stdin.on('data', (chunk) => { buf += chunk; });
-    process.stdin.on('end', () => resolve(buf));
-    process.stdin.on('error', () => resolve(''));
-    setTimeout(() => resolve(buf), 500);
-  });
-}
+// ── Exit discipline (Windows libuv safety) ─────────────────────────────────
+// NEVER call process.exit() on the main path. The fetch below uses an undici
+// keep-alive socket; calling process.exit() while that socket (or the stdin
+// handle) is mid-teardown trips a libuv assertion on Windows
+// (`!(handle->flags & UV_HANDLE_CLOSING)`, src/win/async.c:76) and crashes the
+// hook child. Instead set process.exitCode and let the event loop drain so the
+// socket/stdin handles close on their own. We also send `Connection: close`
+// (same fix as remote-client.js) so the socket never lingers in the pool.
+// process.exit() survives ONLY in the watchdog timers, which fire only when
+// stdin never closes (no socket in flight at that point).
+const t = setTimeout(() => {
+  debugLog({ stage: 'timeout_waiting_for_stdin' });
+  process.exit(0);
+}, 3000);
+const hardExit = setTimeout(() => {
+  debugLog({ stage: 'hard_exit' });
+  process.exit(0);
+}, 5000);
+hardExit.unref();
 
-(async () => {
-  const raw = await readStdin();
-  if (!raw) { debugLog({ stage: 'no_stdin' }); process.exit(0); }
+let raw = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => { raw += chunk; });
+process.stdin.on('error', () => { clearTimeout(t); process.exitCode = 0; });
+process.stdin.on('end', async () => {
+  clearTimeout(t);
+
+  if (!raw) { debugLog({ stage: 'no_stdin' }); process.exitCode = 0; return; }
 
   let payload;
-  try { payload = JSON.parse(raw); } catch { debugLog({ stage: 'parse_error' }); process.exit(0); }
+  try { payload = JSON.parse(raw); } catch { debugLog({ stage: 'parse_error' }); process.exitCode = 0; return; }
 
   const toolCalls = Array.isArray(payload.tool_calls) ? payload.tool_calls : [];
-  if (toolCalls.length === 0) { debugLog({ stage: 'empty_batch' }); process.exit(0); }
+  if (toolCalls.length === 0) { debugLog({ stage: 'empty_batch' }); process.exitCode = 0; return; }
 
   const cfg = loadConfig();
   const baseUrl = (cfg.serverBaseUrl || cfg.server?.baseUrl || 'http://localhost:8082').replace(/\/$/, '');
   const authToken = cfg.serverAuthToken || cfg.server?.authToken || '';
 
-  const firstWithFile = toolCalls.find((t) => t?.tool_input?.file_path);
+  const firstWithFile = toolCalls.find((tc) => tc?.tool_input?.file_path);
   const reprFilePath = firstWithFile?.tool_input?.file_path || null;
 
   const body = {
-    tools: toolCalls.map((t) => ({
-      tool_name: t.tool_name,
-      tool_input: t.tool_input,
-      tool_response_excerpt: typeof t.tool_response === 'string'
-        ? t.tool_response.slice(0, 400)
-        : (t.tool_response ? JSON.stringify(t.tool_response).slice(0, 400) : ''),
+    tools: toolCalls.map((tc) => ({
+      tool_name: tc.tool_name,
+      tool_input: tc.tool_input,
+      tool_response_excerpt: typeof tc.tool_response === 'string'
+        ? tc.tool_response.slice(0, 400)
+        : (tc.tool_response ? JSON.stringify(tc.tool_response).slice(0, 400) : ''),
     })),
     cwd: payload.cwd || process.cwd(),
     representativeFilePath: reprFilePath,
@@ -83,18 +98,25 @@ async function readStdin() {
 
   try {
     const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+    const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
     const resp = await fetch(`${baseUrl}/api/posttool-batch`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        // Close the socket per-request so undici keep-alive pooling can't leave
+        // one tearing down at exit (Windows libuv async.c:76 assertion).
+        Connection: 'close',
         ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
       },
       body: JSON.stringify(body),
       signal: ctrl.signal,
     });
-    clearTimeout(t);
-    if (!resp.ok) { debugLog({ stage: 'http_error', status: resp.status }); process.exit(0); }
+    clearTimeout(timer);
+    if (!resp.ok) {
+      debugLog({ stage: 'http_error', status: resp.status });
+      process.exitCode = 0;
+      return;
+    }
     const data = await resp.json();
     if (data?.hint && typeof data.hint === 'string') {
       process.stdout.write(data.hint);
@@ -105,5 +127,6 @@ async function readStdin() {
   } catch (err) {
     debugLog({ stage: 'error', message: err?.message || String(err) });
   }
-  process.exit(0);
-})();
+
+  process.exitCode = 0;
+});
