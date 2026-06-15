@@ -76,7 +76,10 @@ test('sendFeedback posts the parsed verdict payload', async () => {
   server.close();
 
   assert.equal(result.ok, true);
+  // cwd is attached so the server's deriveCallerMeta() can enrich lang/project
+  // for noiseContextHistory -> evolution Step 3d scope-narrowing.
   assert.deepEqual(received.body, {
+    cwd: process.cwd(),
     pointId: 'abcd1234',
     collection: 'experience-selfqa',
     verdict: 'IRRELEVANT',
