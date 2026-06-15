@@ -165,14 +165,17 @@ function computeStats(events) {
       }
     } else if (e.op === 'extract') {
       stats.extractSessions++;
-      stats.totalMistakes += (e.mistakes || 0);
+      // The extract op emits `experiences` (count of detected lessons), never a
+      // `mistakes` field — reading `e.mistakes` left totalMistakes permanently 0,
+      // which made "Patterns detected" read 0 and the extraction-rate divide-by-zero.
+      stats.totalMistakes += (e.experiences || 0);
       stats.totalStored += (e.stored || 0);
 
       // Per-project extract tracking
       if (!stats.projects[proj]) {
         stats.projects[proj] = { intercepts: 0, suggestions: 0, mistakes: 0, stored: 0 };
       }
-      stats.projects[proj].mistakes += (e.mistakes || 0);
+      stats.projects[proj].mistakes += (e.experiences || 0);
       stats.projects[proj].stored += (e.stored || 0);
     } else if (e.op === 'evolve') {
       stats.evolveCount++;
@@ -430,8 +433,8 @@ if (require.main === module) {
   console.log('Mistakes Avoided');
   printStat('Patterns detected:', String(stats.totalMistakes));
   printStat('Stored as lessons:', String(stats.totalStored),
-    `(${pct(stats.totalStored, stats.totalMistakes)} extraction rate)`);
-  printStat('Warnings ignored:', String(stats.totalMistakes - stats.totalStored));
+    stats.totalMistakes > 0 ? `(${pct(stats.totalStored, stats.totalMistakes)} extraction rate)` : '(no patterns this window)');
+  printStat('Warnings ignored:', String(Math.max(0, stats.totalMistakes - stats.totalStored)));
   if (stats.mistakeSeenCount > 0) {
     const topMistakes = Object.entries(stats.mistakeByType)
       .sort((a, b) => b[1] - a[1])
