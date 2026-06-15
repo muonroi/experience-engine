@@ -90,7 +90,13 @@ for MD_FILE in \
   fi
 
   # Replace an existing managed block (auto-migrates stale versions).
-  if grep -q 'experience-engine:start' "$MD_FILE" 2>/dev/null; then
+  # Detect the marker with a pure-bash substring test rather than grep: grep is
+  # absent on some minimal/Windows bash environments, where `grep -q` exits 127,
+  # the `if` silently takes the append branch, and the block is DUPLICATED on
+  # every run (breaks idempotency and bloats agent context). `$(<file)` +
+  # `${var#*needle}` needs no external tool.
+  MD_CONTENT="$(<"$MD_FILE")"
+  if [ "${MD_CONTENT#*experience-engine:start}" != "$MD_CONTENT" ]; then
     TMPFILE=$(mktemp 2>/dev/null) || { echo "  [inject] WARN: mktemp failed for $MD_FILE (skipped)" >&2; continue; }
     if awk '/<!-- experience-engine:start -->/{skip=1} /<!-- experience-engine:end -->/{skip=0; next} !skip' "$MD_FILE" > "$TMPFILE" \
        && printf '%s\n' "$EXP_INSTRUCTION_BLOCK" >> "$TMPFILE" \
