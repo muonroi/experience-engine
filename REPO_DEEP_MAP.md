@@ -42,8 +42,9 @@ Core operating modes:
 | Path | Purpose |
 |------|---------|
 | `bin/experience-engine.js` | Main npm CLI entry point |
-| `bin/cli.js` | CLI wrapper/helper; dispatches `init` to Node, other commands to bash |
-| `bin/init.js` | Cross-platform (no-bash) installer: auto-detects local/docker/remote brain, installs thin-client file set, writes `config.json`, wires hooks via `register-hooks.js`, injects agent MD block. Node port of `setup-thin-client.sh`; runs natively on Windows |
+| `bin/cli.js` | CLI wrapper/helper; dispatches `init` + `sync` to Node, other commands to bash |
+| `bin/init.js` | Cross-platform (no-bash) installer: auto-detects local/docker/remote brain, installs thin-client file set (+ `tools/{bulk-extract,import-memory}.js` and their `THIN_SAFE_SRC` closure), writes `config.json`, wires hooks via `register-hooks.js`, injects agent MD block. Node port of `setup-thin-client.sh`; runs natively on Windows |
+| `bin/sync.js` | Cross-platform (no-bash) port of `upgrade.sh --sync-only`: runs `tools/bulk-extract.js` (sessions → `/api/extract`) + `tools/import-memory.js` (curated `MEMORY.md` → `/api/import-memory`), writes `.last-sync.json`. Prefers installed `~/.experience/tools` copies, falls back to packaged. `--upgrade` re-runs `init --yes` first |
 | `.experience/setup.sh` | Interactive/full setup script |
 | `.experience/setup-thin-client.sh` | Thin-client bootstrap against a remote server |
 | `.experience/setup.ps1` | Windows setup path |

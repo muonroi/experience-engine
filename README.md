@@ -42,6 +42,31 @@ npx @muonroi/experience-engine init --server https://your-brain.example.com --to
 
 Add `--yes` for a non-interactive install. Windows is supported natively — no Git Bash required.
 
+### Keep the brain fed — `sync`
+
+`init` wires your agent so it learns *going forward*. To backfill the brain from this
+machine's existing agent history (and re-run it periodically), use `sync` — also
+cross-platform, no bash:
+
+```bash
+npx @muonroi/experience-engine sync
+```
+
+It extracts your Claude/Codex/Gemini **sessions** and imports curated **`MEMORY.md`**
+files into the configured brain (incremental — only new content each run). Useful flags:
+
+```bash
+npx @muonroi/experience-engine sync --max 100        # extract more sessions this run
+npx @muonroi/experience-engine sync --sessions-only  # skip curated-memory import
+npx @muonroi/experience-engine sync --memory-only    # only import MEMORY.md
+npx @muonroi/experience-engine sync --dry-run        # show what would be sent
+npx @muonroi/experience-engine sync --upgrade        # refresh the runtime first, then sync
+```
+
+This is the cross-platform equivalent of `bash upgrade.sh --sync-only` and honors your
+thin-client `config.json` (it POSTs to the configured remote brain). Run it on a schedule
+(cron / Task Scheduler) to keep the brain current.
+
 ### Self-host the brain (advanced)
 
 To run the full stack (Qdrant + Ollama + API) on your own machine:

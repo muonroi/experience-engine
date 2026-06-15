@@ -1,6 +1,6 @@
 {
   "name": "@muonroi/experience-engine",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "CLI installer and server runtime for Experience Engine",
   "license": "MIT",
   "type": "commonjs",
@@ -40,6 +40,8 @@
     ".experience/src/",
     ".experience/stop-extractor.js",
     ".experience/sync-install.sh",
+    ".experience/tools/bulk-extract.js",
+    ".experience/tools/import-memory.js",
     "tools/exp-demote.js",
     "tools/exp-dogfood-loop.js",
     "tools/exp-gates.js",

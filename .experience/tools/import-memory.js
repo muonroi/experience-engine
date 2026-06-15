@@ -30,8 +30,19 @@ const path = require('path');
 const os = require('os');
 
 const { scanMemorySources, mapMemoryToExperience, toWireExperience } = require('../src/memory-import');
-const { storeImportedExperience } = require('../src/evolution');
 const rc = require('../remote-client');
+
+// Lazy: evolution.js pulls the entire local brain (embedding/qdrant/sparse/
+// brain-llm/...). Thin clients (transport=server) never call storeImportedExperience,
+// so requiring it eagerly would crash at load on installs that ship only the
+// thin runtime. Load it on first use in the direct-qdrant branch.
+let _storeImportedExperience = null;
+function getStoreImportedExperience() {
+  if (!_storeImportedExperience) {
+    ({ storeImportedExperience: _storeImportedExperience } = require('../src/evolution'));
+  }
+  return _storeImportedExperience;
+}
 
 const expDir = path.join(os.homedir(), '.experience');
 const MARKER_PATH = path.join(expDir, '.memory-import-marker.json');
@@ -137,7 +148,7 @@ async function main() {
   } else {
     for (const { record, mapped } of work) {
       try {
-        const res = await storeImportedExperience(mapped.qa, { id: mapped.id, collection: mapped.collection, tier: mapped.tier, confidence: mapped.confidence, runtime: record.runtime });
+        const res = await getStoreImportedExperience()(mapped.qa, { id: mapped.id, collection: mapped.collection, tier: mapped.tier, confidence: mapped.confidence, runtime: record.runtime });
         if (res.stored) {
           marker.files[record.file] = { mtimeMs: record.mtimeMs, id: mapped.id, tier: mapped.tier, ts: new Date().toISOString() };
           stats.byTier[mapped.tier]++;
