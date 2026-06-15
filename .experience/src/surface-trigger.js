@@ -35,13 +35,22 @@ const _deps = {
 };
 
 function _withTimeout(promise, ms) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => {
-      const t = setTimeout(() => reject(new Error(`surface-trigger timeout ${ms}ms`)), ms);
-      if (t && typeof t.unref === 'function') t.unref();
-    }),
-  ]);
+  let timer;
+  let settleTimeout;
+  const timeoutP = new Promise((resolve, reject) => {
+    settleTimeout = resolve;
+    timer = setTimeout(() => reject(new Error(`surface-trigger timeout ${ms}ms`)), ms);
+    if (timer && typeof timer.unref === 'function') timer.unref();
+  });
+  // When the wrapped promise wins, the timeout branch was being abandoned —
+  // leaving a live (unref'd) timer AND a forever-pending promise per call. The
+  // pending promise trips node:test's "Promise resolution is still pending but
+  // the event loop has already resolved" check (reds CI on node 22). Clear the
+  // timer and settle the timeout promise once the race resolves, either way.
+  return Promise.race([promise, timeoutP]).finally(() => {
+    clearTimeout(timer);
+    settleTimeout();
+  });
 }
 
 /**
