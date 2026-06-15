@@ -13,6 +13,9 @@
  *   EXP_STOP                absolute path to stop-extractor.js
  *
  * Env vars (optional):
+ *   EXP_INTERCEPTOR_SESSION absolute path to interceptor-session.js (SessionStart)
+ *   EXP_INTERCEPTOR_BATCH   absolute path to posttool-batch-hook.js (PostToolBatch,
+ *                           Claude Code only)
  *   EXP_SELECTED_AGENTS     csv subset: claude,gemini,codex,opencode,antigravity
  *                           empty → all agents
  *   EXP_REGISTER_MODE       'full' (default) — patch any agent in selected list
@@ -39,6 +42,9 @@ const interceptorPrompt = process.env.EXP_INTERCEPTOR_PROMPT;
 // setup scripts and existing-only upgrades may not pass it, so callers without
 // it simply skip SessionStart wiring rather than failing.
 const interceptorSession = process.env.EXP_INTERCEPTOR_SESSION;
+// PostToolBatch hook (batch-level reflection hints). Optional + backward-
+// compatible: callers that don't pass it simply skip PostToolBatch wiring.
+const interceptorBatch = process.env.EXP_INTERCEPTOR_BATCH;
 const stop = process.env.EXP_STOP;
 const selected = (process.env.EXP_SELECTED_AGENTS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 const mode = (process.env.EXP_REGISTER_MODE || 'full').trim().toLowerCase();
@@ -98,6 +104,15 @@ const AGENTS = [
         cfg.hooks.SessionStart = cfg.hooks.SessionStart || [];
         if (!cfg.hooks.SessionStart.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor-session')))) {
           cfg.hooks.SessionStart.push({ hooks: [{ type:'command', command:`node "${interceptorSession}"`, timeout:5 }] });
+        }
+      }
+      // PostToolBatch fires after a batch of parallel tool calls resolves —
+      // aggregate-level reflection hints that only emerge across the whole
+      // batch. Claude Code-specific event; only wired when the path is provided.
+      if (interceptorBatch) {
+        cfg.hooks.PostToolBatch = cfg.hooks.PostToolBatch || [];
+        if (!cfg.hooks.PostToolBatch.some(h => (h.hooks||[]).some(e => e.command?.includes('posttool-batch-hook')))) {
+          cfg.hooks.PostToolBatch.push({ hooks: [{ type:'command', command:`node "${interceptorBatch}"`, timeout:5 }] });
         }
       }
       cfg.hooks.Stop = cfg.hooks.Stop || [];

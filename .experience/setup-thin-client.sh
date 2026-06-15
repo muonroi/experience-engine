@@ -170,6 +170,7 @@ THIN_CLIENT_FILES=(
   interceptor-session.js
   source-meta-enrich.js
   stop-extractor.js
+  posttool-batch-hook.js
   remote-client.js
   extract-compact.js
   exp-client-drain.js
@@ -196,6 +197,7 @@ chmod +x \
   "$INSTALL_DIR/interceptor-prompt.js" \
   "$INSTALL_DIR/interceptor-session.js" \
   "$INSTALL_DIR/stop-extractor.js" \
+  "$INSTALL_DIR/posttool-batch-hook.js" \
   "$INSTALL_DIR/remote-client.js" \
   "$INSTALL_DIR/extract-compact.js" \
   "$INSTALL_DIR/exp-client-drain.js" \
@@ -378,6 +380,7 @@ if [ -f "$INSTALL_DIR/register-hooks.js" ]; then
     EXP_INTERCEPTOR_POST="$(to_fwd_path "$INSTALL_DIR/interceptor-post.js")" \
     EXP_INTERCEPTOR_PROMPT="$(to_fwd_path "$INSTALL_DIR/interceptor-prompt.js")" \
     EXP_INTERCEPTOR_SESSION="$(to_fwd_path "$INSTALL_DIR/interceptor-session.js")" \
+    EXP_INTERCEPTOR_BATCH="$(to_fwd_path "$INSTALL_DIR/posttool-batch-hook.js")" \
     EXP_STOP="$(to_fwd_path "$INSTALL_DIR/stop-extractor.js")" \
     EXP_REGISTER_MODE="existing-only" \
     node "$INSTALL_DIR/register-hooks.js" || echo "(non-fatal: register-hooks failed)"

@@ -32,6 +32,7 @@
     ".experience/interceptor-session.js",
     ".experience/interceptor.js",
     ".experience/judge-worker.js",
+    ".experience/posttool-batch-hook.js",
     ".experience/remote-client.js",
     ".experience/setup-thin-client.sh",
     ".experience/setup.ps1",

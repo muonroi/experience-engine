@@ -35,6 +35,7 @@ const THIN_CLIENT_FILES = [
   'interceptor-session.js',
   'source-meta-enrich.js',
   'stop-extractor.js',
+  'posttool-batch-hook.js',
   'remote-client.js',
   'extract-compact.js',
   'exp-client-drain.js',
@@ -79,6 +80,7 @@ const EXECUTABLES = [
   'interceptor-prompt.js',
   'interceptor-session.js',
   'stop-extractor.js',
+  'posttool-batch-hook.js',
   'remote-client.js',
   'extract-compact.js',
   'exp-client-drain.js',
@@ -424,6 +426,7 @@ function registerHooks(installDir, opts, mode, log) {
     EXP_INTERCEPTOR_POST: fwd(path.join(installDir, 'interceptor-post.js')),
     EXP_INTERCEPTOR_PROMPT: fwd(path.join(installDir, 'interceptor-prompt.js')),
     EXP_INTERCEPTOR_SESSION: fwd(path.join(installDir, 'interceptor-session.js')),
+    EXP_INTERCEPTOR_BATCH: fwd(path.join(installDir, 'posttool-batch-hook.js')),
     EXP_STOP: fwd(path.join(installDir, 'stop-extractor.js')),
     EXP_REGISTER_MODE: mode,
   });
