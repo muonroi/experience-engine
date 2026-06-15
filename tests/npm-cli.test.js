@@ -14,6 +14,13 @@ test('resolveCommand maps setup to packaged setup script', () => {
   assert.equal(spec.args[0], path.resolve(__dirname, '..', '.experience', 'setup.sh'));
 });
 
+test('resolveCommand maps init to the Node installer (no bash)', () => {
+  const spec = resolveCommand('init', ['--yes']);
+  assert.equal(spec.cmd, process.execPath);
+  assert.equal(spec.args[0], path.resolve(__dirname, '..', 'bin', 'init.js'));
+  assert.equal(spec.args[1], '--yes');
+});
+
 test('resolveCommand maps thin client, sync-install, and server commands', () => {
   const thin = resolveCommand('setup-thin-client', ['--server', 'http://example']);
   assert.equal(thin.cmd, 'bash');
@@ -36,6 +43,7 @@ test('main prints help for empty command', () => {
   });
   assert.equal(code, 0);
   assert.match(output, /Experience Engine CLI/);
+  assert.match(output, /\binit\b/);
   assert.match(output, /setup-thin-client/);
   assert.match(output, /sync-install/);
 });
