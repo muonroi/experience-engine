@@ -12,6 +12,7 @@ function usage(out = process.stdout) {
   out.write(`Experience Engine CLI
 
 Usage:
+  experience-engine init [args...]
   experience-engine setup [args...]
   experience-engine setup-thin-client [args...]
   experience-engine sync-install [args...]
@@ -20,8 +21,10 @@ Usage:
   experience-engine help
 
 Commands:
-  setup               Run the full installer from this package
-  setup-thin-client   Convert the current machine into a thin client
+  init                Cross-platform installer (no bash) — auto-detects a brain,
+                      installs the thin client, and wires agent hooks. Start here.
+  setup               Run the full local install wizard (bash) from this package
+  setup-thin-client   Convert the current machine into a thin client (bash)
   sync-install        Sync packaged runtime files into ~/.experience
   server              Start the Experience Engine API server
   health              Run the installed ~/.experience health check
@@ -32,6 +35,8 @@ Commands:
 function resolveCommand(command, args = []) {
   const root = packageRoot();
   switch (command) {
+    case 'init':
+      return { cmd: process.execPath, args: [path.join(root, 'bin', 'init.js'), ...args] };
     case 'setup':
       return { cmd: 'bash', args: [path.join(root, '.experience', 'setup.sh'), ...args] };
     case 'setup-thin-client':

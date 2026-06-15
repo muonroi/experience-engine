@@ -42,7 +42,8 @@ Core operating modes:
 | Path | Purpose |
 |------|---------|
 | `bin/experience-engine.js` | Main npm CLI entry point |
-| `bin/cli.js` | CLI wrapper/helper |
+| `bin/cli.js` | CLI wrapper/helper; dispatches `init` to Node, other commands to bash |
+| `bin/init.js` | Cross-platform (no-bash) installer: auto-detects local/docker/remote brain, installs thin-client file set, writes `config.json`, wires hooks via `register-hooks.js`, injects agent MD block. Node port of `setup-thin-client.sh`; runs natively on Windows |
 | `.experience/setup.sh` | Interactive/full setup script |
 | `.experience/setup-thin-client.sh` | Thin-client bootstrap against a remote server |
 | `.experience/setup.ps1` | Windows setup path |
@@ -144,6 +145,7 @@ modules instead of reimplementing cross-cutting behavior.
 | `.experience/src/activity.js` | Activity log helper |
 | `.experience/src/validate.js` | Request body validation |
 | `.experience/src/utils.js` | Small shared utilities |
+| `.experience/src/agent-md.js` | Managed agent-instruction block + injector (Node port of `inject-agent-instructions.sh`); used by `bin/init.js`. Keep `INSTRUCTION_BLOCK` in sync with the bash heredoc |
 
 ---
 

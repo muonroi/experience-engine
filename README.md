@@ -24,6 +24,28 @@
 
 ## Quick Start
 
+**Just want to use it?** One command — any OS (Windows, macOS, Linux), no `git clone`, no Docker, no bash:
+
+```bash
+npx @muonroi/experience-engine init
+```
+
+`init` auto-detects a brain and wires your coding agent's hooks for you:
+
+1. A local brain already running at `http://localhost:8082` → uses it (no token).
+2. Otherwise, if Docker is available, it offers to start the local stack for you.
+3. Otherwise it sets up a **thin client** against a remote brain — point it at one:
+
+```bash
+npx @muonroi/experience-engine init --server https://your-brain.example.com --token <TOKEN>
+```
+
+Add `--yes` for a non-interactive install. Windows is supported natively — no Git Bash required.
+
+### Self-host the brain (advanced)
+
+To run the full stack (Qdrant + Ollama + API) on your own machine:
+
 ```bash
 git clone https://github.com/muonroi/experience-engine.git
 cd experience-engine
@@ -37,11 +59,7 @@ curl http://localhost:8082/health
 # {"status":"ok","qdrant":{"status":"ok"},"fileStore":{"status":"ok"}}
 ```
 
-Or use the interactive setup:
-
-```bash
-bash .experience/setup.sh
-```
+Then run `npx @muonroi/experience-engine init` (or `bash .experience/setup.sh` for the full local-install wizard) to wire your agent to it.
 
 ## Documentation
 

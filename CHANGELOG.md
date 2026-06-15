@@ -2,7 +2,16 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-15
+
 ### Added
+- **2026-06-15:** cross-platform `npx @muonroi/experience-engine init` installer
+  (`bin/init.js`) — Node-native, no `bash`/Git Bash dependency, runs on Windows.
+  Auto-detects a brain (local `:8082` → offer Docker → remote thin-client),
+  installs the thin-client runtime, wires agent hooks via `register-hooks.js`,
+  and injects the managed agent-instruction block (`.experience/src/agent-md.js`,
+  a Node port of `inject-agent-instructions.sh`). README Quick Start now leads
+  with `npx … init`; docker-compose demoted to "Self-host the brain (advanced)".
 - **2026-05-13:** add `/api/pil-context` endpoint (PIL unified call;
   consolidates 5-6 brain round-trips into 1; 5-min LRU cache). Spec:
   `muonroi-cli/docs/superpowers/specs/2026-05-13-pil-unified-brain-endpoint-design.md`.
