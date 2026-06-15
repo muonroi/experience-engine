@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-15
+
+### Added
+- **2026-06-15:** `PostToolBatch` is now a first-class hook shipped across all
+  install paths. `posttool-batch-hook.js` is published in the npm package
+  (`files`), copied by `npx … init`, `setup-thin-client.sh`, and `setup.sh`, and
+  wired by `register-hooks.js` via the optional `EXP_INTERCEPTOR_BATCH` env
+  (Claude Code only; backward-compatible — skipped when unset). Previously the
+  hook existed but reached only full `setup.sh` machines.
+
+### Fixed
+- **2026-06-15:** Windows libuv crash in `posttool-batch-hook.js`
+  (`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src/win/async.c:76`).
+  `process.exit()` raced the undici keep-alive socket (and a pending stdin read)
+  mid-teardown. Now sends `Connection: close`, reads stdin to natural `end` with
+  an unref'd watchdog, and drains via `process.exitCode` instead of
+  `process.exit()` on the main path — matching the sibling hooks and
+  `remote-client.js`. Reproduced 3/3 before, 0 after.
+
 ## [0.2.0] - 2026-06-15
 
 ### Added
