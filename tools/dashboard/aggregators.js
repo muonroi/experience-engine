@@ -50,7 +50,7 @@ function finalizePrecision(bucket) {
 
 /**
  * Build a pointId → { collection, confidence, framework, lang, tier,
- * hitCount, ignoreCount, principle, noiseHistory[] } lookup from
+ * hitCount, ignoreCount, createdFrom, principle, noiseHistory[] } lookup from
  * Qdrant payloads.
  *
  * @param {Map<string, object>} payloadsByCollection — { collection → array of points }
@@ -80,6 +80,7 @@ function indexQdrantPoints(payloadsByCollection) {
         lang: pl.scope_lang || (j.scope && j.scope.lang) || null,
         hitCount: typeof j.hitCount === 'number' ? j.hitCount : 0,
         ignoreCount: typeof j.ignoreCount === 'number' ? j.ignoreCount : 0,
+        createdFrom: typeof j.createdFrom === 'string' ? j.createdFrom : null,
         principle: (j.principle || j.trigger || '').slice(0, 120),
         noiseHistory: Array.isArray(j.noiseContextHistory) ? j.noiseContextHistory : [],
         shortId,
@@ -353,6 +354,16 @@ function computeTopOffenders(qdrantIdx, opts = {}) {
   for (const entry of qdrantIdx.values()) {
     if (seen.has(entry.id)) continue;
     seen.add(entry.id);
+    // Seeds (imported memory / evolution-abstraction) are DESIGNED to surface
+    // broadly as orienting context and rarely convert to a FOLLOWED hit, so
+    // their ignoreRatio sits at ~1.0 and they pin to the top of an
+    // ignoreRatio-sorted list — a false positive that buries genuinely-noisy
+    // organic entries and misleads operators into pruning legitimate seed
+    // memory. An "offender" is an organic entry that surfaces and gets
+    // rejected; seeds are out of scope by design. (scoring.isSeedEntry parity:
+    // createdFrom 'seed-*' or 'evolution-abstraction'.)
+    const cf = entry.createdFrom || '';
+    if (cf.startsWith('seed-') || cf === 'evolution-abstraction') continue;
     const surfaceCount = entry.hitCount + entry.ignoreCount;
     if (surfaceCount < minSurface) continue;
     const denom = entry.hitCount + entry.ignoreCount;
