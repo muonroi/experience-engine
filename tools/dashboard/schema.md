@@ -11,6 +11,22 @@ MUST validate `version` before parsing further fields. Additive fields
 **Encoding:** UTF-8, JSON, pretty-printed (2-space indent) for human
 diffability; size budget ~200KB.
 
+**Access.** `latest.json` is served by **Apache** (see
+`tools/dashboard/apache-vhost.conf`), not the node API server. Fetch it
+from the public host with the **`X-Dashboard-Token` header** (token in
+`~/.experience/dashboard/.token`) — NOT `Authorization: Bearer`, and NOT
+the node server on `:8082` (which has no `/api/snapshot.json` route and
+returns 401):
+
+```sh
+curl -H "X-Dashboard-Token: $(cat ~/.experience/dashboard/.token)" \
+  https://experience.muonroi.com/api/snapshot.json
+```
+
+Live metrics (computed on demand) are separate node endpoints:
+`/api/stats`, `/api/gates`, `/api/project-brief` (Bearer `readAuthToken`).
+Locally, just read the file at `~/.experience/dashboard/latest.json`.
+
 ---
 
 ## Top-level shape
@@ -206,6 +222,14 @@ window for trivial agent diffing.
 Top 20 brain entries with worst ignore-ratio AND non-trivial surface
 count. Sorted by `ignoreRatio` desc, then `surfaceCount` desc.
 
+**Seeds are excluded.** Entries with `createdFrom` `seed-*` or
+`evolution-abstraction` surface broadly as orienting context and almost
+never convert to a FOLLOWED hit, so their `ignoreRatio` is ~1.0 and they
+would pin to the top — a false positive that buries genuinely-noisy
+organic entries and misleads operators into pruning legitimate seed
+memory. An "offender" here means an ORGANIC entry that surfaces and gets
+rejected; seeds are out of scope by design (scoring.isSeedEntry parity).
+
 ```jsonc
 [
   {
@@ -226,7 +250,8 @@ count. Sorted by `ignoreRatio` desc, then `surfaceCount` desc.
 ```
 
 **Inclusion threshold:** surfaceCount ≥ 5 (else excluded as
-insufficient sample).
+insufficient sample); seed / evolution-abstraction entries excluded
+regardless of count (see above).
 
 ---
 
