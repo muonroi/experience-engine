@@ -88,6 +88,12 @@ function getOllamaBase()     { return cfgValue('ollamaUrl', 'EXPERIENCE_OLLAMA_U
 function getEmbedProvider()  { return cfgValue('embedProvider', 'EXPERIENCE_EMBED_PROVIDER', 'ollama'); }
 function getBrainProvider()  { return cfgValue('brainProvider', 'EXPERIENCE_BRAIN_PROVIDER', 'ollama'); }
 function getEmbedModel()     { return cfgValue('embedModel', 'EXPERIENCE_EMBED_MODEL', 'nomic-embed-text'); }
+// Dedicated model name for the Ollama cross-provider fallback. Empty by default:
+// reusing the primary's model name (e.g. SiliconFlow 'Qwen/Qwen3-Embedding-0.6B')
+// against Ollama 404s, and a DIFFERENT model emits vectors in an incompatible
+// space / wrong dimension that poison Qdrant. So the fallback is opt-in — set
+// this only to an Ollama-pulled model whose dimension matches embedDim.
+function getOllamaEmbedModel() { return cfgValue('ollamaEmbedModel', 'EXPERIENCE_OLLAMA_EMBED_MODEL', ''); }
 function getBrainModel()     { return cfgValue('brainModel', 'EXPERIENCE_BRAIN_MODEL', 'qwen2.5:3b'); }
 // Optional larger model used only for pattern-extraction jobs (extractQA + evolve abstraction).
 // Hot-path jobs (intercept brain-filter, judge, route) keep using getBrainModel() so latency
@@ -302,7 +308,7 @@ module.exports = {
   getConfig, refreshConfig, cfgValue, cfgNestedValue,
   getQdrantBase, getQdrantApiKey,
   getOllamaBase, getOllamaEmbedUrl, getOllamaGenerateUrl,
-  getEmbedProvider, getEmbedModel, getEmbedEndpoint, getEmbedKey, getEmbedDim, getEmbedTimeoutMs,
+  getEmbedProvider, getEmbedModel, getOllamaEmbedModel, getEmbedEndpoint, getEmbedKey, getEmbedDim, getEmbedTimeoutMs,
   getBrainProvider, getBrainModel, getBrainExtractModel, getBrainModelForSource, getBrainEndpoint, getBrainKey,
   getMinConfidence, getHighConfidence, getMinSearchScore,
   getPassiveHybrid, getPassiveLexicalMaxAdds, getPassiveLexicalDisplayScore,
