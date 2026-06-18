@@ -2,6 +2,49 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-18
+
+### Added
+- **2026-06-18:** `config.ollamaEmbedModel` (env `EXPERIENCE_OLLAMA_EMBED_MODEL`)
+  — opt-in knob for the cross-provider Ollama embedding fallback. Empty by
+  default, so the fallback is OFF unless explicitly pointed at an Ollama-pulled
+  model whose dimension matches `embedDim` (see Fixed below).
+- **2026-06-16:** `feedback` clients (`exp-feedback.js`) attach `cwd` to the
+  `/api/feedback` body so the server's `deriveCallerMeta()` can enrich
+  lang/project for `noiseContextHistory` → evolution Step 3d scope-narrowing.
+
+### Fixed
+- **2026-06-18:** Service restart-storm on transient embedding outages. The
+  health watchdog (`scripts/health-watch.sh`) restarted the node service on ANY
+  `health-check.sh` failure — including a live embed-API timeout — but a restart
+  cannot fix an upstream provider outage, so it thrashed (observed: 6 restarts in
+  80 min, one `shutdown_timeout`) until the provider recovered. Now it restarts
+  ONLY when `/health` is unreachable within 5s (a dead/wedged process — the one
+  condition a restart fixes); embed/brain/Qdrant/network failures are logged +
+  streak-alerted but not restarted. `systemd Restart=always` still covers crashes.
+- **2026-06-18:** Unsafe cross-provider embedding fallback. `getEmbedding` fell
+  back to Ollama reusing the primary's model name (e.g. SiliconFlow
+  `Qwen/Qwen3-Embedding-0.6B`), which 404s in Ollama, and a different model emits
+  vectors in an incompatible space / wrong dimension that silently poison Qdrant.
+  The fallback is now opt-in (`ollamaEmbedModel`) and discards any vector whose
+  length != `embedDim`. Native Ollama-primary setups are unaffected.
+- **2026-06-16:** Dashboard `topOffenders` mislabelled seeds as offenders.
+  Seed / `evolution-abstraction` entries surface broadly as context and never
+  convert to a hit, so their `ignoreRatio` ~1.0 pinned them to the top of the
+  list, burying genuinely-noisy organic entries. `computeTopOffenders` now
+  excludes seeds; `indexQdrantPoints` carries `createdFrom`.
+- **2026-06-15:** `exp-stats` reported `totalMistakes=0` / 0% extraction — it
+  counted a nonexistent `mistakes` field instead of `experiences`, with an
+  unguarded divide. Now reads the correct field and guards the ratio.
+- **2026-06-15:** `exp-gates` Gate-1 brain-health false-RED (strict
+  `result.test==='ok'` vs the model's actual reply) and a precision check that
+  failed on tiny samples; added an insufficient-sample (`>= 20`) pending guard.
+- **2026-06-15:** `inject-agent-instructions.sh` duplicated its managed block on
+  every run on grep-less hosts (`grep -q` exited 127 → append branch). Now uses a
+  pure-bash substring test — idempotent everywhere.
+- **2026-06-15:** `surface-trigger` leaked an unref'd timeout timer + a pending
+  promise per call (node 22 reds CI on the targeted-recall timeout test).
+
 ## [0.4.0] - 2026-06-15
 
 ### Added
