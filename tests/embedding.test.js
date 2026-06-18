@@ -177,7 +177,7 @@ test('getEmbeddingRaw handles VoyageAI provider selection gracefully', { timeout
 // ============================================================
 //  Test: Fallback to Ollama when primary fails
 // ============================================================
-test('getEmbeddingRaw falls back to Ollama when primary provider fails', async () => {
+test('getEmbeddingRaw falls back to Ollama when primary fails AND ollamaEmbedModel is set', async () => {
   process.env.HOME = testHome;
   process.env.USERPROFILE = testHome;
 
@@ -186,7 +186,8 @@ test('getEmbeddingRaw falls back to Ollama when primary provider fails', async (
     embedEndpoint: `http://127.0.0.1:1/v1/embeddings`, // unreachable
     embedKey: 'test-key',
     embedModel: 'text-embedding-3-small',
-    ollamaUrl: `http://127.0.0.1:${fakePort}`, // reachable fallback
+    ollamaEmbedModel: 'nomic-embed-text', // opt-in enables the fallback
+    ollamaUrl: `http://127.0.0.1:${fakePort}`, // reachable fallback (returns dim 5)
   });
 
   const { getEmbeddingRaw } = require(path.join(__dirname, '..', '.experience', 'experience-core.js'));
@@ -196,6 +197,52 @@ test('getEmbeddingRaw falls back to Ollama when primary provider fails', async (
 
   assert.ok(Array.isArray(result), 'should return array from fallback');
   assert.equal(result.length, 5, 'should have correct dimension');
+});
+
+test('getEmbeddingRaw does NOT fall back to Ollama when ollamaEmbedModel is unset', async () => {
+  process.env.HOME = testHome;
+  process.env.USERPROFILE = testHome;
+
+  // Primary unreachable, Ollama reachable — but no ollamaEmbedModel ⇒ the
+  // cross-provider fallback is opt-in and must stay OFF (reusing the primary's
+  // model name 404s in real Ollama; a different model poisons the vector store).
+  writeConfig(testHome, {
+    embedProvider: 'custom',
+    embedEndpoint: `http://127.0.0.1:1/v1/embeddings`, // unreachable
+    embedKey: 'test-key',
+    embedModel: 'text-embedding-3-small',
+    ollamaUrl: `http://127.0.0.1:${fakePort}`, // reachable but must be ignored
+  });
+
+  const { getEmbeddingRaw } = require(path.join(__dirname, '..', '.experience', 'experience-core.js'));
+  delete require.cache[require.resolve(path.join(__dirname, '..', '.experience', 'experience-core.js'))];
+
+  const result = await getEmbeddingRaw('text — fallback should be skipped');
+  assert.equal(result, null, 'fallback must be skipped when ollamaEmbedModel unset');
+  assert.ok(!embedEndpointHits.some(h => /\/api\/embed/.test(h.url)), 'Ollama embed endpoint must NOT be hit');
+});
+
+test('getEmbeddingRaw discards an Ollama fallback vector whose dim != embedDim', async () => {
+  process.env.HOME = testHome;
+  process.env.USERPROFILE = testHome;
+
+  // Fake Ollama returns a 5-dim vector; embedDim is 3 ⇒ the dim guard must
+  // discard it rather than poison Qdrant with an incompatible-space vector.
+  writeConfig(testHome, {
+    embedProvider: 'custom',
+    embedEndpoint: `http://127.0.0.1:1/v1/embeddings`, // unreachable primary
+    embedKey: 'test-key',
+    embedModel: 'text-embedding-3-small',
+    ollamaEmbedModel: 'nomic-embed-text',
+    ollamaUrl: `http://127.0.0.1:${fakePort}`, // returns dim 5
+    embedDim: 3, // mismatch on purpose
+  });
+
+  const { getEmbeddingRaw } = require(path.join(__dirname, '..', '.experience', 'experience-core.js'));
+  delete require.cache[require.resolve(path.join(__dirname, '..', '.experience', 'experience-core.js'))];
+
+  const result = await getEmbeddingRaw('text — dim mismatch must be discarded');
+  assert.equal(result, null, 'mismatched-dim fallback vector must be discarded');
 });
 
 // ============================================================
