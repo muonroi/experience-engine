@@ -37,30 +37,55 @@ process.stdin.on("end", () => {
 ' < "$target"
 }
 
+# Is the node server process itself reachable? A restart can ONLY fix a dead or
+# wedged process — it cannot fix an upstream provider outage (embed/brain API
+# down) or Qdrant being down. Restarting on those caused a restart storm
+# (2026-06-17: a transient SiliconFlow embed timeout made health-check report a
+# failure every 5 min, each triggering a pointless restart, until the provider
+# recovered ~80 min later). So the restart is gated on DIRECT server
+# reachability; dependency failures are logged + alerted but never restarted.
+bump_streak() {
+  local prev=0
+  [ -f "$FAIL_COUNT_FILE" ] && prev="$(cat "$FAIL_COUNT_FILE" 2>/dev/null || echo 0)"
+  FAIL_STREAK=$((prev + 1))
+  echo "$FAIL_STREAK" > "$FAIL_COUNT_FILE"
+}
+
+server_reachable() {
+  local port
+  port="$(node -e 'try{const c=require(process.env.HOME+"/.experience/config.json");process.stdout.write(String((c.server&&c.server.port)||c.serverPort||8082))}catch{process.stdout.write("8082")}' 2>/dev/null || echo 8082)"
+  curl -sf -m 5 "http://127.0.0.1:${port}/health" >/dev/null 2>&1
+}
+
 FAIL="$(run_health health-check | tail -n1)"
 if [ "$FAIL" = "0" ]; then
   echo 0 > "$FAIL_COUNT_FILE"
   exit 0
 fi
 
-PREV_FAILS=0
-if [ -f "$FAIL_COUNT_FILE" ]; then
-  PREV_FAILS="$(cat "$FAIL_COUNT_FILE" 2>/dev/null || echo 0)"
+# health-check reported failure(s). Only a wedged/dead node warrants a restart.
+if server_reachable; then
+  # Server answers /health — failures are upstream deps (embed/brain provider,
+  # Qdrant, network). Track the streak for alerting, but DO NOT restart.
+  bump_streak
+  echo "[health] fail=$FAIL but server reachable — upstream/dependency issue, NOT restarting (streak=$FAIL_STREAK)"
+  if [ "$FAIL_STREAK" -ge 3 ]; then
+    printf '%s [health-alert] dependency_failure streak=%s fail=%s (server up, restart suppressed)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$FAIL_STREAK" "$FAIL" | tee -a "$ALERT_LOG" >&2
+  fi
+  exit 0
 fi
-FAIL_STREAK=$((PREV_FAILS + 1))
-echo "$FAIL_STREAK" > "$FAIL_COUNT_FILE"
 
-echo "[health] detected fail=$FAIL, restarting experience-engine.service"
+# Server is unreachable/wedged — the one case a restart actually fixes.
+bump_streak
+echo "[health] server unreachable on /health, restarting experience-engine.service (streak=$FAIL_STREAK)"
 systemctl --user restart experience-engine.service || true
 sleep 3
-POST_FAIL="$(run_health health-check-after-restart | tail -n1)"
-if [ "$POST_FAIL" = "0" ]; then
+if server_reachable; then
   echo 0 > "$FAIL_COUNT_FILE"
   exit 0
 fi
 
-echo "$FAIL_STREAK" > "$FAIL_COUNT_FILE"
 if [ "$FAIL_STREAK" -ge 3 ]; then
-  printf '%s [health-alert] consecutive_failures=%s pre_restart_fail=%s post_restart_fail=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$FAIL_STREAK" "$FAIL" "$POST_FAIL" | tee -a "$ALERT_LOG" >&2
+  printf '%s [health-alert] server_unreachable_after_restart streak=%s pre_restart_fail=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$FAIL_STREAK" "$FAIL" | tee -a "$ALERT_LOG" >&2
 fi
 exit 1

@@ -6,7 +6,8 @@
 
 const {
   getOllamaEmbedUrl,
-  getEmbedProvider, getEmbedModel, getEmbedEndpoint, getEmbedKey, getEmbedTimeoutMs,
+  getEmbedProvider, getEmbedModel, getOllamaEmbedModel, getEmbedEndpoint, getEmbedKey,
+  getEmbedDim, getEmbedTimeoutMs,
   activityLog,
 } = require('./config');
 
@@ -95,10 +96,12 @@ async function embedFetch(provider, url, init, extract, signal) {
 }
 
 function embedOllama(text, signal) {
+  // Prefer an Ollama-specific model when set; fall back to the primary model
+  // name for native Ollama-primary setups (where embedModel IS the Ollama tag).
   return embedFetch('ollama', getOllamaEmbedUrl(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: getEmbedModel(), input: text }),
+    body: JSON.stringify({ model: getOllamaEmbedModel() || getEmbedModel(), input: text }),
   }, (j) => j.embeddings?.[0], signal);
 }
 
@@ -190,10 +193,23 @@ async function getEmbedding(text, signal, meta = {}) {
   vector = await attempt(provider, p.fn, 'general-retry');
   if (vector) { setCachedEmbedding(text, vector); return vector; }
 
-  // Fallback to Ollama if primary provider is not already Ollama
-  if (provider !== 'ollama' && EMBED_PROVIDERS.ollama) {
-    vector = await attempt('ollama', EMBED_PROVIDERS.ollama.fn, 'general-fallback');
-    if (vector) setCachedEmbedding(text, vector);
+  // Cross-provider Ollama fallback — OPT-IN only (requires ollamaEmbedModel).
+  // Reusing the primary's model name against Ollama 404s, and a different model
+  // emits vectors in an incompatible space / wrong dimension that silently
+  // poison Qdrant retrieval (e.g. SiliconFlow 1024-dim Qwen3 vs Ollama 768-dim
+  // nomic). So we only attempt it when an Ollama embed model is explicitly
+  // configured, and we discard any vector whose dimension != embedDim.
+  if (provider !== 'ollama' && getOllamaEmbedModel() && EMBED_PROVIDERS.ollama) {
+    const fb = await attempt('ollama', EMBED_PROVIDERS.ollama.fn, 'general-fallback');
+    const dim = getEmbedDim();
+    if (fb && (!dim || fb.length === dim)) {
+      setCachedEmbedding(text, fb);
+      return fb;
+    }
+    if (fb && dim && fb.length !== dim) {
+      console.error(`[embedding] ollama fallback dim mismatch (got ${fb.length}, expected ${dim}) — discarding to avoid poisoning the vector store`);
+    }
+    return null;
   }
   return vector;
 }
