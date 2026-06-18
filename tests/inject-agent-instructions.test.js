@@ -18,6 +18,34 @@ const { execFileSync } = require('child_process');
 
 const SCRIPT = path.join(__dirname, '..', '.experience', 'inject-agent-instructions.sh').replace(/\\/g, '/');
 
+// Resolve a POSIX bash able to run the installer. On Windows, the `bash` on PATH
+// is frequently WSL (C:\Windows\System32\bash.exe), which cannot resolve a
+// Windows-style script path like D:/repo/script.sh (it expects /mnt/d/...), so it
+// exits 127. Git Bash (MSYS2) translates Windows drive paths transparently, so we
+// point at it explicitly rather than trusting PATH order. Returns the bash to use,
+// or null when none is usable (→ the bash-dependent cases skip with a clear reason;
+// the .sh is a POSIX installer never executed on Windows in production anyway).
+// On non-Windows this is always plain `bash`, so Linux/CI behaviour is unchanged.
+function resolveBash() {
+  if (process.platform !== 'win32') return 'bash';
+  const roots = [
+    process.env.ProgramFiles,
+    process.env.ProgramW6432,
+    process.env['ProgramFiles(x86)'],
+    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs'),
+  ].filter(Boolean);
+  const candidates = roots.flatMap((root) => [
+    path.join(root, 'Git', 'bin', 'bash.exe'),
+    path.join(root, 'Git', 'usr', 'bin', 'bash.exe'),
+  ]);
+  return candidates.find((p) => fs.existsSync(p)) || null;
+}
+
+const BASH = resolveBash();
+const bashOpts = BASH
+  ? {}
+  : { skip: 'no POSIX bash that resolves Windows paths (Git Bash not found; WSL bash cannot run D:/ paths)' };
+
 function freshHome() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ee-inject-')).replace(/\\/g, '/');
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
@@ -25,7 +53,7 @@ function freshHome() {
 }
 
 function runInjector(home, extraEnv = {}) {
-  return execFileSync('bash', [SCRIPT], {
+  return execFileSync(BASH, [SCRIPT], {
     env: { ...process.env, HOME: home, USERPROFILE: home, ...extraEnv },
     encoding: 'utf8',
   });
@@ -33,7 +61,7 @@ function runInjector(home, extraEnv = {}) {
 
 const countBlocks = (s) => (s.match(/experience-engine:start/g) || []).length;
 
-test('creates the managed block in a missing CLAUDE.md (parent dir exists)', () => {
+test('creates the managed block in a missing CLAUDE.md (parent dir exists)', bashOpts, () => {
   const home = freshHome();
   runInjector(home);
   const md = fs.readFileSync(path.join(home, '.claude', 'CLAUDE.md'), 'utf8');
@@ -42,7 +70,7 @@ test('creates the managed block in a missing CLAUDE.md (parent dir exists)', () 
   assert.match(md, /exp-feedback\.js/);
 });
 
-test('replaces a stale raw-curl block (auto-migration), leaving exactly one block', () => {
+test('replaces a stale raw-curl block (auto-migration), leaving exactly one block', bashOpts, () => {
   const home = freshHome();
   const claude = path.join(home, '.claude', 'CLAUDE.md');
   // Seed user content + an OLD block that taught the forbidden raw curl call.
@@ -68,7 +96,7 @@ test('replaces a stale raw-curl block (auto-migration), leaving exactly one bloc
   assert.doesNotMatch(md, /curl -s -X POST/, 'stale actionable raw-curl command is gone');
 });
 
-test('idempotent: a second run produces byte-identical output', () => {
+test('idempotent: a second run produces byte-identical output', bashOpts, () => {
   const home = freshHome();
   const claude = path.join(home, '.claude', 'CLAUDE.md');
   runInjector(home);
@@ -79,7 +107,7 @@ test('idempotent: a second run produces byte-identical output', () => {
   assert.equal(countBlocks(second), 1);
 });
 
-test('skips a target whose parent dir is absent', () => {
+test('skips a target whose parent dir is absent', bashOpts, () => {
   const home = freshHome();
   // Only .claude exists; .gemini/.codex do not.
   runInjector(home);
@@ -87,7 +115,7 @@ test('skips a target whose parent dir is absent', () => {
   assert.ok(!fs.existsSync(path.join(home, '.codex', 'AGENTS.md')));
 });
 
-test('EXPERIENCE_SKIP_MD_INJECT=1 leaves files untouched', () => {
+test('EXPERIENCE_SKIP_MD_INJECT=1 leaves files untouched', bashOpts, () => {
   const home = freshHome();
   const claude = path.join(home, '.claude', 'CLAUDE.md');
   fs.writeFileSync(claude, '# untouched\n');
