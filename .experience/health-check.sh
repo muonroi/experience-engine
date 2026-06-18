@@ -72,6 +72,57 @@ read_cfg() {
   node -e "try{const c=JSON.parse(require('fs').readFileSync('$CONFIG_NODE','utf8'));process.stdout.write(String(c['$1']||''))}catch{}" 2>/dev/null
 }
 
+# Portable HTTP status probe.
+#   http_probe URL [BEARER_TOKEN] [BODY_OUTFILE]   → echoes the HTTP status code
+#
+# curl is tried first so the Linux/CI path is unchanged. Git-for-Windows curl
+# (8.8.0, Schannel) throws CURLE_BAD_FUNCTION_ARGUMENT (43) on ANY -w/--write-out
+# usage, so it can never produce a code there and falsely reports HTTP 000 even
+# when the VPS is reachable. When curl yields nothing/000 we fall back to node
+# fetch, which is reliable and already a hard dependency of the engine. BODY_OUTFILE
+# must be a node-readable path (use _to_node_path for MSYS → drive-letter form).
+http_probe() {
+  local url="$1" token="${2:-}" outfile="${3:-}"
+  local -a cargs=(-s -m 15 -w '%{http_code}')
+  if [ -n "$outfile" ]; then cargs+=(-o "$outfile"); else cargs+=(-o /dev/null); fi
+  [ -n "$token" ] && cargs+=(-H "Authorization: Bearer $token")
+  local code=""
+  code=$(curl "${cargs[@]}" "$url" 2>/dev/null)
+  case "$code" in
+    ''|000) ;;  # curl unusable here (e.g. Windows Schannel -w bug) → node fallback
+    *) printf '%s' "$code"; return 0 ;;
+  esac
+  # The node fallback retries once on a transport error so a transient blip (the
+  # write path can take a few seconds through Cloudflare) does not surface as a
+  # false 000. Its stderr is intentionally dropped (2>/dev/null) to match the curl
+  # calls in this file: a health probe reports failure through its status code,
+  # which the dashboard prints as "HTTP <code>" alongside a suggested fix.
+  EXP_PROBE_URL="$url" EXP_PROBE_TOKEN="$token" EXP_PROBE_OUT="$outfile" node -e '
+    const fs = require("fs");
+    const url = process.env.EXP_PROBE_URL;
+    const token = process.env.EXP_PROBE_TOKEN || "";
+    const out = process.env.EXP_PROBE_OUT || "";
+    const headers = token ? { Authorization: "Bearer " + token } : {};
+    (async () => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const r = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+          if (out) {
+            try { fs.writeFileSync(out, await r.text()); }
+            catch (e) { process.stderr.write("[health-check] probe body write failed for " + url + ": " + (e && e.message) + "\n"); }
+          }
+          process.stdout.write(String(r.status));
+          return;
+        } catch (e) {
+          if (attempt === 0) { await new Promise((res) => setTimeout(res, 800)); continue; }
+          process.stderr.write("[health-check] probe failed for " + url + ": " + (e && e.message) + "\n");
+          process.stdout.write("000");
+        }
+      }
+    })();
+  ' 2>/dev/null
+}
+
 # ── Checks ─────────────────────────────────────────────────────────────────
 run_checks() {
   pass=0; warn=0; fail=0; results=(); fixes=()
@@ -285,25 +336,25 @@ run_checks() {
   # 6b. Remote thin-client checks
   if [ -n "$server_base" ]; then
     local server_health_http
-    server_health_http=$(curl -s -m 5 -o /tmp/exp-health-$$.json -w "%{http_code}" "${server_base}/health" 2>/dev/null)
+    local health_body="$EXP_DIR/.exp-health-$$.json"
+    local health_body_node; health_body_node="$(_to_node_path "$health_body")"
+    server_health_http=$(http_probe "${server_base}/health" "" "$health_body_node")
     if [ "$server_health_http" = "200" ]; then
       local server_status
-      server_status=$(node -e "try{const d=JSON.parse(require('fs').readFileSync('/tmp/exp-health-$$.json','utf8'));process.stdout.write(d.status||'unknown')}catch{process.stdout.write('unknown')}" 2>/dev/null)
+      server_status=$(node -e "try{const d=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));process.stdout.write(d.status||'unknown')}catch{process.stdout.write('unknown')}" "$health_body_node" 2>/dev/null)
       check "Remote Server" "ok" "$server_base (status=$server_status)"
     else
       check "Remote Server" "fail" "$server_base — HTTP $server_health_http" "Bring up the VPS server or fix serverBaseUrl; test with curl ${server_base}/health"
     fi
-    rm -f "/tmp/exp-health-$$.json"
+    rm -f "$health_body" 2>/dev/null
 
     local gates_http
     local gates_token="$server_read_auth"
     [ -z "$gates_token" ] && gates_token="$server_auth"
-    local -a server_auth_args=()
-    [ -n "$gates_token" ] && server_auth_args=(-H "Authorization: Bearer $gates_token")
-    gates_http=$(curl -s -m 15 -o /dev/null -w "%{http_code}" "${server_auth_args[@]}" "${server_base}/api/gates" 2>/dev/null)
+    gates_http=$(http_probe "${server_base}/api/gates" "$gates_token")
     if [ "$gates_http" = "000" ]; then
       sleep 1
-      gates_http=$(curl -s -m 15 -o /dev/null -w "%{http_code}" "${server_auth_args[@]}" "${server_base}/api/gates" 2>/dev/null)
+      gates_http=$(http_probe "${server_base}/api/gates" "$gates_token")
     fi
     if [ "$gates_http" = "200" ]; then
       check "Remote Gates" "ok" "$server_base/api/gates"
@@ -445,11 +496,15 @@ check_agent_hooks() {
     check "$name hooks" "ok" "Not installed (no config file)"
     return
   fi
-  if grep -q "$needle" "$file" 2>/dev/null; then
-    check "$name hooks" "ok" "Wired ($event)"
-  else
-    check "$name hooks" "fail" "Config exists but no $needle hook" "Re-run setup.sh and include $name in the selected agents"
-  fi
+  # Substring match without grep: Git-for-Windows MinGit bash ships no grep, so a
+  # `grep -q` here exits 127 and falsely reports every hook as unwired on Windows.
+  # `$(<file)` + case globbing is a pure-bash equivalent that works everywhere.
+  local content=""
+  content="$(<"$file")"
+  case "$content" in
+    *"$needle"*) check "$name hooks" "ok" "Wired ($event)" ;;
+    *)           check "$name hooks" "fail" "Config exists but no $needle hook" "Re-run setup.sh and include $name in the selected agents" ;;
+  esac
 }
 
 # ── Output ─────────────────────────────────────────────────────────────────

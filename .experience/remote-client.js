@@ -237,13 +237,16 @@ function maybeSpawnExtractDrain(options = {}) {
   const queueDir = getQueueDir(homeDir);
   if (!fs.existsSync(queueDir)) return false;
 
-  const hasExtract = fs.readdirSync(queueDir)
-    .filter((name) => name.endsWith('.json'))
-    .some((name) => {
-      const record = safeReadJson(path.join(queueDir, name), null);
-      return record?.path === '/api/extract';
-    });
-  if (!hasExtract) return false;
+  // Spawn the background drainer whenever ANYTHING is queued — not just extract
+  // events. High-latency clients (e.g. Windows over Cloudflare, where a POST with
+  // Connection: close takes ~3s) cannot deliver posttool/feedback events within
+  // the ~1.2s inline hook budget, so they queue on every tool call. Without a
+  // general drain the queue grows one file per call and never clears. The drainer
+  // (exp-client-drain.js, no --extract-only → all paths) runs detached with a 60s
+  // timeout, so it is zero-latency to the agent and has ample time for slow
+  // round-trips. The 60s lock below still caps it to one run per minute.
+  const hasQueued = fs.readdirSync(queueDir).some((name) => name.endsWith('.json'));
+  if (!hasQueued) return false;
 
   const tmpDir = getTmpDir(homeDir);
   const lockPath = path.join(tmpDir, 'client-drain.lock');
@@ -257,7 +260,7 @@ function maybeSpawnExtractDrain(options = {}) {
   if (!fs.existsSync(scriptPath) || !fs.existsSync(compactPath)) return false;
 
   fs.mkdirSync(tmpDir, { recursive: true });
-  const child = spawn(process.execPath, [scriptPath, '--extract-only'], {
+  const child = spawn(process.execPath, [scriptPath], {
     detached: true,
     stdio: 'ignore',
     env: {
