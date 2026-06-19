@@ -48,8 +48,10 @@ code is right and the stale entry should be corrected.
 ## 3. Feedback verdict — what to call
 
 Always go through the helper (it resolves the engine URL + auth token from
-`~/.experience/config.json`). **Never** use raw `curl http://localhost:8082/api/feedback`
-— it defaults to localhost and **silently no-ops on thin-client installs.**
+`~/.experience/config.json` — on thin-client installs the hosted brain at
+`https://experience.muonroi.com`, on a local full brain `http://localhost:8082`).
+**Never** hand-roll a raw `curl` to a hardcoded endpoint — it skips URL + token
+resolution and **silently no-ops on thin-client installs.**
 
 | Situation | Command |
 |---|---|
