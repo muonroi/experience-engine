@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-19
+
+### Added
+- **2026-06-19:** `experience-engine check-update` and `experience-engine update`
+  commands. `check-update` compares the installed package version against the npm
+  registry `dist-tags.latest` and exits `0` (up to date) / `10` (update available)
+  / `1` (check failed) — no side effects, script-friendly. `update` runs the check
+  then updates in place, auto-detecting the install mode: a git checkout delegates
+  to `bash upgrade.sh`; a plain npm install runs `npm i -g
+  @muonroi/experience-engine@latest` and refreshes `~/.experience` via `init --yes`
+  (no bash on the npm path, so it works natively on Windows). `--force` re-runs the
+  updater even when already current.
+
 ## [0.5.1] - 2026-06-19
 
 ### Fixed
