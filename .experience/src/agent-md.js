@@ -43,8 +43,11 @@ Gate-4 precision — skipping it lets useful hints get auto-pruned):
 node ~/.experience/exp-feedback.js followed|ignored|noise <id> <col>
 \`\`\`
 
-Use the helper above — NOT raw \`curl http://localhost:8082/api/feedback\`, which
-defaults to localhost and silently no-ops on thin-client installs.
+Use the helper above — it resolves the brain URL and auth token from
+\`~/.experience/config.json\` (on thin-client installs the hosted brain at
+\`https://experience.muonroi.com\`; on a local full brain \`http://localhost:8082\`).
+**Never** hand-roll a raw \`curl\` to a hardcoded endpoint — that skips URL + token
+resolution and silently no-ops on thin-client installs.
 
 Noise reasons (pick the FIRST match): \`stale_rule\` → \`wrong_repo\` →
 \`wrong_language\` → \`wrong_task\` (last resort). Wrong reason = lost knowledge.
