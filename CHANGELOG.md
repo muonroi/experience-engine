@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-06-19
+
+### Fixed
+- **2026-06-19:** Injected agent-instruction block (`agent-md.js` /
+  `inject-agent-instructions.sh`) and `AGENT_GUIDE.md` taught the feedback API as
+  `http://localhost:8082`, which is wrong for thin-client installs that hit the
+  hosted brain at `https://experience.muonroi.com`. The guidance now says the
+  helper resolves the brain URL + token from `~/.experience/config.json` (hosted
+  domain on thin clients, `localhost:8082` only for a local full brain) and to
+  never hand-roll a raw `curl` to a hardcoded endpoint. Refreshes idempotently on
+  the next install/upgrade.
+- **2026-06-18:** Windows thin-client health-check false failures — `curl`
+  Schannel `-w` exit 43 (now uses a node `fetch` probe) and a missing `grep`
+  (now grep-free) — plus offline-queue growth where the PostToolUse POST (~3s)
+  exceeded the 1.2s hook budget; replaced with a generalized detached drainer.
+- **2026-06-18:** `inject-agent-instructions` tests failed on Windows because
+  `execFileSync('bash', …)` resolved WSL bash (which cannot read `D:/` paths);
+  the tests now resolve Git-bash explicitly and skip cleanly when it is absent.
+
 ## [0.5.0] - 2026-06-18
 
 ### Added
