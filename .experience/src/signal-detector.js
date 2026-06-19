@@ -83,6 +83,12 @@ const CORRECTION = /(không[,\s]|ý tôi là|ý mình là|nhầm|not what|i mean
 const AUTHORITATIVE = /(làm theo cách (tôi|mình)|do it my way|cứ làm|phải làm)/i;
 const CAUTIOUS = /(bạn có chắc|có chắc không|are you sure|chắc chưa|kiểm tra lại|double check)/i;
 const EXPERIMENTAL = /(thử đi|cứ thử|thử xem|try it|just try)/i;
+// Delegation preference, read from replies to a proposal. autonomous = "run with it,
+// don't check back"; collaborative = "loop me in before acting". No \b (ASCII-only,
+// breaks around vi diacritics) — explicit alternations instead. "cứ thử" stays
+// EXPERIMENTAL-only (not autonomous): trying a thing != delegating execution.
+const DELEGATE_AUTONOMOUS = /(cứ làm|làm luôn|làm đi|tự (làm|quyết|xử)|khỏi hỏi|đừng hỏi|không cần hỏi|proceed|go ahead|just do it|don'?t ask|do it my way)/i;
+const DELEGATE_COLLABORATIVE = /(hỏi (tôi|mình)( trước)?|để (tôi|mình) (quyết|duyệt)|đợi (tôi|mình)|chờ (tôi|mình)|xác nhận (trước|với (tôi|mình))|let me decide|ask me first|wait for me|check with me|confirm with me)/i;
 
 /**
  * Classify a short user response. Returns an array of {dimension,value} votes
@@ -100,6 +106,8 @@ function classifyResponse(text) {
   if (AUTHORITATIVE.test(t)) out.push({ dimension: 'personality.conflict_style', value: 'authoritative' });
   if (CAUTIOUS.test(t)) out.push({ dimension: 'personality.conflict_style', value: 'cautious' });
   if (EXPERIMENTAL.test(t)) out.push({ dimension: 'personality.risk_tolerance', value: 'experimental' });
+  if (DELEGATE_AUTONOMOUS.test(t)) out.push({ dimension: 'work_patterns.delegation_style', value: 'autonomous' });
+  if (DELEGATE_COLLABORATIVE.test(t)) out.push({ dimension: 'work_patterns.delegation_style', value: 'collaborative' });
   return out;
 }
 

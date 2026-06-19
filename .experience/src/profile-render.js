@@ -37,6 +37,10 @@ const TIER_MINIMAL = ['work_patterns.energy', 'work_patterns.multitasking', 'wor
 const TIER_STANDARD = TIER_MINIMAL.concat([
   'communication.question_style', 'communication.feedback_style', 'communication.brevity',
   'personality.conflict_style', 'personality.risk_tolerance',
+  // delegation_style is `work_patterns.*` by name but TRANSCRIPT-derived (classifyResponse),
+  // and the writer skips the transcript at `minimal` — so it can only ever commit at
+  // standard+. It belongs to Tang 2, NOT TIER_MINIMAL, despite the namespace.
+  'work_patterns.delegation_style',
 ]);
 // `full` is DEFAULT-DENY (same positive allowlist as standard) — no Tang-3 dims
 // exist yet, and the polarity guarantees one can never auto-leak when added.
@@ -48,7 +52,7 @@ const WORK_DIMS = new Set(TIER_MINIMAL);
 
 const DEFAULT_MIN_CONFIDENCE = 0.6;
 const DEFAULT_WORK_MIN_CONFIDENCE = 0.45;
-const DEFAULT_MAX_DIMS = 10;  // headroom for all 9 emittable dims (was 8 — capped before session_length landed)
+const DEFAULT_MAX_DIMS = 12;  // headroom for all 10 emittable dims (grows as dims are added)
 const DEFAULT_STALE_DAYS = 60;
 
 const LABELS = {
@@ -61,6 +65,7 @@ const LABELS = {
   'work_patterns.energy': 'Energy',
   'work_patterns.multitasking': 'Multitasking',
   'work_patterns.session_length': 'Session length',
+  'work_patterns.delegation_style': 'Delegation',
 };
 
 // Static, human-reviewed imperative directives (mirrors the GSD "Directives" style).
@@ -109,6 +114,10 @@ const DIRECTIVES = {
     short: 'User works in short bursts — keep answers tight and self-contained; avoid long multi-step detours',
     medium: 'User works in moderate sessions — balance depth with momentum',
     long: 'User runs long deep-work sessions — sustained multi-step work is welcome; keep continuity across steps',
+  },
+  'work_patterns.delegation_style': {
+    autonomous: 'User delegates autonomously — proceed through low-risk steps without stopping to confirm; surface only consequential decisions',
+    collaborative: 'User prefers to stay in the loop — confirm the approach and consequential choices before acting',
   },
 };
 

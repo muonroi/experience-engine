@@ -53,6 +53,21 @@ test('classifyResponse: ack / correction / authoritative / experimental', () => 
   assert.deepEqual(sd.classifyResponse(''), []);
 });
 
+test('classifyResponse: delegation_style autonomous / collaborative (vi + en)', () => {
+  const auto = sd.classifyResponse('ok cứ làm đi, khỏi hỏi');
+  assert.ok(auto.some((v) => v.dimension === 'work_patterns.delegation_style' && v.value === 'autonomous'));
+  assert.ok(sd.classifyResponse('just do it, go ahead').some((v) => v.value === 'autonomous'));
+  const collab = sd.classifyResponse('hỏi tôi trước khi sửa nhé');
+  assert.ok(collab.some((v) => v.dimension === 'work_patterns.delegation_style' && v.value === 'collaborative'));
+  assert.ok(sd.classifyResponse('let me decide first').some((v) => v.value === 'collaborative'));
+  // "do it my way" votes BOTH authoritative (conflict) AND autonomous (delegation).
+  const both = sd.classifyResponse('do it my way');
+  assert.ok(both.some((v) => v.value === 'authoritative'));
+  assert.ok(both.some((v) => v.value === 'autonomous'));
+  // trying a thing is NOT delegating execution — no delegation vote.
+  assert.ok(!sd.classifyResponse('cứ thử đi xem sao').some((v) => v.dimension === 'work_patterns.delegation_style'));
+});
+
 // --- detectSignals end-to-end (pure) ---
 
 test('detectSignals: emits question_style + brevity + response votes from transcript', () => {

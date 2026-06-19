@@ -24,7 +24,7 @@ function dim(value, confidence, sampleCount = 20) {
 function profileOf(dimensions, updatedAt = null) {
   return { version: 1, updatedAt, dimensions };
 }
-// All 9 emitted dimensions committed at high confidence.
+// All 10 emitted dimensions committed at high confidence.
 function fullProfile() {
   return profileOf({
     'communication.question_style': dim('directive', 0.8, 30),
@@ -36,11 +36,12 @@ function fullProfile() {
     'work_patterns.energy': dim('night-owl', 0.6, 40),
     'work_patterns.multitasking': dim('sequential-deep', 0.65, 25),
     'work_patterns.session_length': dim('long', 0.55, 16),
+    'work_patterns.delegation_style': dim('autonomous', 0.68, 19),
   });
 }
 
 const MINIMAL_DIMS = ['work_patterns.energy', 'work_patterns.multitasking', 'work_patterns.session_length', 'personality.decision_speed'];
-const TANG2_DIMS = ['communication.question_style', 'communication.feedback_style', 'communication.brevity', 'personality.conflict_style', 'personality.risk_tolerance'];
+const TANG2_DIMS = ['communication.question_style', 'communication.feedback_style', 'communication.brevity', 'personality.conflict_style', 'personality.risk_tolerance', 'work_patterns.delegation_style'];
 
 // signal-detector.js emits a CLOSED value set per dimension. Pinned here so the
 // DIRECTIVES completeness test fails loudly if the detector grows a new value.
@@ -54,6 +55,7 @@ const VALUE_SETS = {
   'work_patterns.energy': ['night-owl', 'daytime', 'mixed'],
   'work_patterns.multitasking': ['task-switcher', 'sequential-deep'],
   'work_patterns.session_length': ['short', 'medium', 'long'],
+  'work_patterns.delegation_style': ['autonomous', 'collaborative'],
 };
 
 // --- privacy matrix -----------------------------------------------------
@@ -71,11 +73,11 @@ test('minimal → only the 4 Tang-1 dims, Tang-2 stripped even when committed', 
   for (const n of TANG2_DIMS) assert.ok(!block.includes(render.LABELS[n]), `minimal leaked ${n}`);
 });
 
-test('standard → all 9 committed dims; full is byte-identical to standard', () => {
+test('standard → all 10 committed dims; full is byte-identical to standard', () => {
   const std = render.renderProfileBlock(fullProfile(), { level: 'standard' });
   const full = render.renderProfileBlock(fullProfile(), { level: 'full' });
   assert.equal(std, full, 'full must equal standard (no Tang-3 dims exist)');
-  assert.equal(render.selectInjectableDims(fullProfile(), 'standard').length, 9);
+  assert.equal(render.selectInjectableDims(fullProfile(), 'standard').length, 10);
 });
 
 test('decision_speed namespace trap: personality.* but Tang-1, renders at minimal', () => {
