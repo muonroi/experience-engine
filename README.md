@@ -67,6 +67,21 @@ This is the cross-platform equivalent of `bash upgrade.sh --sync-only` and honor
 thin-client `config.json` (it POSTs to the configured remote brain). Run it on a schedule
 (cron / Task Scheduler) to keep the brain current.
 
+### Stay current — `check-update` / `update`
+
+Check whether a newer release is on npm, and update in place:
+
+```bash
+npx @muonroi/experience-engine check-update   # compare installed vs registry latest (no changes)
+npx @muonroi/experience-engine update          # update if behind
+npx @muonroi/experience-engine update --force  # re-run even when already current
+```
+
+`check-update` exits `0` (up to date), `10` (update available), or `1` (check
+failed) — handy in scripts. `update` auto-detects the install mode: a git checkout
+runs `bash upgrade.sh`; a plain npm install runs `npm i -g @muonroi/experience-engine@latest`
+and then refreshes `~/.experience` (cross-platform, no bash needed for the npm path).
+
 ### Self-host the brain (advanced)
 
 To run the full stack (Qdrant + Ollama + API) on your own machine:

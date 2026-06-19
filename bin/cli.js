@@ -19,6 +19,8 @@ Usage:
   experience-engine sync-install [args...]
   experience-engine server [args...]
   experience-engine health [args...]
+  experience-engine check-update
+  experience-engine update [--force]
   experience-engine help
 
 Commands:
@@ -31,6 +33,10 @@ Commands:
   sync-install        Sync packaged runtime files into ~/.experience
   server              Start the Experience Engine API server
   health              Run the installed ~/.experience health check
+  check-update        Compare installed version to the npm registry latest
+  update              Update to the latest release (git → upgrade.sh; npm → npm
+                      i -g @latest + refresh ~/.experience). --force re-runs even
+                      when already current.
   help                Show this help
 `);
 }
@@ -52,6 +58,10 @@ function resolveCommand(command, args = []) {
       return { cmd: process.execPath, args: [path.join(root, 'server.js'), ...args] };
     case 'health':
       return { cmd: 'bash', args: [path.join(root, '.experience', 'health-check.sh'), ...args] };
+    case 'check-update':
+    case 'update':
+      // update.js reads the subcommand from argv[0] to pick check-only vs run.
+      return { cmd: process.execPath, args: [path.join(root, 'bin', 'update.js'), command, ...args] };
     case 'help':
     case undefined:
       return null;
