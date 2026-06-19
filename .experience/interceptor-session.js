@@ -102,6 +102,23 @@ function _loadEnricher() {
 }
 const _enricher = _loadEnricher();
 
+// "Who Am I" v4.0 (slice 2): load the privacy config + profile model + pure
+// renderer for the on-device profile block. Dual-path (EXP_DIR/src → __dirname/src)
+// mirrors interceptor-prompt.js:393-408 so it resolves on thin + full installs;
+// returns null (logged) when any module is absent → injection degrades to brief-only.
+function _loadProfileDeps() {
+  const fromDir = (dir) => ({
+    config: require(path.join(dir, 'src', 'config.js')),
+    model: require(path.join(dir, 'src', 'profile-model.js')),
+    render: require(path.join(dir, 'src', 'profile-render.js')),
+  });
+  try { return fromDir(EXP_DIR); }
+  catch {
+    try { return fromDir(__dirname); }
+    catch (err) { debugLog({ stage: 'profile_deps_load_failed', message: err?.message || String(err) }); return null; }
+  }
+}
+
 function deriveProjectSlug(cwd) {
   if (!_enricher || typeof _enricher.enrichSourceMeta !== 'function') return null;
   try {
@@ -196,27 +213,54 @@ process.stdin.on('end', async () => {
     const cwd = data.cwd || process.cwd();
     const slug = deriveProjectSlug(cwd);
     debugLog({ stage: 'parsed', source: data.source || null, cwd, slug, runtime: RUNTIME_OVERRIDE });
-    if (!slug) { process.exitCode = 0; return; }
 
-    // Client cache short-circuit — brief changes slowly.
-    const cached = readClientCache(slug);
-    let text = cached?.text || null;
-    if (!cached) {
-      const mute = suppressHookOutput();
-      text = await withTimeout(fetchBrief(slug, cwd), INTERCEPT_TIMEOUT_MS);
-      const muted = mute.restore();
-      if (muted.length > 0) {
-        debugLog({ stage: 'suppressed_output', count: muted.length, preview: muted.map(m => m.text).join('').slice(0, 240) });
+    // "Who Am I" v4.0 profile block — composed FRESH each session (never written
+    // to the brief cache), entirely on-device, gated by the LIVE privacy level so
+    // a downgrade/off takes effect next session. Independent of the slug: it fires
+    // even on a no-slug / fact-less session. Fail-open: any error degrades to
+    // brief-only and never drops the SessionStart injection.
+    let profileBlock = '';
+    try {
+      const deps = _loadProfileDeps();
+      if (deps) {
+        const level = deps.config.getPrivacyLevel();
+        if (level !== 'off') {
+          const profile = deps.model.loadProfile(deps.config.getProfilePath());
+          profileBlock = deps.render.renderProfileBlock(profile, { level, now: Date.now() }) || '';
+          debugLog({ stage: 'profile_injected', level, injected: !!profileBlock, chars: profileBlock.length });
+        } else {
+          debugLog({ stage: 'profile_skip', reason: 'privacyLevel off' });
+        }
       }
-      if (text) writeClientCache(slug, text);
+    } catch (err) {
+      debugLog({ stage: 'profile_read_failed', message: err?.message || String(err) });
     }
 
-    debugLog({ stage: 'done', slug, hasBrief: !!text, fromCache: !!cached });
-    if (text) {
+    // Project Brief — only fetched when a slug exists. Client cache short-circuit
+    // (brief changes slowly); the profile is deliberately NOT cached here.
+    let text = null;
+    let fromCache = false;
+    if (slug) {
+      const cached = readClientCache(slug);
+      if (cached) { text = cached.text || null; fromCache = true; }
+      else {
+        const mute = suppressHookOutput();
+        text = await withTimeout(fetchBrief(slug, cwd), INTERCEPT_TIMEOUT_MS);
+        const muted = mute.restore();
+        if (muted.length > 0) {
+          debugLog({ stage: 'suppressed_output', count: muted.length, preview: muted.map(m => m.text).join('').slice(0, 240) });
+        }
+        if (text) writeClientCache(slug, text);
+      }
+    }
+
+    debugLog({ stage: 'done', slug, hasBrief: !!text, hasProfile: !!profileBlock, fromCache });
+    const additionalContext = [profileBlock, text].filter(Boolean).join('\n\n');
+    if (additionalContext) {
       process.stdout.write(JSON.stringify({
         hookSpecificOutput: {
           hookEventName: 'SessionStart',
-          additionalContext: text,
+          additionalContext,
         }
       }));
     }

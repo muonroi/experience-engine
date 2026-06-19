@@ -266,12 +266,16 @@ fi
 #                        which are thin-safe — node built-ins + lazy requires only
 #   - signal-detector.js / profile-model.js  "Who Am I" v4.0 (default-off; the
 #                        Stop hook only loads them when privacyLevel != off)
+#   - profile-render.js  "Who Am I" v4.0 slice 2 — pure profile→directive renderer
+#                        the SessionStart hook loads when privacyLevel != off to
+#                        inject the on-device "Developer Profile (live)" block
 THIN_SAFE_SRC=(
   config.js
   risk-triggers.js
   surface-trigger.js
   signal-detector.js
   profile-model.js
+  profile-render.js
 )
 mkdir -p "$INSTALL_DIR/src"
 for f in "${THIN_SAFE_SRC[@]}"; do

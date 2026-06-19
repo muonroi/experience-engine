@@ -99,7 +99,7 @@ Qdrant config is resolved through `.experience/src/config.js`, so both flat keys
 |------|---------|
 | `.experience/interceptor.js` | Agent hook entry; calls local core or remote client |
 | `.experience/interceptor-prompt.js` | UserPromptSubmit hook: similarity-gated experience hints + **active-recall nudge** (one-line reminder to PULL via `exp-recall` injected per prompt, but ONLY when no hint surfaced that turn — survives context compaction that buries SessionStart/CLAUDE.md). Disable with `EXPERIENCE_RECALL_NUDGE=0`. **Trivial-prompt gate is config-driven** (no longer hardcoded): `getMinPromptLength` (`minPromptLength` / `EXPERIENCE_MIN_PROMPT_LENGTH`, default 10) + `getPromptSkipRegex` (`promptSkipWords[]` or `EXPERIENCE_PROMPT_SKIP_WORDS`, multilingual default incl. vi greetings; full override via `promptSkipPattern` / `EXPERIENCE_PROMPT_SKIP_PATTERN`). Fails open to hardcoded defaults if config.js can't load |
-| `.experience/interceptor-session.js` | SessionStart hook; injects the breadth-first Project Brief once per session. Wired for Claude/Codex/Gemini/Antigravity (all expose a native SessionStart + `hookSpecificOutput.additionalContext`; Antigravity tagged `--runtime=antigravity`) |
+| `.experience/interceptor-session.js` | SessionStart hook; injects the breadth-first Project Brief once per session. Wired for Claude/Codex/Gemini/Antigravity (all expose a native SessionStart + `hookSpecificOutput.additionalContext`; Antigravity tagged `--runtime=antigravity`). **Also injects the "Who Am I" live profile block** (slice 2): composed FRESH on-device via `_loadProfileDeps()` → `getPrivacyLevel()` → `loadProfile()` → `renderProfileBlock()`, gated by privacy level (off ⇒ nothing), prepended to the brief in `additionalContext`. Independent of the slug (fires even with no project), never written to the brief cache. |
 | `.experience/interceptor-post.js` | Post-tool reconciliation hook |
 | `.experience/posttool-batch-hook.js` | Batched post-tool hook path |
 | `.experience/experience-core.js` | Shared hook runtime facade and compatibility surface |
@@ -124,7 +124,8 @@ modules instead of reimplementing cross-cutting behavior.
 
 | Path | Purpose |
 |------|---------|
-| `.experience/src/config.js` | Config loader, encrypted values, env fallbacks, constants, collection list |
+| `.experience/src/config.js` | Config loader, encrypted values, env fallbacks, constants, collection list. Includes the "Who Am I" privacy getters: `getPrivacyLevel` (`privacyLevel` / `EXPERIENCE_PRIVACY_LEVEL`, default `off`), `getProfilePath`, `getSignalWindowDays` |
+| `.experience/src/profile-render.js` | "Who Am I" v4.0 slice 2 — **pure** profile→directive renderer (no fs/wall-clock/`getPrivacyLevel` inside; caller passes `level` + `now`). `selectInjectableDims` (positive per-dim-NAME allowlist by tier + `ELIGIBLE_NAMESPACES` Tang-3 guard + per-tier confidence floor on top of the `value!=null` commit gate) and `renderProfileBlock` (marker-delimited `experience-profile:*` block, supersedes the static GSD profile by precedence). Golden-tested in `tests/profile-render.test.js` |
 | `.experience/src/logger.js` | Structured JSON logger; `EXPERIENCE_LOG_LEVEL=debug` enables debug entries |
 | `.experience/src/qdrant.js` | Qdrant I/O, Qdrant health cache, FileStore fallback, FileStore locks |
 | `.experience/src/embedding.js` | Embedding provider + vector generation. Providers return `{vector, err}` (No-Silent-Catch: HTTP status/body + timeout/network classified, recorded as `errKind`/`status` on the embed cost-call). Per-request timeout configurable (`getEmbedTimeoutMs`, default 10s — provider tail-latency spikes >5s were being turned into hard failures by a fixed 5s abort) |
@@ -271,6 +272,15 @@ High-signal tests by area:
 | Setup/CLI | `tests/npm-cli.test.js`, `.experience/test-setup.js`, `.experience/test-health-check.js` |
 
 ---
+
+## Who Am I v4.0 — Profile Injection (slice 2)
+
+The Stop hook (`stop-extractor.js maybeUpdateProfile`, slice 1) WRITES `~/.experience/profile.yaml`; the SessionStart hook (`interceptor-session.js`, slice 2) READS and INJECTS it. All on-device — the profile never transits the network and is never assembled server-side (Tang-3-never-off-device holds by construction).
+
+- **Live check (full install):** set `privacyLevel: standard` in `~/.experience/config.json`, run `node .experience/tools/whoami.js --rebuild` to commit ≥1 dimension, start a fresh session in a known project, and confirm the SessionStart `additionalContext` contains `## Developer Profile (live`. Inspect `~/.codex/log/experience-hook-debug.jsonl` for the `profile_injected` / `profile_skip` / `profile_read_failed` records. Flip `privacyLevel: off` and confirm the block disappears next session.
+- **Privacy gate:** enforced at INJECTION time (not trusted from the file) via a positive per-dimension-NAME allowlist keyed on the LIVE `getPrivacyLevel()` — `off`=[], `minimal`=3 Tang-1 work dims, `standard`/`full`=+5 Tang-2 dims; `full` is default-deny. A `standard→minimal` downgrade strips stale Tang-2 values even though they remain physically in `profile.yaml`.
+- **Adaptation metric (deferred):** the hook emits a `{stage:'profile_injected', level, injected, chars}` breadcrumb; a future `tools/` aggregator can join injected sessions against signal-detector brevity/feedback axes from `activity.jsonl` to confirm the agent actually adapts.
+- **Deferred:** user-edit DURABILITY (a per-dim override flag honored by `aggregateProfile`, which currently re-derives every dim each Stop write — a hand-edited `value:` is rendered verbatim but reverted on the next aggregation); thin-client `minimal`-tier data source (local `activity.jsonl` isn't written on thin clients, so Tang-1 dims stay pending there — `standard`-tier transcript signals still work); the static agent-md companion directive (parameterize `applyBlock` + bash twin); full migration of the GSD `## Developer Profile` block.
 
 ## What to Read First by Task
 

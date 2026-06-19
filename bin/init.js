@@ -58,6 +58,7 @@ const THIN_SAFE_SRC = [
   'surface-trigger.js',
   'signal-detector.js',
   'profile-model.js',
+  'profile-render.js',
   // Needed by the `sync` tools (bulk-extract / import-memory). All leaves or
   // depend only on other thin-safe modules — verified dep closure, no brain pull.
   'utils.js',
