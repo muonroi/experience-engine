@@ -32,7 +32,7 @@ const ELIGIBLE_NAMESPACES = new Set(['work_patterns', 'communication', 'personal
 // Tang 1 (work patterns + activity-derived decision_speed). decision_speed is
 // namespaced personality.* but its SOURCE is activity (signal-detector.js), so it
 // belongs to the minimal tier — the allowlist keys on NAME, never on namespace.
-const TIER_MINIMAL = ['work_patterns.energy', 'work_patterns.multitasking', 'personality.decision_speed'];
+const TIER_MINIMAL = ['work_patterns.energy', 'work_patterns.multitasking', 'work_patterns.session_length', 'personality.decision_speed'];
 // Tang 2 (decision + communication style), added at standard.
 const TIER_STANDARD = TIER_MINIMAL.concat([
   'communication.question_style', 'communication.feedback_style', 'communication.brevity',
@@ -48,7 +48,7 @@ const WORK_DIMS = new Set(TIER_MINIMAL);
 
 const DEFAULT_MIN_CONFIDENCE = 0.6;
 const DEFAULT_WORK_MIN_CONFIDENCE = 0.45;
-const DEFAULT_MAX_DIMS = 8;
+const DEFAULT_MAX_DIMS = 10;  // headroom for all 9 emittable dims (was 8 — capped before session_length landed)
 const DEFAULT_STALE_DAYS = 60;
 
 const LABELS = {
@@ -60,6 +60,7 @@ const LABELS = {
   'personality.decision_speed': 'Decision speed',
   'work_patterns.energy': 'Energy',
   'work_patterns.multitasking': 'Multitasking',
+  'work_patterns.session_length': 'Session length',
 };
 
 // Static, human-reviewed imperative directives (mirrors the GSD "Directives" style).
@@ -103,6 +104,11 @@ const DIRECTIVES = {
   'work_patterns.multitasking': {
     'task-switcher': 'User juggles multiple projects — keep context self-contained, re-state where needed',
     'sequential-deep': 'User works one thing deeply at a time — go deep, avoid context-switching tangents',
+  },
+  'work_patterns.session_length': {
+    short: 'User works in short bursts — keep answers tight and self-contained; avoid long multi-step detours',
+    medium: 'User works in moderate sessions — balance depth with momentum',
+    long: 'User runs long deep-work sessions — sustained multi-step work is welcome; keep continuity across steps',
   },
 };
 

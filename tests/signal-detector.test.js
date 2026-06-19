@@ -100,6 +100,26 @@ test('detectSignals: work_patterns energy + multitasking', () => {
   assert.ok(multi, 'multitasking signal present');
 });
 
+test('detectSignals: session_length — one vote per session, bucketed, single-prompt skipped', () => {
+  const base = Date.parse('2026-06-10T10:00:00Z');
+  const at = (mins) => ({ ts: new Date(base + mins * 60000).toISOString(), op: 'hook', hook: 'interceptor-prompt' });
+  // Session A: 0,5,10min → 10min span → short. Then >1h gap.
+  // Session B: 130,150,170min → 40min span → medium. Then >1h gap.
+  // Session C: 300,330,360,390min → 90min span → long. Then >1h gap.
+  // Session D: single prompt at 500min → no duration → no vote.
+  const events = [0, 5, 10, 130, 150, 170, 300, 330, 360, 390, 500].map(at);
+  const { signals } = sd.detectSignals({ transcript: '', activityEvents: events, now: base });
+  const lens = signals.filter((s) => s.dimension === 'work_patterns.session_length').map((s) => s.value);
+  assert.deepEqual(lens, ['short', 'medium', 'long'], 'one vote per multi-prompt session, single-prompt skipped');
+});
+
+test('detectSignals: session_length absent when fewer than 2 prompts', () => {
+  const base = Date.parse('2026-06-10T10:00:00Z');
+  const events = [{ ts: new Date(base).toISOString(), op: 'hook', hook: 'interceptor-prompt' }];
+  const { signals } = sd.detectSignals({ transcript: '', activityEvents: events, now: base });
+  assert.equal(signals.find((s) => s.dimension === 'work_patterns.session_length'), undefined);
+});
+
 // --- readActivityEvents (I/O boundary) ---
 
 test('readActivityEvents: skips+counts malformed lines, ENOENT → empty', () => {

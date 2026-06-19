@@ -24,7 +24,7 @@ function dim(value, confidence, sampleCount = 20) {
 function profileOf(dimensions, updatedAt = null) {
   return { version: 1, updatedAt, dimensions };
 }
-// All 8 emitted dimensions committed at high confidence.
+// All 9 emitted dimensions committed at high confidence.
 function fullProfile() {
   return profileOf({
     'communication.question_style': dim('directive', 0.8, 30),
@@ -35,10 +35,11 @@ function fullProfile() {
     'personality.decision_speed': dim('fast-intuitive', 0.7, 15),
     'work_patterns.energy': dim('night-owl', 0.6, 40),
     'work_patterns.multitasking': dim('sequential-deep', 0.65, 25),
+    'work_patterns.session_length': dim('long', 0.55, 16),
   });
 }
 
-const MINIMAL_DIMS = ['work_patterns.energy', 'work_patterns.multitasking', 'personality.decision_speed'];
+const MINIMAL_DIMS = ['work_patterns.energy', 'work_patterns.multitasking', 'work_patterns.session_length', 'personality.decision_speed'];
 const TANG2_DIMS = ['communication.question_style', 'communication.feedback_style', 'communication.brevity', 'personality.conflict_style', 'personality.risk_tolerance'];
 
 // signal-detector.js emits a CLOSED value set per dimension. Pinned here so the
@@ -52,6 +53,7 @@ const VALUE_SETS = {
   'personality.decision_speed': ['fast-intuitive', 'measured', 'deliberate'],
   'work_patterns.energy': ['night-owl', 'daytime', 'mixed'],
   'work_patterns.multitasking': ['task-switcher', 'sequential-deep'],
+  'work_patterns.session_length': ['short', 'medium', 'long'],
 };
 
 // --- privacy matrix -----------------------------------------------------
@@ -61,7 +63,7 @@ test('off → renders nothing (feature dark)', () => {
   assert.deepEqual(render.selectInjectableDims(fullProfile(), 'off'), []);
 });
 
-test('minimal → only the 3 Tang-1 dims, Tang-2 stripped even when committed', () => {
+test('minimal → only the 4 Tang-1 dims, Tang-2 stripped even when committed', () => {
   const names = render.selectInjectableDims(fullProfile(), 'minimal').map(d => d.name).sort();
   assert.deepEqual(names, [...MINIMAL_DIMS].sort());
   const block = render.renderProfileBlock(fullProfile(), { level: 'minimal' });
@@ -69,11 +71,11 @@ test('minimal → only the 3 Tang-1 dims, Tang-2 stripped even when committed', 
   for (const n of TANG2_DIMS) assert.ok(!block.includes(render.LABELS[n]), `minimal leaked ${n}`);
 });
 
-test('standard → all 8 committed dims; full is byte-identical to standard', () => {
+test('standard → all 9 committed dims; full is byte-identical to standard', () => {
   const std = render.renderProfileBlock(fullProfile(), { level: 'standard' });
   const full = render.renderProfileBlock(fullProfile(), { level: 'full' });
   assert.equal(std, full, 'full must equal standard (no Tang-3 dims exist)');
-  assert.equal(render.selectInjectableDims(fullProfile(), 'standard').length, 8);
+  assert.equal(render.selectInjectableDims(fullProfile(), 'standard').length, 9);
 });
 
 test('decision_speed namespace trap: personality.* but Tang-1, renders at minimal', () => {

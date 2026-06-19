@@ -211,6 +211,42 @@ function detectSignals({ transcript = '', activityEvents = [] } = {}) {
     });
   }
 
+  // work_patterns.session_length (Tang 1): segment the prompt stream into sessions
+  // using the SAME SESSION_GAP_MS boundary as decision_speed, then bucket each
+  // session's first→last duration. detectSignals runs over a MULTI-session window
+  // (stop-extractor passes ~30 days of activity), so we emit ONE vote per session —
+  // never a single naive last-minus-first — which feeds the N>=10 aggregation gate
+  // with one sample per session. Single-prompt sessions have no duration → skipped.
+  if (prompts.length >= 2) {
+    let runStart = prompts[0];
+    let prevTs = prompts[0];
+    let runCount = 1;
+    const flushSession = () => {
+      if (runCount >= 2) {
+        const durMin = (prevTs - runStart) / 60000;
+        if (durMin > 0) {
+          signals.push({
+            dimension: 'work_patterns.session_length',
+            value: durMin < 15 ? 'short' : durMin < 60 ? 'medium' : 'long',
+            weight: 1,
+            evidence: `session ~${Math.round(durMin)}min over ${runCount} prompts`,
+          });
+        }
+      }
+    };
+    for (let i = 1; i < prompts.length; i++) {
+      if (prompts[i] - prevTs >= SESSION_GAP_MS) {
+        flushSession();
+        runStart = prompts[i];
+        runCount = 1;
+      } else {
+        runCount++;
+      }
+      prevTs = prompts[i];
+    }
+    flushSession();
+  }
+
   return { signals, stats };
 }
 
