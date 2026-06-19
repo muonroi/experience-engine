@@ -9,10 +9,40 @@ const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
 
-const SCRIPT_PATH = path.join(__dirname, 'setup.sh');
+// Forward-slashed so Git Bash (MSYS) translates the D:/ drive path; the WSL bash
+// on PATH would reject it.
+const SCRIPT_PATH = path.join(__dirname, 'setup.sh').replace(/\\/g, '/');
+
+// Resolve a POSIX bash able to run the installer. On Windows the `bash` on PATH is
+// frequently WSL (C:\Windows\System32\bash.exe), which cannot resolve a Windows-style
+// script path like D:/repo/setup.sh (it expects /mnt/d/...) and exits 127. Git Bash
+// (MSYS2) translates Windows drive paths transparently, so point at it explicitly
+// rather than trusting PATH order. Returns the bash to use, or null when none is
+// usable (→ the test skips with a clear reason; setup.sh is a POSIX installer never
+// executed on Windows in production). On non-Windows this is always plain `bash`, so
+// Linux/CI behaviour is unchanged.
+function resolveBash() {
+  if (process.platform !== 'win32') return 'bash';
+  const roots = [
+    process.env.ProgramFiles,
+    process.env.ProgramW6432,
+    process.env['ProgramFiles(x86)'],
+    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs'),
+  ].filter(Boolean);
+  const candidates = roots.flatMap((root) => [
+    path.join(root, 'Git', 'bin', 'bash.exe'),
+    path.join(root, 'Git', 'usr', 'bin', 'bash.exe'),
+  ]);
+  return candidates.find((p) => fs.existsSync(p)) || null;
+}
+
+const BASH = resolveBash();
+const bashOpts = BASH
+  ? {}
+  : { skip: 'no POSIX bash that resolves Windows paths (Git Bash not found; WSL bash cannot run D:/ paths)' };
 
 function makeHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'exp-setup-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'exp-setup-')).replace(/\\/g, '/');
 }
 
 function startServer() {
@@ -44,7 +74,7 @@ function startServer() {
 
 function runSetup(env) {
   return new Promise((resolve, reject) => {
-    const child = spawn('bash', [SCRIPT_PATH], {
+    const child = spawn(BASH, [SCRIPT_PATH], {
       env: { ...process.env, ...env },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -67,7 +97,7 @@ function runSetup(env) {
   });
 }
 
-test('setup.sh skips local Qdrant and embed checks in thin-client mode', async () => {
+test('setup.sh skips local Qdrant and embed checks in thin-client mode', bashOpts, async () => {
   const homeDir = makeHome();
   const { server, port, requests } = await startServer();
 
