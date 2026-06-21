@@ -13,6 +13,7 @@ const {
 } = require('./config');
 const { log } = require('./logger');
 const { buildSparseVector, SPARSE_VECTOR_NAME } = require('./sparse');
+const { buildTextSearch } = require('./format');
 
 // ============================================================
 //  Qdrant connection state
@@ -427,6 +428,41 @@ async function deleteEntry(collection, id) {
 //  syncToQdrant — push FileStore entries to Qdrant
 // ============================================================
 
+/**
+ * Build the Qdrant upsert point for a FileStore entry. When the collection
+ * supports the `text_bm25` sparse vector, attach a freshly-computed sparse
+ * vector (the lexical leg of hybrid retrieval) alongside the dense vector —
+ * otherwise Qdrant-synced points are written dense-only and stay invisible to
+ * the native BM25 / MatchText leg. That dense-only write was the root cause of
+ * sparse-coverage DRIFT: points added after a migration top-up lacked sparse
+ * and silently degraded `/api/recall` + `/api/search` hybrid retrieval (see
+ * tools/migrate-sparse-bm25.js). Mirrors the migration's re-upload vector shape.
+ * Defensive: any failure building the sparse vector falls back to dense-only so
+ * a write is never blocked (logged at warn). Exported for testing.
+ */
+function buildSyncPoint(entry, supportsSparse) {
+  const payload = { ...(entry.payload || {}) };
+  if (!supportsSparse) return { id: entry.id, vector: entry.vector, payload };
+  try {
+    let text = payload.text_search;
+    if (typeof text !== 'string' || !text.trim()) {
+      let data = {};
+      try { data = JSON.parse(payload.json || '{}'); } catch { /* malformed json → empty derive */ }
+      text = buildTextSearch(data);
+    }
+    const sparse = buildSparseVector(text);
+    if (!sparse || !Array.isArray(sparse.indices) || sparse.indices.length === 0) {
+      return { id: entry.id, vector: entry.vector, payload };
+    }
+    // Persist text_search so the MatchText fallback + future top-ups stay aligned.
+    if (typeof payload.text_search !== 'string' || !payload.text_search.trim()) payload.text_search = text;
+    return { id: entry.id, vector: { '': entry.vector, [SPARSE_VECTOR_NAME]: sparse }, payload };
+  } catch (err) {
+    log('warn', 'sync_sparse_build_failed', { id: entry.id, error: err?.message || String(err) });
+    return { id: entry.id, vector: entry.vector, payload };
+  }
+}
+
 async function syncToQdrant() {
   if (!(await checkQdrant())) throw new Error('Qdrant not available');
   const collections = COLLECTIONS.map(c => c.name);
@@ -434,11 +470,12 @@ async function syncToQdrant() {
   for (const coll of collections) {
     const entries = fileStoreRead(coll);
     if (entries.length === 0) continue;
+    // Probe ONCE per collection (cached) so the write attaches the sparse leg
+    // when supported — dense-only writes drift out of hybrid coverage.
+    const supportsSparse = await collectionSupportsSparse(coll);
     // Batch upsert in chunks of 50
     for (let i = 0; i < entries.length; i += 50) {
-      const batch = entries.slice(i, i + 50).map(e => ({
-        id: e.id, vector: e.vector, payload: e.payload,
-      }));
+      const batch = entries.slice(i, i + 50).map(e => buildSyncPoint(e, supportsSparse));
       await fetch(`${getQdrantBase()}/collections/${coll}/points`, {
         method: 'PUT',
         headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
@@ -599,6 +636,7 @@ module.exports = {
   fetchPointById,
   deleteEntry,
   syncToQdrant,
+  buildSyncPoint,
   buildQdrantUserFilter,
   cosineSimilarity,
   tokenizeForLexical,

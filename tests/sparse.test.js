@@ -132,3 +132,36 @@ test('searchCollectionSparse: returns [] for token-less query (no sparse dims)',
   const res = await qdrant.searchCollectionSparse('experience-behavioral', '  -- // ', 10);
   assert.deepEqual(res, []);
 });
+
+// ---- buildSyncPoint: sparse-on-write (prevents hybrid-coverage drift) ----
+
+test('buildSyncPoint: dense-only when collection has no sparse support', () => {
+  const { buildSyncPoint } = require(QPATH);
+  const p = buildSyncPoint({ id: 'x', vector: [0.1, 0.2], payload: { text_search: 'restart server' } }, false);
+  assert.deepEqual(p.vector, [0.1, 0.2], 'unnamed dense array unchanged');
+  assert.equal(p.payload.text_search, 'restart server');
+});
+
+test('buildSyncPoint: attaches text_bm25 sparse from payload.text_search when supported', () => {
+  const { buildSyncPoint } = require(QPATH);
+  const p = buildSyncPoint({ id: 'x', vector: [0.1, 0.2], payload: { text_search: 'restart server restart' } }, true);
+  assert.ok(p.vector && typeof p.vector === 'object' && !Array.isArray(p.vector), 'named-vector object');
+  assert.deepEqual(p.vector[''], [0.1, 0.2], 'dense preserved under empty name');
+  assert.ok(p.vector[SPARSE_VECTOR_NAME], 'sparse vector attached');
+  assert.ok(p.vector[SPARSE_VECTOR_NAME].indices.length > 0, 'sparse has dims');
+});
+
+test('buildSyncPoint: derives text from payload.json + sets text_search when missing', () => {
+  const { buildSyncPoint } = require(QPATH);
+  const json = JSON.stringify({ trigger: 'database connection pool exhausted', solution: 'raise max pool size' });
+  const p = buildSyncPoint({ id: 'x', vector: [0.1], payload: { json } }, true);
+  assert.ok(p.vector[SPARSE_VECTOR_NAME].indices.length > 0, 'sparse derived from json');
+  assert.equal(typeof p.payload.text_search, 'string');
+  assert.ok(p.payload.text_search.length > 0, 'text_search backfilled for MatchText fallback');
+});
+
+test('buildSyncPoint: token-less text falls back to dense-only (no empty sparse)', () => {
+  const { buildSyncPoint } = require(QPATH);
+  const p = buildSyncPoint({ id: 'x', vector: [0.1], payload: { text_search: '  -- // ' } }, true);
+  assert.deepEqual(p.vector, [0.1], 'no sparse attached for token-less text');
+});
