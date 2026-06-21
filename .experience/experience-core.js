@@ -580,7 +580,13 @@ async function searchCollectionHybrid(collection, queryText, vector, topK, signa
   }
   if (!lexical || lexical.length === 0) return dense; // nothing to fuse
   try {
-    return _fusion.hybridFuse(dense, lexical, queryText, { preranked });
+    // hybridFuse merges up to dense.length + lexical.length unique points. Slice
+    // back to topK so the hybrid variant honours the same ≤topK contract as the
+    // dense-only searchCollection — the fused list is RRF-ordered, so the top
+    // topK are the best fused hits. (Without this, /api/search would return up
+    // to 2×limit results — a broken limit contract AND a token-thrift regression.)
+    const fused = _fusion.hybridFuse(dense, lexical, queryText, { preranked });
+    return fused.slice(0, topK);
   } catch (err) {
     console.error(`[experience-core] searchCollectionHybrid fuse failed for ${collection}: ${err?.message || err}`);
     return dense;
