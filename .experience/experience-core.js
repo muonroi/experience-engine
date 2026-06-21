@@ -540,9 +540,57 @@ async function intercept(toolName, toolInput, signal, meta) {
 }
 
 // --- Exports ---
+/**
+ * Gate-free hybrid retrieval for a single collection — the building block behind
+ * /api/search's hybrid mode. Runs the dense-vector leg (cosine) AND a lexical leg
+ * (native BM25 sparse when the collection is sparse-migrated, else boolean
+ * MatchText), then fuses them with Reciprocal Rank Fusion — the SAME fusion the
+ * recall path applies internally (see the recallMode block above). No scope/score
+ * gates: /api/search is a deliberate, raw query like /api/recall, so the server
+ * keeps cosine order for vector-origin hits and lets lexical-only hits in.
+ *
+ * Fail-open by design: the underlying qdrant search functions already swallow +
+ * log their own errors and return [], and any unexpected throw here returns the
+ * dense leg untouched — hybrid can never regress dense-only behaviour.
+ *
+ * @param {string} collection
+ * @param {string} queryText  raw query text (drives the lexical/sparse leg)
+ * @param {number[]} vector   dense embedding of queryText (drives the cosine leg)
+ * @param {number} topK
+ * @param {AbortSignal} [signal]
+ * @param {object} [extraFilter]
+ * @returns {Promise<Array>} points in fused rank order, each with a display `score`
+ */
+async function searchCollectionHybrid(collection, queryText, vector, topK, signal, extraFilter) {
+  const dense = await _qdrant.searchCollection(collection, vector, topK, signal, extraFilter);
+  let lexical = [];
+  let preranked = false;
+  try {
+    const sparse = await _qdrant.searchCollectionSparse(collection, queryText, topK, signal, extraFilter);
+    if (sparse && sparse.length > 0) {
+      lexical = sparse;
+      preranked = true; // native BM25 — already scored + ordered by Qdrant
+    } else {
+      lexical = await _qdrant.searchCollectionLexical(collection, queryText, topK, signal, extraFilter);
+      preranked = false; // boolean MatchText — app-side ranked by hybridFuse
+    }
+  } catch (err) {
+    console.error(`[experience-core] searchCollectionHybrid lexical leg failed for ${collection}: ${err?.message || err}`);
+    return dense; // fail-open — the dense leg already resolved
+  }
+  if (!lexical || lexical.length === 0) return dense; // nothing to fuse
+  try {
+    return _fusion.hybridFuse(dense, lexical, queryText, { preranked });
+  } catch (err) {
+    console.error(`[experience-core] searchCollectionHybrid fuse failed for ${collection}: ${err?.message || err}`);
+    return dense;
+  }
+}
+
 module.exports = {
   intercept,
   interceptWithMeta,
+  searchCollectionHybrid,
   recordFeedback: _hittrack.recordFeedback,
   recordJudgeFeedback: _hittrack.recordJudgeFeedback,
   classifyViaBrain: _router.classifyViaBrain,

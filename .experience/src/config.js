@@ -135,6 +135,22 @@ function getPassiveLexicalDisplayScore() {
   return v == null ? (getMinSearchScore() + 0.10) : (Number(v) || (getMinSearchScore() + 0.10));
 }
 
+// --- /api/search hybridization (default ON) ---
+// Unlike passive hints (precision-tuned, vector-only by default), /api/search is a
+// DELIBERATE query — the CLI layer3 legacy block + thin-client lookups — so, like
+// /api/recall, it fuses a native BM25 sparse leg with the dense leg via RRF by
+// default. This surfaces lessons that match strongly on exact terms even when they
+// are semantically distant from the query embedding. Set EXPERIENCE_SEARCH_HYBRID=false
+// (or "searchHybrid": false in config.json) to revert /api/search to dense-only.
+// Fail-open: if the lexical leg is dead (collection not sparse-migrated and no text
+// index), hybrid silently degrades to dense-only — never a regression.
+function getSearchHybrid() {
+  const v = cfgValue('searchHybrid', 'EXPERIENCE_SEARCH_HYBRID', true);
+  if (v === true) return true;
+  if (v === false) return false;
+  return String(v).toLowerCase() !== 'false';
+}
+
 // --- Prompt triviality gate (consumed by interceptor-prompt.js) ---
 // Decides whether a UserPromptSubmit prompt is worth running retrieval +
 // injecting the active-recall nudge. Previously hardcoded in the hook; now
@@ -312,6 +328,7 @@ module.exports = {
   getBrainProvider, getBrainModel, getBrainExtractModel, getBrainModelForSource, getBrainEndpoint, getBrainKey,
   getMinConfidence, getHighConfidence, getMinSearchScore,
   getPassiveHybrid, getPassiveLexicalMaxAdds, getPassiveLexicalDisplayScore,
+  getSearchHybrid,
   getMinPromptLength, getPromptSkipRegex, DEFAULT_PROMPT_SKIP_WORDS,
   getExpUser, EXP_USER,
   getHomeExpDir, getStoreDir, getActivityLogPath,

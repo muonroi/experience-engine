@@ -1207,11 +1207,22 @@ async function handleSearch(req, res) {
     collections = ['experience-behavioral'];
   }
 
-  const { getEmbeddingRaw, searchCollection } = loadExperienceCore();
+  const { getEmbeddingRaw, searchCollection, searchCollectionHybrid } = loadExperienceCore();
   const vector = await getEmbeddingRaw(body.query, AbortSignal.timeout(2000));
   if (!vector) return error(res, 'Embedding unavailable', 503);
 
-  const results = await Promise.all(collections.map((c) => searchCollection(c, vector, limit)));
+  // Hybrid (dense cosine + native BM25 sparse, RRF-fused) by default — /api/search
+  // is a deliberate query, so it fuses a lexical leg like /api/recall to surface
+  // lexically-distinct lessons the dense leg buries. EXPERIENCE_SEARCH_HYBRID=false
+  // reverts to dense-only; hybrid also auto-degrades to dense when the lexical leg
+  // is unavailable (collection not sparse-migrated). See config.getSearchHybrid.
+  const useHybrid = runtimeConfig.getSearchHybrid() && typeof searchCollectionHybrid === 'function';
+  const searchSignal = AbortSignal.timeout(2500);
+  const results = await Promise.all(collections.map((c) =>
+    useHybrid
+      ? searchCollectionHybrid(c, body.query, vector, limit, searchSignal)
+      : searchCollection(c, vector, limit)
+  ));
   const mapped = [];
   for (let i = 0; i < collections.length; i++) {
     const collection = collections[i];
