@@ -1360,16 +1360,39 @@ async function handlePilContext(req, res) {
         core.searchCollection('experience-behavioral', vector, 4),
         core.searchCollection('experience-selfqa', vector, 4),
       ]);
-      if (selfqa) behavioral.push(...selfqa);
-      const toScoredText = (p) => {
+      // Tag each point with its SOURCE collection before merging selfqa into the
+      // behavioral bucket — a selfqa hit is not 'experience-behavioral', and the
+      // id/collection pair must point at the real collection so the CLI's
+      // ee_feedback(id, collection, verdict) resolves the right entry.
+      const tag = (arr, collection) => (arr || []).map((p) => ({ point: p, collection }));
+      const principlesTagged = tag(principles, 'experience-principles');
+      const behavioralTagged = [
+        ...tag(behavioral, 'experience-behavioral'),
+        ...tag(selfqa, 'experience-selfqa'),
+      ];
+      // Emit id + collection alongside text/score (schema_version 1.1) so
+      // muonroi-cli's unified PIL injection path (layer3 formatter mode) can record
+      // the point as rateable recall debt and the agent can credit it via
+      // ee_feedback. Without these the unified path is unrateable and the EE recall
+      // loop stays half-open there. Additive + backward compatible (older CLIs strip
+      // the unknown fields at schema parse).
+      const toScoredText = ({ point: p, collection }) => {
         const payload = p.payload || {};
         const j = (() => { try { return JSON.parse(payload.json || '{}'); } catch { return {}; } })();
-        return { text: payload.text || j.solution || '', score: p.score || 0 };
+        return {
+          id: p.id != null ? String(p.id) : undefined,
+          collection,
+          text: payload.text || j.solution || '',
+          score: p.score || 0,
+        };
       };
       const SCORE_FLOOR = 0.55;
-      t0_principles = (principles || []).map(toScoredText).filter((p) => p.score >= 0.40 && p.text);
-      t2_patterns = (behavioral || []).map(toScoredText).filter((p) => p.score >= SCORE_FLOOR && p.text);
-    } catch { retrieval_skipped_reason = 'retrieval_error'; }
+      t0_principles = principlesTagged.map(toScoredText).filter((p) => p.score >= 0.40 && p.text);
+      t2_patterns = behavioralTagged.map(toScoredText).filter((p) => p.score >= SCORE_FLOOR && p.text);
+    } catch (err) {
+      retrieval_skipped_reason = 'retrieval_error';
+      console.error(`[pil-context] retrieval failed: ${err?.message}`, { stack: err?.stack?.split('\n').slice(0, 3) });
+    }
   }
 
   // 3. T1 rules: high-score behavioral patterns (>=0.75) treated as "proven" proxy.
@@ -1392,7 +1415,9 @@ async function handlePilContext(req, res) {
     retrieval_skipped_reason,
     cache_hit: false,
     inference_ms: Date.now() - startMs,
-    schema_version: '1.0',
+    // 1.1: t0_principles / t2_patterns items now carry id + collection so the CLI
+    // unified injection path can record them as rateable recall debt (ee_feedback).
+    schema_version: '1.1',
   };
   pilCacheSet(cacheKey, response);
   json(res, response);

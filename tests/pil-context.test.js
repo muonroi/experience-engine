@@ -196,13 +196,26 @@ test('POST /api/pil-context classifies a debug prompt and returns T2 patterns wh
 
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.equal(body.schema_version, '1.0');
+    assert.equal(body.schema_version, '1.1');
     assert.equal(body.taskType, 'debug');
     assert.equal(body.intentKind, 'task');
     assert.ok(['concise', 'balanced', 'detailed'].includes(body.outputStyle));
     assert.ok(body.confidence > 0, `confidence should be > 0, got ${body.confidence}`);
     assert.ok(Array.isArray(body.t2_patterns));
     assert.ok(body.t2_patterns.length > 0, 't2_patterns should be non-empty when retrieval succeeds');
+    // schema_version 1.1: retrieval items carry id + collection so the CLI unified
+    // injection path can record them as rateable recall debt (ee_feedback).
+    const firstPattern = body.t2_patterns[0];
+    assert.equal(typeof firstPattern.id, 'string', 't2_patterns items should carry an id');
+    assert.ok(
+      ['experience-behavioral', 'experience-selfqa'].includes(firstPattern.collection),
+      `unexpected t2 collection: ${firstPattern.collection}`,
+    );
+    assert.ok(Array.isArray(body.t0_principles));
+    if (body.t0_principles.length > 0) {
+      assert.equal(typeof body.t0_principles[0].id, 'string', 't0_principles items should carry an id');
+      assert.equal(body.t0_principles[0].collection, 'experience-principles');
+    }
     // High-score pattern (0.82) should appear in t1_rules.
     assert.ok(Array.isArray(body.t1_rules));
     assert.ok(body.t1_rules.length > 0, 't1_rules should derive from >=0.75 patterns');
