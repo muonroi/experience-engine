@@ -1448,7 +1448,16 @@ async function handleBrainProxy(req, res) {
   const timeoutMs = body.timeoutMs || 8000;
   try {
     const { classifyViaBrain } = loadExperienceCore();
-    const result = await classifyViaBrain(body.prompt, timeoutMs);
+    // Forward optional classification overrides from SAMR/advanced callers.
+    // The underlying classifyViaBrain already supports options.systemPrompt,
+    // options.responseFormat, options.model, options.maxTokens, options.provider.
+    const options = {};
+    if (body.systemPrompt) options.systemPrompt = body.systemPrompt;
+    if (body.responseFormat) options.responseFormat = body.responseFormat;
+    if (body.model) options.model = body.model;
+    if (body.maxTokens != null) options.maxTokens = body.maxTokens;
+    if (body.provider) options.provider = body.provider;
+    const result = await classifyViaBrain(body.prompt, timeoutMs, options);
     res.writeHead(200, { 'Content-Type': 'application/json', ...CORS });
     res.end(JSON.stringify({ ok: true, result }));
   } catch (err) {
