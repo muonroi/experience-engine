@@ -1031,12 +1031,13 @@ const KNOWN_COLLECTIONS = new Set([
   // Phase 2: BB-specific collections
   'bb-behavioral',
   'bb-recipes',
+  'bb-packages', // Plan 23: BB NuGet packages
 ]);
 
 // ensureCollections — creates bb-* Qdrant collections at server startup if absent.
 // Vector dims must match the configured embedding model.
 async function ensureCollections() {
-  const BB_COLLECTIONS = ['bb-behavioral', 'bb-recipes'];
+  const BB_COLLECTIONS = ['bb-behavioral', 'bb-recipes', 'bb-packages'];
   const VECTOR_SIZE = Number(runtimeConfig.getEmbedDim()) || 768;
   for (const col of BB_COLLECTIONS) {
     try {
