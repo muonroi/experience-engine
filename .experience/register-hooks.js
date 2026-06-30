@@ -216,16 +216,10 @@ const AGENTS = [
   },
   {
     key: 'antigravity',
-    name: 'Google Antigravity',
-    file: path.join(home, '.gemini', 'config', 'hooks.json'),
+    name: 'Google Antigravity CLI',
+    file: path.join(home, '.antigravity', 'hooks.json'),
     patch(cfg) {
       if (!cfg.hooks) cfg.hooks = {};
-      // Antigravity delivers per-tool events but NO transcript_path, and labels
-      // every hook child the same. We pass `--runtime=antigravity` so the
-      // interceptors tag the runtime deterministically and reconstruct a
-      // Claude-shaped transcript (src/session-emit.js) the extractor can read.
-      // Drop any prior experience entries first so re-running upgrades older
-      // untagged commands to the tagged ones (idempotent + self-healing).
       const drop = (arr, needle) => (arr || []).filter(h => !(h.hooks || []).some(e => e.command?.includes(needle)));
       cfg.hooks.PreToolUse = drop(cfg.hooks.PreToolUse, 'interceptor');
       cfg.hooks.PreToolUse.push({ matcher:'Edit|Write|Bash', hooks:[{ type:'command', command:`node "${interceptor}" --runtime=antigravity`, timeout:5 }] });
@@ -236,9 +230,31 @@ const AGENTS = [
       cfg.hooks.UserPromptSubmit = drop(cfg.hooks.UserPromptSubmit, 'interceptor-prompt');
       cfg.hooks.UserPromptSubmit.push({ hooks:[{ type:'command', command:`node "${interceptorPrompt}" --runtime=antigravity`, timeout:5 }] });
 
-      // SessionStart — Antigravity mirrors Claude's hook model, so the Project
-      // Brief rides the same event. Tagged --runtime=antigravity for consistent
-      // runtime attribution; harmless no-op if the event is never emitted.
+      if (interceptorSession) {
+        cfg.hooks.SessionStart = drop(cfg.hooks.SessionStart, 'interceptor-session');
+        cfg.hooks.SessionStart.push({ hooks:[{ type:'command', command:`node "${interceptorSession}" --runtime=antigravity`, timeout:5 }] });
+      }
+
+      cfg.hooks.Stop = drop(cfg.hooks.Stop, 'stop-extractor');
+      cfg.hooks.Stop.push({ hooks:[{ type:'command', command:`node "${stop}" --runtime=antigravity`, timeout:90 }] });
+    }
+  },
+  {
+    key: 'antigravity-ide',
+    name: 'Google Antigravity IDE',
+    file: path.join(home, '.gemini', 'config', 'hooks.json'),
+    patch(cfg) {
+      if (!cfg.hooks) cfg.hooks = {};
+      const drop = (arr, needle) => (arr || []).filter(h => !(h.hooks || []).some(e => e.command?.includes(needle)));
+      cfg.hooks.PreToolUse = drop(cfg.hooks.PreToolUse, 'interceptor');
+      cfg.hooks.PreToolUse.push({ matcher:'Edit|Write|Bash', hooks:[{ type:'command', command:`node "${interceptor}" --runtime=antigravity`, timeout:5 }] });
+
+      cfg.hooks.PostToolUse = drop(cfg.hooks.PostToolUse, 'interceptor-post');
+      cfg.hooks.PostToolUse.push({ matcher:'Edit|Write|Bash', hooks:[{ type:'command', command:`node "${interceptorPost}" --runtime=antigravity`, timeout:5 }] });
+
+      cfg.hooks.UserPromptSubmit = drop(cfg.hooks.UserPromptSubmit, 'interceptor-prompt');
+      cfg.hooks.UserPromptSubmit.push({ hooks:[{ type:'command', command:`node "${interceptorPrompt}" --runtime=antigravity`, timeout:5 }] });
+
       if (interceptorSession) {
         cfg.hooks.SessionStart = drop(cfg.hooks.SessionStart, 'interceptor-session');
         cfg.hooks.SessionStart.push({ hooks:[{ type:'command', command:`node "${interceptorSession}" --runtime=antigravity`, timeout:5 }] });
