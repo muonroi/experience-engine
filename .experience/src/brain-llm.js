@@ -124,12 +124,14 @@ Reply with the relevant warning numbers separated by commas (e.g. "1,3"), or "no
     const startedAt = Date.now();
     let response;
 
+    const relevanceTimeout = Number(cfgValue('relevanceTimeoutMs', 'EXPERIENCE_RELEVANCE_TIMEOUT_MS', 6500));
+
     if (brainProvider === 'ollama') {
       const res = await fetch(getOllamaGenerateUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: getBrainModel(), prompt, stream: false, options: { temperature: 0.1, num_predict: 20 } }),
-        signal: signal || AbortSignal.timeout(3000),
+        signal: signal || AbortSignal.timeout(relevanceTimeout),
       });
       if (!res.ok) {
         logCostCall('brain', brainProvider, 'brain-filter', units, { ok: false, durationMs: Date.now() - startedAt });
@@ -142,7 +144,7 @@ Reply with the relevant warning numbers separated by commas (e.g. "1,3"), or "no
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getBrainKey()}` },
         body: JSON.stringify({ model: getBrainModel(), messages: [{ role: "user", content: prompt }], temperature: 0.1, max_tokens: 120 }),
-        signal: signal || AbortSignal.timeout(3000),
+        signal: signal || AbortSignal.timeout(relevanceTimeout),
       });
       if (!res.ok) {
         logCostCall('brain', brainProvider, 'brain-filter', units, { ok: false, durationMs: Date.now() - startedAt });
