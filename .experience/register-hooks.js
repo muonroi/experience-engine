@@ -217,7 +217,7 @@ const AGENTS = [
   {
     key: 'antigravity',
     name: 'Google Antigravity',
-    file: path.join(home, '.antigravity', 'hooks.json'),
+    file: path.join(home, '.gemini', 'config', 'hooks.json'),
     patch(cfg) {
       if (!cfg.hooks) cfg.hooks = {};
       // Antigravity delivers per-tool events but NO transcript_path, and labels

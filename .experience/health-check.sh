@@ -381,7 +381,7 @@ run_checks() {
   check_agent_hooks "Claude Code" "$HOME/.claude/settings.json" "PreToolUse" "interceptor"
   check_agent_hooks "Codex CLI" "$HOME/.codex/hooks.json" "PreToolUse" "interceptor"
   check_agent_hooks "Gemini CLI" "$HOME/.gemini/settings.json" "BeforeTool" "interceptor"
-  check_agent_hooks "Google Antigravity" "$HOME/.antigravity/hooks.json" "PreToolUse" "interceptor"
+  check_agent_hooks "Google Antigravity" "$HOME/.gemini/config/hooks.json" "PreToolUse" "interceptor"
 
   # 8. Activity — recent intercepts
   if [ -n "$server_base" ]; then
