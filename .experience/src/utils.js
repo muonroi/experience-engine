@@ -95,7 +95,8 @@ function _scanDirForFramework(dir, fs) {
 
   if (fileNames.has('package.json')) {
     try {
-      const pkg = JSON.parse(fs.readFileSync(`${dir}/package.json`, 'utf8'));
+      const { readBufferOrDisk } = require('./sync-utils');
+      const pkg = JSON.parse(readBufferOrDisk(`${dir}/package.json`, 'utf8'));
       const deps = Object.assign({}, pkg.dependencies || {}, pkg.devDependencies || {});
       for (const { dep, framework } of _PKG_DEP_FRAMEWORKS) {
         if (deps[dep]) return framework;

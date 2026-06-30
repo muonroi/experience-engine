@@ -1476,6 +1476,17 @@ async function handleRouteFeedback(req, res) {
   res.end(JSON.stringify({ ok }));
 }
 
+async function handleSyncBuffers(req, res) {
+  const body = await readBody(req);
+  if (!body.buffers || typeof body.buffers !== 'object') {
+    return error(res, 'buffers object is required');
+  }
+  const { syncIDEBuffers } = loadExperienceCore();
+  const ok = syncIDEBuffers(body.buffers);
+  res.writeHead(200, { 'Content-Type': 'application/json', ...CORS });
+  res.end(JSON.stringify({ ok }));
+}
+
 // --- Brain Proxy (allows local clients to reach SiliconFlow via VPS) ---
 
 async function handleBrainProxy(req, res) {
@@ -1484,7 +1495,16 @@ async function handleBrainProxy(req, res) {
   const timeoutMs = body.timeoutMs || 8000;
   try {
     const { classifyViaBrain } = loadExperienceCore();
-    const result = await classifyViaBrain(body.prompt, timeoutMs);
+    // Forward optional classification overrides from SAMR/advanced callers.
+    // The underlying classifyViaBrain already supports options.systemPrompt,
+    // options.responseFormat, options.model, options.maxTokens, options.provider.
+    const options = {};
+    if (body.systemPrompt) options.systemPrompt = body.systemPrompt;
+    if (body.responseFormat) options.responseFormat = body.responseFormat;
+    if (body.model) options.model = body.model;
+    if (body.maxTokens != null) options.maxTokens = body.maxTokens;
+    if (body.provider) options.provider = body.provider;
+    const result = await classifyViaBrain(body.prompt, timeoutMs, options);
     res.writeHead(200, { 'Content-Type': 'application/json', ...CORS });
     res.end(JSON.stringify({ ok: true, result }));
   } catch (err) {
@@ -1576,6 +1596,7 @@ const server = http.createServer(async (req, res) => {
       if (p === '/api/route-task') return await handleRouteTask(req, res);
       if (p === '/api/route-model') return await handleRouteModel(req, res);
       if (p === '/api/route-feedback') return await handleRouteFeedback(req, res);
+      if (p === '/api/sync-buffers') return await handleSyncBuffers(req, res);
       if (p === '/api/brain') return await handleBrainProxy(req, res);
       if (p === '/api/search') return await handleSearch(req, res);
       if (p === '/api/recall') return await handleRecall(req, res);
