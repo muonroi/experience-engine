@@ -213,7 +213,8 @@ function scanDirForFramework(dir, packages) {
     const npmFirst = !hasCsprojHere && fileNameSet.has('package.json') && Object.keys(packages).length > 0;
     if (npmFirst) {
       try {
-        const pkg = JSON.parse(fs.readFileSync(`${dir}/package.json`, 'utf8'));
+        const { readBufferOrDisk } = require('./src/sync-utils');
+        const pkg = JSON.parse(readBufferOrDisk(`${dir}/package.json`, 'utf8'));
         const deps = Object.assign({}, pkg.dependencies || {}, pkg.devDependencies || {}, pkg.peerDependencies || {});
         for (const depName of Object.keys(deps)) {
           const matched = _matchPackageToFramework(packages, 'npm', depName);
@@ -255,7 +256,8 @@ function scanDirForFramework(dir, packages) {
 
   if (fileNameSet.has('package.json')) {
     try {
-      const pkg = JSON.parse(fs.readFileSync(`${dir}/package.json`, 'utf8'));
+      const { readBufferOrDisk } = require('./src/sync-utils');
+      const pkg = JSON.parse(readBufferOrDisk(`${dir}/package.json`, 'utf8'));
       const deps = Object.assign({}, pkg.dependencies || {}, pkg.devDependencies || {}, pkg.peerDependencies || {});
       // Org-configured framework packages take precedence over the built-in
       // generic table — a consumer that happens to also use react still

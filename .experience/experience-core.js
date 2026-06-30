@@ -619,4 +619,6 @@ module.exports = {
   _shouldPromoteBehavioralToPrinciple: _evolution.shouldPromoteBehavioralToPrinciple,
   _buildPrincipleText: _format.buildPrincipleText,
   _getValidatedHitCount: _hittrack.getValidatedHitCount,
+  syncIDEBuffers: require('./src/sync-utils').syncIDEBuffers,
+  readBufferOrDisk: require('./src/sync-utils').readBufferOrDisk,
 };

@@ -1,5 +1,13 @@
 #!/usr/bin/env node
 'use strict';
+const maxDepth = Number(process.env.EXPERIENCE_MAX_DEPTH || 2);
+const currentDepth = Number(process.env.EXPERIENCE_DEPTH || 0);
+
+if (currentDepth >= maxDepth) {
+  process.exit(0);
+}
+process.env.EXPERIENCE_DEPTH = String(currentDepth + 1);
+
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
