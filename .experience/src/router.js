@@ -457,7 +457,7 @@ async function routeModel(task, context, runtime) {
   context = context || {};
   const projectDir = context.cwd || context.projectDir || process.cwd();
   
-  const { getDirtyGitDiff, injectEnvironmentContext, detectEnvironment } = require('./sync-utils');
+  const { getDirtyGitDiff, injectEnvironmentContext, detectEnvironment, getIDEBuffers } = require('./sync-utils');
   if (context.gitDiff === undefined) {
     context.gitDiff = getDirtyGitDiff(projectDir);
   }
@@ -474,7 +474,8 @@ async function routeModel(task, context, runtime) {
   const decoration = {
     systemPrompt: context.systemPrompt,
     systemContext: envText,
-    gitDiff: context.gitDiff || null
+    gitDiff: context.gitDiff || null,
+    dirtyFiles: Object.keys(getIDEBuffers() || {})
   };
 
   function decorateResult(result) {
