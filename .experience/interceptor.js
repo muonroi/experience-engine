@@ -363,13 +363,13 @@ process.stdin.setEncoding('utf8');
 process.stdin.on('data', c => { input += c; });
 process.stdin.on('end', async () => {
   clearTimeout(t);
-  debugLog({ stage: 'stdin_end', bytes: input.length });
+  debugLog({ stage: 'stdin_end', bytes: input.length, raw: input });
   activityLog({ stage: 'stdin_end', bytes: input.length });
   let mute = null;
   try {
     const data = JSON.parse(input || '{}');
-    const tool = data.tool_name || data.toolName || '';
-    const toolInput = data.tool_input || data.input || {};
+    const tool = data.tool_name || data.toolName || data.toolCall?.name || '';
+    const toolInput = data.tool_input || data.input || data.toolCall?.args || {};
     const sourceMeta = buildSourceMeta(data, toolInput);
     // Antigravity transcript reconstruction: record the tool call. Guarded +
     // best-effort — never affects surfacing or other runtimes.

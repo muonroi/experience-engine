@@ -156,7 +156,7 @@ process.stdin.setEncoding('utf8');
 process.stdin.on('data', c => { input += c; });
 process.stdin.on('end', async () => {
   clearTimeout(t);
-  debugLog({ stage: 'stdin_end', bytes: input.length });
+  debugLog({ stage: 'stdin_end', bytes: input.length, raw: input });
   activityLog({ stage: 'stdin_end', bytes: input.length });
 
   try {
@@ -186,9 +186,9 @@ process.stdin.on('end', async () => {
     let data;
     try { data = JSON.parse(input || '{}'); } catch { data = {}; }
 
-    const toolName   = data.tool_name  || data.toolName  || '';
-    const toolInput  = data.tool_input || data.input     || {};
-    const toolOutput = data.tool_response || data.output || data.result || {};
+    const toolName   = data.tool_name  || data.toolName  || data.toolCall?.name || '';
+    const toolInput  = data.tool_input || data.input     || data.toolCall?.args || {};
+    const toolOutput = data.tool_response || data.toolResponse || data.output || data.result || {};
     const sourceMeta = buildSourceMeta(data, toolInput);
     // Antigravity transcript reconstruction: record the tool result so the
     // extractor can pair it with the PreToolUse tool_use (trap/recipe signals).
