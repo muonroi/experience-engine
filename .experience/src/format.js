@@ -65,6 +65,12 @@ function buildStorePayload(id, qa, domain, projectSlug) {
   };
 }
 
+function sanitizeHorizontalRules(text) {
+  if (typeof text !== 'string') return text;
+  // Replace markdown horizontal rules (3 or more -, *, or _ on their own line) to prevent delimiter-splitting
+  return text.replace(/^\s*([-*_])\s*\1\s*\1\s*$/gm, ' - ');
+}
+
 // opts.skipSearchScoreGate: bypass GATE 2 (the min-search-score relevance floor).
 // Active recall (semantic-search mode) sets this — the floor is a noise-control
 // signal for passive hints, not a relevance ceiling for a deliberate query. The
@@ -77,6 +83,18 @@ function formatPoints(points, opts = {}) {
     let exp;
     try { exp = JSON.parse(point.payload?.json || '{}'); } catch { continue; }
     if (!exp.solution) continue;
+    
+    // Sanitize text fields to prevent delimiter injection splitting
+    exp.solution = sanitizeHorizontalRules(exp.solution);
+    if (exp.trigger) exp.trigger = sanitizeHorizontalRules(exp.trigger);
+    if (exp.why) exp.why = sanitizeHorizontalRules(exp.why);
+    if (exp.judgment) exp.judgment = sanitizeHorizontalRules(exp.judgment);
+
+    const { isSafePayload } = require('./security-filter');
+    if (!isSafePayload(exp)) {
+      log('warn', 'security_filter_blocked_point', { id: point.id });
+      continue;
+    }
     const effConf = computeEffectiveConfidence(exp);
     const mc = getMinConfidence();
     if (effConf < mc && !point._probationaryT2) {

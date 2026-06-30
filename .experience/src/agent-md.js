@@ -132,7 +132,8 @@ function injectAgentInstructions(opts = {}) {
         fs.writeFileSync(file, `${INSTRUCTION_BLOCK}\n`);
         action = 'created';
       } else {
-        const current = fs.readFileSync(file, 'utf8');
+        const { readBufferOrDisk } = require('./sync-utils');
+        const current = readBufferOrDisk(file, 'utf8');
         const had = current.includes(START_MARKER);
         fs.writeFileSync(file, applyBlock(current));
         action = had ? 'updated' : 'injected';

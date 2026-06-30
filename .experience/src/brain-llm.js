@@ -352,15 +352,27 @@ function _inferCrossStackCategory(qa) {
 
 async function brainOllama(prompt, opts = {}) {
   const model = opts.model || getBrainModel();
+  const body = { model, prompt, stream: false, options: { temperature: 0.3 } };
+  const fmt = opts.response_format || opts.responseFormat;
+  if (fmt) {
+    if (fmt.type === 'json_object') {
+      body.format = 'json';
+    }
+    if (fmt.schema) {
+      body.format = fmt.schema;
+    }
+  }
   try {
     const res = await fetch(getOllamaGenerateUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, prompt, stream: false, options: { temperature: 0.3 } }),
+      body: JSON.stringify(body),
       signal: opts.signal || AbortSignal.timeout(90000),
     });
     if (!res.ok) return null;
-    const m = (await res.json()).response?.match(/\{[\s\S]*\}/);
+    const text = (await res.json()).response || '';
+    try { return JSON.parse(text); } catch {}
+    const m = text.match(/\{[\s\S]*\}/);
     return m ? JSON.parse(m[0]) : null;
   } catch { return null; }
 }

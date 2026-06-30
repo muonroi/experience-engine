@@ -328,7 +328,8 @@ function createStandardAdapter(runtime, relativeProjectsPath, opts = {}) {
     parse(file) {
       let raw;
       try {
-        raw = fs.readFileSync(file, 'utf8');
+        const { readBufferOrDisk } = require('./sync-utils');
+        raw = readBufferOrDisk(file, 'utf8');
       } catch (err) {
         log('warn', 'memory_import_read_fail', { file, error: err?.message });
         return null;

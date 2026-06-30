@@ -228,15 +228,24 @@ async function classifyViaBrain(prompt, timeoutMs = 10000, options = {}) {
       // Ollama uses /api/generate (single prompt). If caller provided a system
       // prompt, prepend it so behavior matches the chat/completions path above.
       const ollamaPrompt = options.systemPrompt ? `${options.systemPrompt}\n\n${prompt}` : prompt;
+      const ollamaBody = {
+        model: brainModel || 'qwen2.5:3b',
+        prompt: ollamaPrompt,
+        stream: false,
+        options: { temperature: 0.0, num_predict: options.maxTokens || 5 },
+      };
+      if (options && options.responseFormat) {
+        if (options.responseFormat.type === 'json_object') {
+          ollamaBody.format = 'json';
+        }
+        if (options.responseFormat.schema) {
+          ollamaBody.format = options.responseFormat.schema;
+        }
+      }
       const res = await fetch(getOllamaGenerateUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: brainModel || 'qwen2.5:3b',
-          prompt: ollamaPrompt,
-          stream: false,
-          options: { temperature: 0.0, num_predict: options.maxTokens || 5 },
-        }),
+        body: JSON.stringify(ollamaBody),
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (!res.ok) {
@@ -445,6 +454,33 @@ async function storeRouteDecision(taskText, taskHash, tier, model, runtime, cont
   }
 }
 async function routeModel(task, context, runtime) {
+  context = context || {};
+  const projectDir = context.cwd || context.projectDir || process.cwd();
+  
+  const { getDirtyGitDiff, injectEnvironmentContext, detectEnvironment } = require('./sync-utils');
+  if (context.gitDiff === undefined) {
+    context.gitDiff = getDirtyGitDiff(projectDir);
+  }
+  
+  const env = detectEnvironment();
+  const envText = `OS: ${env.hostOS}, Shell: ${env.shellType}, Active Paths: ${env.activePaths.join(', ')}`;
+  
+  if (context.systemPrompt) {
+    context.systemPrompt = injectEnvironmentContext(context.systemPrompt);
+  } else {
+    context.systemPrompt = `You are a coding agent. Current Client Host OS: ${env.hostOS}, Shell Type: ${env.shellType}, Active Paths: ${env.activePaths.join(', ')}`;
+  }
+  
+  const decoration = {
+    systemPrompt: context.systemPrompt,
+    systemContext: envText,
+    gitDiff: context.gitDiff || null
+  };
+
+  function decorateResult(result) {
+    return Object.assign({}, result, decoration);
+  }
+
   const taskText = (task || '').slice(0, 500);
   if (!taskText) {
     const tier = getRouterDefaultTier();
@@ -452,7 +488,7 @@ async function routeModel(task, context, runtime) {
     const reasoningEffort = resolveTierReasoningEffort(tier, runtime);
     printRouteDecision(tier, model, 'empty task', 'default');
     activityLog({ op: 'route', task: '', tier, model, source: 'default', confidence: 0 });
-    return { tier, model, reasoningEffort, confidence: 0, source: 'default', reason: 'empty task', taskHash: null };
+    return decorateResult({ tier, model, reasoningEffort, confidence: 0, source: 'default', reason: 'empty task', taskHash: null });
   }
 
   const taskHash = require('crypto').createHash('sha256').update(taskText).digest('hex').slice(0, 16);
@@ -473,7 +509,7 @@ async function routeModel(task, context, runtime) {
       if (vector) storeRouteDecision(taskText, taskHash, preFilterTier, model, runtime, context, vector);
     }).catch(() => {});
 
-    return { tier: preFilterTier, model, reasoningEffort, confidence: 0.70, source: 'keyword', reason, taskHash };
+    return decorateResult({ tier: preFilterTier, model, reasoningEffort, confidence: 0.70, source: 'keyword', reason, taskHash });
   }
 
   // Layer 1: History check (semantic search)
@@ -502,7 +538,7 @@ async function routeModel(task, context, runtime) {
           const result = { tier, model, reasoningEffort, confidence: bestHit.score, source, reason, taskHash };
           printRouteDecision(tier, model, reason, source);
           activityLog({ op: 'route', task: taskText.slice(0, 100), tier, model, source, confidence: bestHit.score });
-          return result;
+          return decorateResult(result);
         }
       }
     }
@@ -533,7 +569,7 @@ async function routeModel(task, context, runtime) {
         if (vector) await storeRouteDecision(taskText, taskHash, tier, model, runtime, context, vector);
       } catch { /* non-blocking */ }
 
-      return result;
+      return decorateResult(result);
     }
   } catch { /* Layer 2 failure — fall through to default */ }
 
@@ -543,7 +579,7 @@ async function routeModel(task, context, runtime) {
   const reasoningEffort = resolveTierReasoningEffort(fallbackTier, runtime);
   printRouteDecision(fallbackTier, model, 'classification unavailable', 'default');
   activityLog({ op: 'route', task: taskText.slice(0, 100), tier: fallbackTier, model, source: 'default', confidence: 0 });
-  return { tier: fallbackTier, model, reasoningEffort, confidence: 0, source: 'default', reason: 'fallback — classification unavailable', taskHash };
+  return decorateResult({ tier: fallbackTier, model, reasoningEffort, confidence: 0, source: 'default', reason: 'fallback — classification unavailable', taskHash });
 }
 async function routeTask(task, context, _runtime) { // runtime reserved for future routing variants
   const taskText = (task || '').slice(0, 500);
