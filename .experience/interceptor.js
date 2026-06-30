@@ -383,7 +383,7 @@ process.stdin.on('end', async () => {
         blocks: [emit.toolUseBlock(tool, toolInput)],
       });
     }
-    const matches = /Edit|Write|Bash|shell|replace|write_file|execute_command|run_command/i.test(tool);
+    const matches = /Edit|Write|Bash|shell|replace|write_file|execute_command|run_command|git_commit/i.test(tool);
     debugLog({ stage: 'parsed', tool, matches, keys: Object.keys(toolInput || {}).slice(0, 12), ...sourceMeta });
     activityLog({ stage: 'parsed', tool, matches, keys: Object.keys(toolInput || {}).slice(0, 12), query: toolInput?.command || toolInput?.cmd || null, ...sourceMeta });
     if (!matches) {

@@ -263,6 +263,31 @@ const AGENTS = [
       cfg.hooks.Stop = drop(cfg.hooks.Stop, 'stop-extractor');
       cfg.hooks.Stop.push({ hooks:[{ type:'command', command:`node ${stop} --runtime=antigravity`, timeout:90 }] });
     }
+  },
+  {
+    key: 'muonroi-cli',
+    name: 'Muonroi CLI',
+    file: path.join(home, '.muonroi-cli', 'user-settings.json'),
+    patch(cfg) {
+      if (!cfg.hooks) cfg.hooks = {};
+      const drop = (arr, needle) => (arr || []).filter(h => !(h.hooks || []).some(e => e.command?.includes(needle)));
+      cfg.hooks.PreToolUse = drop(cfg.hooks.PreToolUse, 'interceptor');
+      cfg.hooks.PreToolUse.push({ matcher:'*', hooks:[{ type:'command', command:`node ${interceptor} --runtime=muonroi-cli`, timeout:5 }] });
+
+      cfg.hooks.PostToolUse = drop(cfg.hooks.PostToolUse, 'interceptor-post');
+      cfg.hooks.PostToolUse.push({ matcher:'*', hooks:[{ type:'command', command:`node ${interceptorPost} --runtime=muonroi-cli`, timeout:5 }] });
+
+      cfg.hooks.UserPromptSubmit = drop(cfg.hooks.UserPromptSubmit, 'interceptor-prompt');
+      cfg.hooks.UserPromptSubmit.push({ hooks:[{ type:'command', command:`node ${interceptorPrompt} --runtime=muonroi-cli`, timeout:5 }] });
+
+      if (interceptorSession) {
+        cfg.hooks.SessionStart = drop(cfg.hooks.SessionStart, 'interceptor-session');
+        cfg.hooks.SessionStart.push({ hooks:[{ type:'command', command:`node ${interceptorSession} --runtime=muonroi-cli`, timeout:5 }] });
+      }
+
+      cfg.hooks.Stop = drop(cfg.hooks.Stop, 'stop-extractor');
+      cfg.hooks.Stop.push({ hooks:[{ type:'command', command:`node ${stop} --runtime=muonroi-cli`, timeout:90 }] });
+    }
   }
 ];
 

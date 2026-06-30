@@ -382,6 +382,7 @@ run_checks() {
   check_agent_hooks "Codex CLI" "$HOME/.codex/hooks.json" "PreToolUse" "interceptor"
   check_agent_hooks "Gemini CLI" "$HOME/.gemini/settings.json" "BeforeTool" "interceptor"
   check_agent_hooks "Google Antigravity" "$HOME/.gemini/config/hooks.json" "PreToolUse" "interceptor"
+  check_agent_hooks "Muonroi CLI" "$HOME/.muonroi-cli/user-settings.json" "PreToolUse" "interceptor"
 
   # 8. Activity — recent intercepts
   if [ -n "$server_base" ]; then
