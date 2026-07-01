@@ -99,6 +99,10 @@ premium = system redesign, architecture, security audit
 
 If Context has local_tier with confidence >= 0.6, use it unless Task clearly contradicts.
 
+Session Context Rules:
+- If turn >= 10, compactions >= 2, or files_touched >= 5, the task is part of a deep ongoing session. Avoid 'fast' and classify as 'balanced' or 'premium' to preserve context depth.
+- Use compaction_summary to evaluate the overall architecture changes in progress.
+
 Context: {CONTEXT}
 Task: {TASK}
 Complexity:`;
