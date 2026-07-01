@@ -16,11 +16,35 @@ const fs = require('node:fs');
 const path = require('node:path');
 const net = require('node:net');
 
+function loadTunnelConfigFromFile() {
+  const configPath = path.join(require('os').homedir(), '.experience', 'config.json');
+  try {
+    const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const tunnel = typeof cfg.tunnelSsh === 'string' ? cfg.tunnelSsh.trim() : '';
+    if (!tunnel) return {};
+    const keyMatch = tunnel.match(/-i\s+(\S+)/);
+    const hostMatch = tunnel.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._:-]+)\s*$/);
+    const host = hostMatch ? hostMatch[1] : '';
+    const at = host.lastIndexOf('@');
+    return {
+      sshUser: at >= 0 ? host.slice(0, at) : '',
+      sshHost: at >= 0 ? host.slice(at + 1) : host,
+      sshKey: keyMatch ? keyMatch[1] : '',
+    };
+  } catch {
+    return {};
+  }
+}
+
+const fileCfg = loadTunnelConfigFromFile();
+
 // --- Configuration ---
+// No built-in VPS defaults — set EXP_SSH_HOST / EXP_SSH_USER / EXP_SSH_KEY
+// or configure tunnelSsh in ~/.experience/config.json.
 const CONFIG = {
-  sshHost: process.env.EXP_SSH_HOST || '',
-  sshUser: process.env.EXP_SSH_USER || '',
-  sshKey: process.env.EXP_SSH_KEY || '',
+  sshHost: process.env.EXP_SSH_HOST || fileCfg.sshHost || '',
+  sshUser: process.env.EXP_SSH_USER || fileCfg.sshUser || '',
+  sshKey: process.env.EXP_SSH_KEY || fileCfg.sshKey || '',
   
   // Port Forwarding Settings
   ports: [
@@ -53,7 +77,7 @@ function logError(msg) {
 // 1. Verify SSH Key Existence
 function verifySSHKey() {
   const resolvedKeyPath = path.resolve(CONFIG.sshKey);
-  log(`Verifying SSH key: ${resolvedKeyPath}`);
+  log('Verifying SSH key from configured path');
   if (!fs.existsSync(resolvedKeyPath)) {
     logError(`SSH key not found at: ${resolvedKeyPath}`);
     logError(`Please ensure the key is placed in that directory, or override using EXP_SSH_KEY env variable.`);
@@ -150,7 +174,7 @@ async function startTunnel() {
   // Add Host target
   sshArgs.push(`${CONFIG.sshUser}@${CONFIG.sshHost}`);
 
-  log(`Spawning SSH tunnel: ssh ${sshArgs.join(' ')}`);
+  log(`Spawning SSH tunnel to configured remote host (${CONFIG.ports.length} port forward(s))`);
   
   sshProcess = spawn('ssh', sshArgs, {
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -264,14 +288,28 @@ process.on('exit', () => {
   }
 });
 
+function validateTunnelConfig() {
+  const missing = [];
+  if (!CONFIG.sshHost) missing.push('EXP_SSH_HOST or tunnelSsh in ~/.experience/config.json');
+  if (!CONFIG.sshUser) missing.push('EXP_SSH_USER or tunnelSsh in ~/.experience/config.json');
+  if (!CONFIG.sshKey) missing.push('EXP_SSH_KEY or tunnelSsh -i <key> in ~/.experience/config.json');
+  if (missing.length === 0) return true;
+  logError('SSH tunnel target is not configured.');
+  for (const item of missing) logError(`  - ${item}`);
+  return false;
+}
+
 // Run Manager
 async function run() {
   log('Starting local SSH Tunnel Manager...');
+  if (!validateTunnelConfig()) {
+    process.exit(1);
+  }
   if (!verifySSHKey()) {
     logError('SSH Key validation failed. Exiting.');
     process.exit(1);
   }
-  
+
   await startTunnel();
 }
 

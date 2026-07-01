@@ -176,12 +176,17 @@ fi
 
 if [ "$DRY_RUN" = "true" ]; then
   printf '  (dry-run) bash %s' "$DELEGATE"
+  [ "$MODE" = "thin-client" ] && printf ' %q' --upgrade
   for a in ${EXTRA_ARGS+"${EXTRA_ARGS[@]}"}; do printf ' %q' "$a"; done
   printf '\n'
   exit 0
 fi
 
-bash "$DELEGATE" ${EXTRA_ARGS+"${EXTRA_ARGS[@]}"}
+if [ "$MODE" = "thin-client" ]; then
+  bash "$DELEGATE" --upgrade ${EXTRA_ARGS+"${EXTRA_ARGS[@]}"}
+else
+  bash "$DELEGATE" ${EXTRA_ARGS+"${EXTRA_ARGS[@]}"}
+fi
 
 # ── Step 4: Session sync ───────────────────────────────────────────────────
 # Extract new experiences from local Claude/Codex/Gemini sessions into brain.

@@ -72,6 +72,33 @@ read_cfg() {
   node -e "try{const c=JSON.parse(require('fs').readFileSync('$CONFIG_NODE','utf8'));process.stdout.write(String(c['$1']||''))}catch{}" 2>/dev/null
 }
 
+# Hide public IPs, hostnames, and SSH targets from terminal output.
+redact_endpoint() {
+  local value="$1"
+  if [ -z "$value" ]; then
+    echo "(not configured)"
+    return
+  fi
+  if [[ "$value" == *localhost* ]] || [[ "$value" == *127.0.0.1* ]]; then
+    echo "$value"
+    return
+  fi
+  node -e '
+    const raw = process.argv[1] || "";
+    if (/^ssh\b/i.test(raw)) {
+      process.stdout.write("ssh tunnel (configured)");
+    } else {
+      try {
+        const u = new URL(raw);
+        const port = u.port ? ":" + u.port : "";
+        process.stdout.write(u.protocol + "//***" + port + u.pathname);
+      } catch {
+        process.stdout.write("(configured)");
+      }
+    }
+  ' "$value" 2>/dev/null || echo "(configured)"
+}
+
 # Portable HTTP status probe.
 #   http_probe URL [BEARER_TOKEN] [BODY_OUTFILE]   → echoes the HTTP status code
 #
@@ -222,7 +249,7 @@ run_checks() {
     fi
   fi
   if [ -n "$server_base" ]; then
-    check "Mode" "ok" "Thin client → VPS brain ($server_base)"
+    check "Mode" "ok" "Thin client → remote brain ($(redact_endpoint "$server_base"))"
   elif $SERVER_NODE; then
     check "Mode" "ok" "Server / brain node (http://127.0.0.1:${server_port})"
   else
@@ -270,9 +297,9 @@ run_checks() {
     local qdrant_http; qdrant_http=$(echo "$qdrant_resp" | tail -1)
     if [ "$qdrant_http" = "200" ]; then
       local coll_count; coll_count=$(echo "$qdrant_resp" | head -1 | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{console.log(JSON.parse(d).result.collections.length)}catch{console.log('?')}})" 2>/dev/null)
-      check "Qdrant" "ok" "$qdrant_url ($coll_count collections)"
+      check "Qdrant" "ok" "$(redact_endpoint "$qdrant_url") ($coll_count collections)"
     else
-      check "Qdrant" "fail" "$qdrant_url — HTTP $qdrant_http" "Check qdrantUrl / qdrantKey, or bring up the SSH tunnel / Qdrant service"
+      check "Qdrant" "fail" "$(redact_endpoint "$qdrant_url") — HTTP $qdrant_http" "Check qdrantUrl / qdrantKey, or bring up the SSH tunnel / Qdrant service"
     fi
   else
     check "Qdrant" "fail" "No qdrantUrl in config" "Set qdrantUrl in ~/.experience/config.json or re-run setup.sh"
@@ -342,9 +369,9 @@ run_checks() {
     if [ "$server_health_http" = "200" ]; then
       local server_status
       server_status=$(node -e "try{const d=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));process.stdout.write(d.status||'unknown')}catch{process.stdout.write('unknown')}" "$health_body_node" 2>/dev/null)
-      check "Remote Server" "ok" "$server_base (status=$server_status)"
+      check "Remote Server" "ok" "$(redact_endpoint "$server_base") (status=$server_status)"
     else
-      check "Remote Server" "fail" "$server_base — HTTP $server_health_http" "Bring up the VPS server or fix serverBaseUrl; test with curl ${server_base}/health"
+      check "Remote Server" "fail" "$(redact_endpoint "$server_base") — HTTP $server_health_http" "Bring up the remote server or fix serverBaseUrl in ~/.experience/config.json"
     fi
     rm -f "$health_body" 2>/dev/null
 
@@ -357,11 +384,11 @@ run_checks() {
       gates_http=$(http_probe "${server_base}/api/gates" "$gates_token")
     fi
     if [ "$gates_http" = "200" ]; then
-      check "Remote Gates" "ok" "$server_base/api/gates"
+      check "Remote Gates" "ok" "$(redact_endpoint "$server_base")/api/gates"
     elif [ "$gates_http" = "401" ]; then
-      check "Remote Gates" "warn" "$server_base/api/gates — HTTP 401" "Set serverReadAuthToken (preferred) or serverAuthToken in ~/.experience/config.json"
+      check "Remote Gates" "warn" "$(redact_endpoint "$server_base")/api/gates — HTTP 401" "Set serverReadAuthToken (preferred) or serverAuthToken in ~/.experience/config.json"
     else
-      check "Remote Gates" "warn" "$server_base/api/gates — HTTP $gates_http" "Upgrade the VPS runtime or verify serverBaseUrl/token configuration"
+      check "Remote Gates" "warn" "$(redact_endpoint "$server_base")/api/gates — HTTP $gates_http" "Upgrade the remote runtime or verify serverBaseUrl/token configuration"
     fi
 
     if [ -n "$server_read_auth" ]; then

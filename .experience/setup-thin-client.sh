@@ -12,20 +12,27 @@ ORG_NAME="${EXP_ORG_NAME:-}"
 ORG_PATTERNS="${EXP_ORG_PATTERNS:-}"
 HOOK_TIMEOUT_MS=""
 CLEAN_MODE=false
+UPGRADE_MODE=false
 CONFIG_FALLBACK_FILE="${HOME}/.experience/config.json"
+SERVER_URL_CLI=false
+SERVER_TOKEN_CLI=false
+SERVER_READ_TOKEN_CLI=false
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --server)
       SERVER_URL="${2:-}"
+      SERVER_URL_CLI=true
       shift 2
       ;;
     --token)
       SERVER_TOKEN="${2:-}"
+      SERVER_TOKEN_CLI=true
       shift 2
       ;;
     --read-token)
       SERVER_READ_TOKEN="${2:-}"
+      SERVER_READ_TOKEN_CLI=true
       shift 2
       ;;
     --org-name)
@@ -44,14 +51,20 @@ while [ $# -gt 0 ]; do
       CLEAN_MODE=true
       shift
       ;;
+    --upgrade)
+      UPGRADE_MODE=true
+      shift
+      ;;
     --help|-h)
       cat <<'EOF'
 Usage:
   bash .experience/setup-thin-client.sh [options]
 
 Options:
-  --server URL         Optional if ~/.experience/config.json already contains serverBaseUrl.
-  --token TOKEN        Bearer token for POST endpoints.
+  --server URL         Required for fresh install. Optional when upgrading or
+                       when ~/.experience/config.json already has serverBaseUrl.
+  --token TOKEN        Bearer token for POST endpoints. Required for fresh install
+                       unless already stored in config.json.
   --read-token TOKEN   Read-only token for /api/stats and /api/gates.
   --org-name SLUG      Org slug for cross-project hint filter (empty = global mode).
                        Env: EXP_ORG_NAME
@@ -61,11 +74,16 @@ Options:
   --hook-timeout MS    Client hook abort timeout in ms (default keep existing
                        or fall back to engine default 2500).
   --clean              Backup and remove old local brain state.
+  --upgrade            Upgrade path: always reuse ~/.experience/config.json for
+                       server URL/tokens unless explicitly overridden by flags.
+                       Called automatically by upgrade.sh.
 
-Fallback:
-  Flags missing → reuse values from ~/.experience/config.json (server*, org,
-  serverHookTimeoutMs). Re-runs are idempotent: existing config values are
-  preserved unless overridden by a flag/env var.
+Fresh install:
+  Provide --server and --token (or answer the prompts). No built-in defaults.
+
+Upgrade / re-run:
+  Missing flags → reuse values from ~/.experience/config.json (server*, org,
+  serverHookTimeoutMs). Idempotent unless overridden by a flag/env var.
 EOF
       exit 0
       ;;
@@ -86,11 +104,30 @@ load_config_fallback() {
   node -e '
     const fs = require("fs");
     const [configFile, key] = process.argv.slice(1);
+    function pick(cfg, field) {
+      switch (field) {
+        case "serverBaseUrl":
+          return typeof cfg.serverBaseUrl === "string" ? cfg.serverBaseUrl : "";
+        case "serverAuthToken":
+          return typeof cfg.serverAuthToken === "string"
+            ? cfg.serverAuthToken
+            : (typeof cfg.server?.authToken === "string" ? cfg.server.authToken : "");
+        case "serverReadAuthToken":
+          return typeof cfg.serverReadAuthToken === "string"
+            ? cfg.serverReadAuthToken
+            : (typeof cfg.server?.readAuthToken === "string" ? cfg.server.readAuthToken : "");
+        case "serverHookTimeoutMs": {
+          const raw = cfg.serverHookTimeoutMs ?? cfg.server?.hookTimeoutMs;
+          return raw == null ? "" : String(raw);
+        }
+        default:
+          return typeof cfg[field] === "string" ? cfg[field] : "";
+      }
+    }
     try {
-      const raw = fs.readFileSync(configFile, "utf8");
-      const parsed = JSON.parse(raw);
-      const value = parsed[key];
-      if (typeof value === "string") process.stdout.write(value);
+      const parsed = JSON.parse(fs.readFileSync(configFile, "utf8"));
+      const value = pick(parsed, key);
+      if (value) process.stdout.write(value);
     } catch (error) {
       process.stderr.write(`[WARN] Failed to read ${configFile}: ${error.message}\n`);
       process.exit(1);
@@ -98,20 +135,31 @@ load_config_fallback() {
   ' "$config_file" "$key"
 }
 
-if [ -z "$SERVER_URL" ]; then
-  SERVER_URL="$(load_config_fallback serverBaseUrl "$CONFIG_FALLBACK_FILE")"
+if [ "$UPGRADE_MODE" = "true" ] && [ ! -f "$CONFIG_FALLBACK_FILE" ]; then
+  echo "[ERROR] --upgrade requires existing $CONFIG_FALLBACK_FILE" >&2
+  exit 1
 fi
 
-if [ -z "$SERVER_TOKEN" ]; then
-  SERVER_TOKEN="$(load_config_fallback serverAuthToken "$CONFIG_FALLBACK_FILE")"
-fi
-
-if [ -z "$SERVER_READ_TOKEN" ]; then
-  SERVER_READ_TOKEN="$(load_config_fallback serverReadAuthToken "$CONFIG_FALLBACK_FILE")"
-fi
-
-if [ -z "$HOOK_TIMEOUT_MS" ]; then
-  HOOK_TIMEOUT_MS="$(load_config_fallback serverHookTimeoutMs "$CONFIG_FALLBACK_FILE")"
+# Upgrade/re-run: prefer saved config unless the caller passed an explicit flag.
+if [ -f "$CONFIG_FALLBACK_FILE" ]; then
+  if [ "$UPGRADE_MODE" = "true" ] || [ "$SERVER_URL_CLI" != "true" ]; then
+    if [ -z "$SERVER_URL" ]; then
+      SERVER_URL="$(load_config_fallback serverBaseUrl "$CONFIG_FALLBACK_FILE")"
+    fi
+  fi
+  if [ "$UPGRADE_MODE" = "true" ] || [ "$SERVER_TOKEN_CLI" != "true" ]; then
+    if [ -z "$SERVER_TOKEN" ]; then
+      SERVER_TOKEN="$(load_config_fallback serverAuthToken "$CONFIG_FALLBACK_FILE")"
+    fi
+  fi
+  if [ "$UPGRADE_MODE" = "true" ] || [ "$SERVER_READ_TOKEN_CLI" != "true" ]; then
+    if [ -z "$SERVER_READ_TOKEN" ]; then
+      SERVER_READ_TOKEN="$(load_config_fallback serverReadAuthToken "$CONFIG_FALLBACK_FILE")"
+    fi
+  fi
+  if [ -z "$HOOK_TIMEOUT_MS" ]; then
+    HOOK_TIMEOUT_MS="$(load_config_fallback serverHookTimeoutMs "$CONFIG_FALLBACK_FILE")"
+  fi
 fi
 
 # Preserve existing org block from config when flags absent.
@@ -127,8 +175,46 @@ if [ -f "$CONFIG_FALLBACK_FILE" ] && [ -z "$ORG_NAME" ]; then
   ' "$CONFIG_FALLBACK_FILE")
 fi
 
+HAS_EXISTING_CONFIG=false
+[ -f "$CONFIG_FALLBACK_FILE" ] && HAS_EXISTING_CONFIG=true
+
 if [ -z "$SERVER_URL" ]; then
-  echo "[ERROR] --server is required (or set serverBaseUrl in $CONFIG_FALLBACK_FILE)" >&2
+  if [ "$UPGRADE_MODE" = "true" ]; then
+    echo "[ERROR] Upgrade could not load serverBaseUrl from $CONFIG_FALLBACK_FILE" >&2
+    exit 1
+  fi
+  if [ -t 0 ]; then
+    printf "Remote server URL (e.g. https://experience.example.com): "
+    read -r SERVER_URL
+  else
+    echo "[ERROR] --server is required for fresh install (or set serverBaseUrl in $CONFIG_FALLBACK_FILE)" >&2
+    exit 1
+  fi
+fi
+
+if [ -z "$SERVER_URL" ]; then
+  echo "[ERROR] A remote server URL is required." >&2
+  exit 1
+fi
+
+if [ -z "$SERVER_TOKEN" ]; then
+  if [ "$UPGRADE_MODE" = "true" ]; then
+    echo "[ERROR] Upgrade could not load serverAuthToken from $CONFIG_FALLBACK_FILE" >&2
+    exit 1
+  fi
+  if [ "$HAS_EXISTING_CONFIG" = "true" ]; then
+    : # read token optional when reusing an existing install
+  elif [ -t 0 ]; then
+    printf "Bearer token for POST endpoints: "
+    read -r SERVER_TOKEN
+  else
+    echo "[ERROR] --token is required for fresh install (or set serverAuthToken in $CONFIG_FALLBACK_FILE)" >&2
+    exit 1
+  fi
+fi
+
+if [ -z "$SERVER_TOKEN" ] && [ "$HAS_EXISTING_CONFIG" != "true" ] && [ "$UPGRADE_MODE" != "true" ]; then
+  echo "[ERROR] A bearer token is required for fresh install." >&2
   exit 1
 fi
 
