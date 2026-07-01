@@ -91,12 +91,56 @@ redact_endpoint() {
       try {
         const u = new URL(raw);
         const port = u.port ? ":" + u.port : "";
-        process.stdout.write(u.protocol + "//***" + port + u.pathname);
+        const path = u.pathname && u.pathname !== "/" ? u.pathname : "";
+        process.stdout.write(u.protocol + "//***" + port + path);
       } catch {
         process.stdout.write("(configured)");
       }
     }
   ' "$value" 2>/dev/null || echo "(configured)"
+}
+
+# Append a path to a redacted base without double slashes.
+redact_url_path() {
+  local base="$1" suffix="$2"
+  local redacted
+  redacted="$(redact_endpoint "$base")"
+  redacted="${redacted%/}"
+  suffix="${suffix#/}"
+  if [ -z "$suffix" ]; then
+    echo "$redacted"
+  else
+    echo "${redacted}/${suffix}"
+  fi
+}
+
+# Strip raw URLs/IPs from user-facing fix lines (suggested-fixes fallback).
+sanitize_display() {
+  local text="$1"
+  [ -z "$text" ] && return 0
+  node -e '
+    let s = process.argv[1] || "";
+    s = s.replace(/https?:\/\/[^\s)"'\'']+/g, (m) => {
+      try {
+        const u = new URL(m.replace(/[,;]+$/,""));
+        const port = u.port ? ":" + u.port : "";
+        const path = u.pathname && u.pathname !== "/" ? u.pathname : "";
+        return u.protocol + "//***" + port + path;
+      } catch {
+        return "(configured)";
+      }
+    });
+    s = s.replace(/\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b/g, "***");
+    process.stdout.write(s);
+  ' "$text" 2>/dev/null || printf '%s' "$text"
+}
+
+http_status_label() {
+  local code="$1"
+  case "$code" in
+    000|"") echo "unreachable (timeout/refused)" ;;
+    *) echo "HTTP $code" ;;
+  esac
 }
 
 # Portable HTTP status probe.
@@ -202,7 +246,7 @@ run_checks() {
     local server_commit
     server_commit=$(echo "$version_resp" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{process.stdout.write(JSON.parse(d).commit||'')}catch{}})" 2>/dev/null)
     if [ -z "$server_commit" ]; then
-      check "Version" "warn" "Server /api/version unreachable or pre-version endpoint" "Upgrade the VPS to a build that ships /api/version, or check network"
+      check "Version" "warn" "Server /api/version unreachable or pre-version endpoint" "Upgrade the remote server to a build that ships /api/version, or check network"
     elif [ -z "$install_commit" ] || [ "$install_commit" = "unknown" ]; then
       check "Version" "warn" "Install predates commit stamping (server=$server_commit)" "Run bash upgrade.sh to refresh — your client cannot report its version to the server"
     elif [ "$install_commit" = "$server_commit" ]; then
@@ -371,7 +415,7 @@ run_checks() {
       server_status=$(node -e "try{const d=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));process.stdout.write(d.status||'unknown')}catch{process.stdout.write('unknown')}" "$health_body_node" 2>/dev/null)
       check "Remote Server" "ok" "$(redact_endpoint "$server_base") (status=$server_status)"
     else
-      check "Remote Server" "fail" "$(redact_endpoint "$server_base") — HTTP $server_health_http" "Bring up the remote server or fix serverBaseUrl in ~/.experience/config.json"
+      check "Remote Server" "fail" "$(redact_endpoint "$server_base") — $(http_status_label "$server_health_http")" "Bring up the remote server or fix serverBaseUrl in ~/.experience/config.json"
     fi
     rm -f "$health_body" 2>/dev/null
 
@@ -384,11 +428,11 @@ run_checks() {
       gates_http=$(http_probe "${server_base}/api/gates" "$gates_token")
     fi
     if [ "$gates_http" = "200" ]; then
-      check "Remote Gates" "ok" "$(redact_endpoint "$server_base")/api/gates"
+      check "Remote Gates" "ok" "$(redact_url_path "$server_base" "api/gates")"
     elif [ "$gates_http" = "401" ]; then
-      check "Remote Gates" "warn" "$(redact_endpoint "$server_base")/api/gates — HTTP 401" "Set serverReadAuthToken (preferred) or serverAuthToken in ~/.experience/config.json"
+      check "Remote Gates" "warn" "$(redact_url_path "$server_base" "api/gates") — HTTP 401" "Set serverReadAuthToken (preferred) or serverAuthToken in ~/.experience/config.json"
     else
-      check "Remote Gates" "warn" "$(redact_endpoint "$server_base")/api/gates — HTTP $gates_http" "Upgrade the remote runtime or verify serverBaseUrl/token configuration"
+      check "Remote Gates" "warn" "$(redact_url_path "$server_base" "api/gates") — $(http_status_label "$gates_http")" "Upgrade the remote runtime or verify serverBaseUrl/token configuration"
     fi
 
     if [ -n "$server_read_auth" ]; then
@@ -413,8 +457,8 @@ run_checks() {
 
   # 8. Activity — recent intercepts
   if [ -n "$server_base" ]; then
-    check "Activity" "ok" "Thin-client mode — activity is tracked on VPS"
-    check "Model Routing" "ok" "Tracked on VPS"
+    check "Activity" "ok" "Thin-client mode — activity is tracked on remote server"
+    check "Model Routing" "ok" "Tracked on remote server"
   elif [ -f "$ACTIVITY" ]; then
     local total_lines; total_lines=$(wc -l < "$ACTIVITY")
     local last_ts; last_ts=$(tail -1 "$ACTIVITY" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{console.log(JSON.parse(d).ts)}catch{console.log('?')}})" 2>/dev/null)
@@ -475,7 +519,7 @@ run_checks() {
   # These talk to local Qdrant + FileStore — useless in thin-client mode where
   # the brain lives on the VPS. Skip the check when serverBaseUrl is set.
   if [ -n "$_early_server_base" ]; then
-    check "Portable Backup" "ok" "Not required in thin-client mode (brain lives on VPS)"
+    check "Portable Backup" "ok" "Not required in thin-client mode (brain lives on remote server)"
   else
     local missing_tools=()
     for f in "$EXP_DIR/exp-server-maintain.js" "$EXP_DIR/exp-portable-backup.js" "$EXP_DIR/exp-portable-restore.js"; do
@@ -604,9 +648,9 @@ print_dashboard() {
       if [ "$status" = "fail" ] || [ "$status" = "warn" ]; then
         local fix="${fixes[$name]}"
         if [ -n "$fix" ]; then
-          printf "    ${DIM}$name: $fix${NC}\n"
+          printf "    ${DIM}$name: $(sanitize_display "$fix")${NC}\n"
         else
-          printf "    ${DIM}$name: $detail${NC}\n"
+          printf "    ${DIM}$name: $(sanitize_display "$detail")${NC}\n"
         fi
       fi
     done
