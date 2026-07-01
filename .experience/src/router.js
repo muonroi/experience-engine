@@ -420,6 +420,11 @@ function buildModelRoutePrompt(taskText, context) {
     parts.push('local_tier=' + context.localRoute.tier + '(conf:' + (context.localRoute.confidence || 0) + ')');
   }
   if (context && context.recentTurns) parts.push('recent: ' + String(context.recentTurns).slice(0, 150));
+  if (context && context.turnIndex !== undefined) parts.push('turn=' + context.turnIndex);
+  if (context && context.messageCount !== undefined) parts.push('messages=' + context.messageCount);
+  if (context && context.compactionCount !== undefined) parts.push('compactions=' + context.compactionCount);
+  if (context && context.totalSavedTokens !== undefined) parts.push('saved_tokens=' + context.totalSavedTokens);
+  if (context && context.compactionSummary) parts.push('compaction_summary=' + String(context.compactionSummary).slice(0, 300));
   if (parts.length > 0) {
     prompt = prompt.replace('{CONTEXT}', parts.join('; '));
   } else {
