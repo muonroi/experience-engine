@@ -453,7 +453,11 @@ run_checks() {
   check_agent_hooks "Codex CLI" "$HOME/.codex/hooks.json" "PreToolUse" "interceptor"
   check_agent_hooks "Gemini CLI" "$HOME/.gemini/settings.json" "BeforeTool" "interceptor"
   check_agent_hooks "Google Antigravity" "$HOME/.gemini/config/hooks.json" "PreToolUse" "interceptor"
-  check_agent_hooks "Muonroi CLI" "$HOME/.muonroi-cli/user-settings.json" "PreToolUse" "interceptor"
+  if [ -f "$HOME/.muonroi-cli/user-settings.json" ]; then
+    check_agent_hooks "Muonroi CLI" "$HOME/.muonroi-cli/user-settings.json" "PreToolUse" "interceptor"
+  else
+    check "Muonroi CLI hooks" "ok" "Not installed (no ~/.muonroi-cli/user-settings.json)"
+  fi
 
   # 8. Activity — recent intercepts
   if [ -n "$server_base" ]; then
@@ -576,7 +580,11 @@ check_agent_hooks() {
   content="$(<"$file")"
   case "$content" in
     *"$needle"*) check "$name hooks" "ok" "Wired ($event)" ;;
-    *)           check "$name hooks" "fail" "Config exists but no $needle hook" "Re-run setup.sh and include $name in the selected agents" ;;
+    *)           local hook_fix="Re-run setup.sh and include $name in the selected agents"
+                  if [ "$name" = "Muonroi CLI" ]; then
+                    hook_fix="Run: bash upgrade.sh (wires EE hooks into ~/.muonroi-cli/user-settings.json when the CLI is installed)"
+                  fi
+                  check "$name hooks" "fail" "Config exists but no $needle hook" "$hook_fix" ;;
   esac
 }
 

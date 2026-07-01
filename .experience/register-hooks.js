@@ -16,7 +16,7 @@
  *   EXP_INTERCEPTOR_SESSION absolute path to interceptor-session.js (SessionStart)
  *   EXP_INTERCEPTOR_BATCH   absolute path to posttool-batch-hook.js (PostToolBatch,
  *                           Claude Code only)
- *   EXP_SELECTED_AGENTS     csv subset: claude,gemini,codex,opencode,antigravity
+ *   EXP_SELECTED_AGENTS     csv subset: claude,gemini,codex,opencode,antigravity,muonroi-cli
  *                           empty → all agents
  *   EXP_REGISTER_MODE       'full' (default) — patch any agent in selected list
  *                           'existing-only' — only patch agents whose settings
@@ -307,7 +307,12 @@ for (const agent of AGENTS) {
       // Upgrade mode: only re-patch if the agent's config file already exists
       // AND has an interceptor hook somewhere. This prevents auto-wiring
       // an agent the user has never opted in to during initial setup.
-      if (!exists || !hasInterceptorHook(cfg)) {
+      // Exception: muonroi-cli is installed separately — a present
+      // ~/.muonroi-cli/user-settings.json means the user opted in by installing
+      // the CLI, even if hooks were never wired during initial EE setup.
+      const autoWireInstalled =
+        agent.key === 'muonroi-cli' && exists;
+      if (!exists || (!hasInterceptorHook(cfg) && !autoWireInstalled)) {
         continue;
       }
     }
