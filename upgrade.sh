@@ -157,7 +157,8 @@ case "$MODE" in
 
 [upgrade] No ~/.experience/config.json found — nothing to upgrade.
 [upgrade] For a fresh install run:
-[upgrade]   bash $REPO_DIR/.experience/setup.sh             # interactive wizard
+[upgrade]   bash $REPO_DIR/.experience/setup.sh             # thin-client / Docker menu
+[upgrade]   bash $REPO_DIR/.experience/setup.sh --full      # legacy embed/brain wizard
 [upgrade]   bash $REPO_DIR/.experience/setup-thin-client.sh --server <vps-url> \\
 [upgrade]        --token <bearer>                            # thin-client to remote brain
 EOF

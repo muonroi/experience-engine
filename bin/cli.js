@@ -28,7 +28,7 @@ Commands:
                       installs the thin client, and wires agent hooks. Start here.
   sync                Feed the brain from this machine's agent history (no bash):
                       extract sessions + import curated memory. Run periodically.
-  setup               Run the full local install wizard (bash) from this package
+  setup               Run the setup router (thin client / Docker / init; bash)
   setup-thin-client   Convert the current machine into a thin client (bash)
   sync-install        Sync packaged runtime files into ~/.experience
   server              Start the Experience Engine API server
