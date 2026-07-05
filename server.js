@@ -659,7 +659,7 @@ async function handleExtract(req, res) {
   const body = await readBody(req);
   const v = validateBody(body, { transcript: { type: 'string', required: true } });
   if (!v.ok) return error(res, v.error);
-  const { extractFromSession } = loadExperienceCore();
+  const { extractFromSession, evolve } = loadExperienceCore();
   const derived = deriveCallerMeta(body);
   const meta = {
     sourceKind: body.sourceKind || 'manual-api',
@@ -678,21 +678,36 @@ async function handleExtract(req, res) {
     projectSlug: meta.project_slug,
     sourceRuntime: meta.sourceRuntime,
   });
-  try {
-    const stored = await extractFromSession(body.transcript, body.projectPath || null, meta);
-    slog('info', 'extract_api_done', {
-      project: body.projectPath || null,
-      stored,
-      sourceRuntime: meta.sourceRuntime,
+  // Extraction runs up to MAX_EXTRACTIONS_PER_SESSION per-experience LLM calls
+  // (extractQA uses the slow extract model, ~9s each) + embed + Qdrant upsert. That is
+  // far too long to keep a client blocked on at cli-exit — the old synchronous await
+  // meant a 2s client deadline killed the request and nothing was ever learned.
+  // ACK immediately; the long-lived server finishes extraction + consolidation in the
+  // background. Clients wait only for this ACK, so no timeout can starve the work.
+  json(res, { accepted: true, async: true, success: true });
+  extractFromSession(body.transcript, body.projectPath || null, meta)
+    .then((stored) => {
+      slog('info', 'extract_api_done', {
+        project: body.projectPath || null,
+        stored,
+        sourceRuntime: meta.sourceRuntime,
+        async: true,
+      });
+      // Consolidate only when something new landed. Run it here (after the background
+      // extraction) rather than trusting the client to time evolve correctly.
+      if (stored > 0) {
+        return evolve('post-extract').catch((err) =>
+          slog('error', 'extract_evolve_error', { project: body.projectPath || null, error: logger.serializeError(err) }),
+        );
+      }
+    })
+    .catch((err) => {
+      slog('error', 'extract_api_error', {
+        project: body.projectPath || null,
+        error: logger.serializeError(err),
+        async: true,
+      });
     });
-    json(res, { stored, success: true });
-  } catch (err) {
-    slog('error', 'extract_api_error', {
-      project: body.projectPath || null,
-      error: logger.serializeError(err),
-    });
-    json(res, { stored: 0, success: false, error: err?.message });
-  }
 }
 
 async function handleEvolve(req, res) {

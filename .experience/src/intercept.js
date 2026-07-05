@@ -463,6 +463,10 @@ async function extractFromSession(transcript, projectPath, meta = {}) {
   _activity.logMistakeSeen(experiences, projectPath);
   let stored = 0;
   const capped = experiences.slice(0, MAX_EXTRACTIONS_PER_SESSION);
+  // Dedup SYNCHRONOUSLY up-front. _isDuplicate both checks AND registers the hash, so
+  // doing it before any async work also collapses within-batch duplicates and avoids a
+  // check-then-register race once the per-experience work runs concurrently below.
+  const pending = [];
   for (let i = 0; i < capped.length; i++) {
     const exp = capped[i];
     const hash = _dedupHash(exp);
@@ -471,6 +475,16 @@ async function extractFromSession(transcript, projectPath, meta = {}) {
       _activity.activityLog({ op: 'extract-skip', reason: 'dedup', type: exp.type, hash, project: projectPath || null });
       continue;
     }
+    pending.push({ i, exp });
+  }
+
+  // Each surviving experience is independent: extractQA (a slow ~9s extract-model LLM
+  // call) + quality gate + store. The old fully-sequential loop meant N experiences
+  // took N×~9s. Run them with BOUNDED concurrency instead — bounded (not unbounded
+  // Promise.all) so a 10-experience session can't hammer the brain provider's rate
+  // limit or Qdrant. `stored++` is safe: single-threaded, only mutated synchronously
+  // between awaits.
+  async function processOne({ i, exp }) {
     try {
       // Per-experience slug (client-resolved from this experience's own touched
       // files) wins over the session-level slug, so a session spanning multiple
@@ -485,12 +499,12 @@ async function extractFromSession(transcript, projectPath, meta = {}) {
       if (!qa) {
         _log('brain returned null', { i, type: exp.type, project: projectPath });
         _activity.activityLog({ op: 'extract-skip', reason: 'brain_null', type: exp.type, project: projectPath || null });
-        continue;
+        return;
       }
       if (qa.skip) {
         _log('brain returned skip', { i, type: exp.type, reason: qa.reason, project: projectPath });
         _activity.activityLog({ op: 'extract-skip', reason: qa.reason || 'brain_skip', type: exp.type, project: projectPath || null });
-        continue;
+        return;
       }
       _log('QA extracted', { i, type: exp.type, trigger: (qa.trigger || '').slice(0, 80), lang: qa.scope?.lang, fw: qa.scope?.framework, category: qa.category });
       if (meta?.sourceSession && !qa.sourceSession) qa.sourceSession = meta.sourceSession;
@@ -499,7 +513,7 @@ async function extractFromSession(transcript, projectPath, meta = {}) {
       if (!quality.ok) {
         _log('quality gate rejected', { i, type: exp.type, reason: quality.reason, project: projectPath });
         _activity.activityLog({ op: 'extract-skip', reason: quality.reason, type: exp.type, project: projectPath || null });
-        continue;
+        return;
       }
       _log('storing', { i, type: exp.type, domain, slug: projectSlug });
       const result = await _evolution.storeExperience(qa, domain, projectSlug);
@@ -508,6 +522,11 @@ async function extractFromSession(transcript, projectPath, meta = {}) {
     } catch (err) {
       _log('extract error', { i, type: exp.type, error: err?.message, stack: (err?.stack || '').split('\n').slice(0, 3).join(' | '), project: projectPath });
     }
+  }
+
+  const EXTRACT_CONCURRENCY = 4;
+  for (let start = 0; start < pending.length; start += EXTRACT_CONCURRENCY) {
+    await Promise.all(pending.slice(start, start + EXTRACT_CONCURRENCY).map(processOne));
   }
   _activity.activityLog({ op: 'extract', experiences: experiences.length, capped: capped.length, stored, project: projectPath || null });
   _log('complete', { experiences: experiences.length, stored, project: projectPath });

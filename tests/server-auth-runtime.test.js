@@ -250,22 +250,19 @@ test('POST /api/extract forwards source metadata to core extraction', async () =
   const serverModule = require(path.join(REPO_ROOT, 'server.js'));
   const core = serverModule.loadExperienceCore();
   const originalExtract = core.extractFromSession;
+  const originalEvolve = core.evolve;
   let called = 0;
+  let captured = null;
+  // Extraction is invoked synchronously (before its first await), so `captured` is set
+  // by the time handleExtract returns even though the work now runs in the background.
   core.extractFromSession = async (transcript, projectPath, meta) => {
     called += 1;
-    assert.equal(transcript, 'ToolOutput: permission denied\nToolCall Bash: chmod 600 /tmp/key');
-    assert.equal(projectPath, '/repo/experience-engine');
-    assert.deepEqual(meta, {
-      sourceKind: 'stop-hook',
-      sourceRuntime: 'codex-wsl',
-      sourceSession: 'session-extract-1',
-      framework: null,
-      lang: null,
-      project_slug: null,
-      _preDetectedExperiences: null,
-    });
+    captured = { transcript, projectPath, meta };
     return 1;
   };
+  // Server now consolidates after a background extraction — stub it so the test does
+  // not trigger real evolve side-effects.
+  core.evolve = async () => ({});
 
   try {
     const req = makeJsonRequest({
@@ -281,9 +278,23 @@ test('POST /api/extract forwards source metadata to core extraction', async () =
 
     assert.equal(res.statusCode, 200);
     assert.equal(called, 1);
-    assert.deepEqual(body, { stored: 1, success: true });
+    // ACK-immediately envelope — extraction no longer blocks the response.
+    assert.deepEqual(body, { accepted: true, async: true, success: true });
+    // Source-metadata forwarding is still verified, from the captured invocation.
+    assert.equal(captured.transcript, 'ToolOutput: permission denied\nToolCall Bash: chmod 600 /tmp/key');
+    assert.equal(captured.projectPath, '/repo/experience-engine');
+    assert.deepEqual(captured.meta, {
+      sourceKind: 'stop-hook',
+      sourceRuntime: 'codex-wsl',
+      sourceSession: 'session-extract-1',
+      framework: null,
+      lang: null,
+      project_slug: null,
+      _preDetectedExperiences: null,
+    });
   } finally {
     core.extractFromSession = originalExtract;
+    core.evolve = originalEvolve;
   }
 });
 
