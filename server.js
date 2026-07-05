@@ -1505,6 +1505,9 @@ async function handleBrainProxy(req, res) {
     if (body.model) options.model = body.model;
     if (body.maxTokens != null) options.maxTokens = body.maxTokens;
     if (body.provider) options.provider = body.provider;
+    // WhoAmI structured extraction: use the stronger brainExtractModel (server key),
+    // not the hot-path brainModel which mis-spells the dim vocabulary.
+    if (!options.model && body.useExtractModel) options.model = runtimeConfig.getBrainExtractModel();
     const result = await classifyViaBrain(body.prompt, timeoutMs, options);
     res.writeHead(200, { 'Content-Type': 'application/json', ...CORS });
     res.end(JSON.stringify({ ok: true, result }));
