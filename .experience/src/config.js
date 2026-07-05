@@ -102,6 +102,15 @@ function getBrainExtractModel() {
   const override = cfgValue('brainExtractModel', 'EXPERIENCE_BRAIN_EXTRACT_MODEL', null);
   return override || getBrainModel();
 }
+// Extract-path provider overrides. The extract/evolve jobs need a STRONGER model than the
+// hot-path brain, and that model may live on a DIFFERENT provider/key than the hot-path one
+// (e.g. hot-path Qwen on SiliconFlow, but SiliconFlow rate-limits DeepSeek-V3 hard — so route
+// the extract model to DeepSeek's native API instead). Each falls back to the hot-path brain
+// getter when unset, so a box that does NOT configure a separate extract provider keeps its
+// existing single-provider behaviour unchanged (backward-compatible).
+function getBrainExtractProvider() { return cfgValue('brainExtractProvider', 'EXPERIENCE_BRAIN_EXTRACT_PROVIDER', '') || getBrainProvider(); }
+function getBrainExtractEndpoint() { return cfgValue('brainExtractEndpoint', 'EXPERIENCE_BRAIN_EXTRACT_ENDPOINT', '') || getBrainEndpoint(); }
+function getBrainExtractKey()      { return cfgValue('brainExtractKey', 'EXPERIENCE_BRAIN_EXTRACT_KEY', '') || getBrainKey(); }
 // Source-aware model picker. Sources are set by callers via meta.source in callBrainWithFallback.
 function getBrainModelForSource(source) {
   if (source === 'extract' || source === 'evolve') return getBrainExtractModel();
@@ -326,6 +335,7 @@ module.exports = {
   getOllamaBase, getOllamaEmbedUrl, getOllamaGenerateUrl,
   getEmbedProvider, getEmbedModel, getOllamaEmbedModel, getEmbedEndpoint, getEmbedKey, getEmbedDim, getEmbedTimeoutMs,
   getBrainProvider, getBrainModel, getBrainExtractModel, getBrainModelForSource, getBrainEndpoint, getBrainKey,
+  getBrainExtractProvider, getBrainExtractEndpoint, getBrainExtractKey,
   getMinConfidence, getHighConfidence, getMinSearchScore,
   getPassiveHybrid, getPassiveLexicalMaxAdds, getPassiveLexicalDisplayScore,
   getSearchHybrid,

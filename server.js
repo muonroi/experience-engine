@@ -1520,9 +1520,19 @@ async function handleBrainProxy(req, res) {
     if (body.model) options.model = body.model;
     if (body.maxTokens != null) options.maxTokens = body.maxTokens;
     if (body.provider) options.provider = body.provider;
-    // WhoAmI structured extraction: use the stronger brainExtractModel (server key),
-    // not the hot-path brainModel which mis-spells the dim vocabulary.
-    if (!options.model && body.useExtractModel) options.model = runtimeConfig.getBrainExtractModel();
+    // WhoAmI / style structured extraction: use the stronger brainExtractModel, not the
+    // hot-path brainModel which mis-spells the dim vocabulary. The extract model may live on
+    // a DIFFERENT provider/key/endpoint than the hot-path brain (e.g. hot-path Qwen on
+    // SiliconFlow, extract on DeepSeek's native API because SiliconFlow rate-limits DeepSeek
+    // hard with 429s). Route provider+endpoint+key together so the call actually lands on the
+    // extract provider. Each getter falls back to the hot-path brain when unconfigured, so a
+    // single-provider box is unchanged. Explicit caller overrides (options.*) still win.
+    if (body.useExtractModel) {
+      if (!options.model) options.model = runtimeConfig.getBrainExtractModel();
+      if (!options.provider) options.provider = runtimeConfig.getBrainExtractProvider();
+      if (!options.endpoint) options.endpoint = runtimeConfig.getBrainExtractEndpoint();
+      if (!options.key) options.key = runtimeConfig.getBrainExtractKey();
+    }
     const result = await classifyViaBrain(body.prompt, timeoutMs, options);
     res.writeHead(200, { 'Content-Type': 'application/json', ...CORS });
     res.end(JSON.stringify({ ok: true, result }));
