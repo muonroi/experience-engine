@@ -31,6 +31,19 @@ function getQueueDir(homeDir = getHomeDir()) {
   return path.join(getExperienceDir(homeDir), 'offline-queue');
 }
 
+function getQuarantineDir(homeDir = getHomeDir()) {
+  return path.join(getExperienceDir(homeDir), 'offline-queue-quarantine');
+}
+
+// A permanent (non-retriable) HTTP status: the request is malformed or rejected
+// on its own merits and will NEVER succeed on retry, so it must be moved aside
+// instead of blocking the queue head. 429 (rate limit) and 408 (timeout) are
+// transient and explicitly excluded — those get the break-and-backoff path.
+function isPermanentHttpError(status) {
+  return typeof status === 'number' && status >= 400 && status < 500
+    && status !== 429 && status !== 408;
+}
+
 function getTmpDir(homeDir = getHomeDir()) {
   return path.join(getExperienceDir(homeDir), 'tmp');
 }
@@ -172,7 +185,7 @@ async function flushQueue(options = {}) {
     ? new Set(options.allowedPaths)
     : null;
   const files = readQueue(homeDir);
-  const results = { sent: 0, remaining: readQueue(homeDir).length, failed: [] };
+  const results = { sent: 0, remaining: readQueue(homeDir).length, failed: [], quarantined: 0 };
   let processed = 0;
 
   for (const filePath of files) {
@@ -194,6 +207,21 @@ async function flushQueue(options = {}) {
       record.attempts = (record.attempts || 0) + 1;
       record.lastError = error.message || String(error);
       record.lastTriedAt = new Date().toISOString();
+      // Permanent 4xx (e.g. 400 "toolName is required"): the record is poison
+      // and will never drain. Quarantine it and KEEP GOING so it can't block the
+      // valid events queued behind it (head-of-line blocking). Transient errors
+      // (network/timeout/429/5xx) fall through to break-and-backoff below.
+      if (isPermanentHttpError(error.status)) {
+        try {
+          const qDir = getQuarantineDir(homeDir);
+          fs.mkdirSync(qDir, { recursive: true });
+          fs.renameSync(filePath, path.join(qDir, path.basename(filePath)));
+        } catch {
+          try { fs.unlinkSync(filePath); } catch {}
+        }
+        results.quarantined++;
+        continue;
+      }
       try { fs.writeFileSync(filePath, JSON.stringify(record, null, 2)); } catch {}
       results.failed.push({ file: path.basename(filePath), error: record.lastError });
       break;
@@ -296,4 +324,6 @@ module.exports = {
   flushQueueForHook,
   maybeSpawnExtractDrain,
   getQueueDir,
+  getQuarantineDir,
+  isPermanentHttpError,
 };

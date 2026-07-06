@@ -234,6 +234,17 @@ process.stdin.on('end', async () => {
       const config = remote.loadConfig();
       if (remote.isRemoteEnabled(config)) {
         try { await remote.flushQueueForHook({ config }); } catch {}
+        // A PostToolUse event with no tool name is meaningless to the server —
+        // /api/posttool rejects it with 400 "toolName is required". Posting it
+        // anyway lands a permanent-poison record in the offline queue (some
+        // codex/antigravity hook payloads carry no tool_name). Skip the remote
+        // round-trip entirely; still drain the queue and clean up local state.
+        if (!String(toolName || '').trim()) {
+          debugLog({ stage: 'remote_posttool_skipped_no_tool', surfacedCount: surfacedIds.length });
+          try { remote.maybeSpawnExtractDrain({ config }); } catch {}
+          try { if (state) fs.unlinkSync(STATE_FILE); } catch {}
+          process.exitCode = 0; return;
+        }
         const body = {
           toolName,
           toolInput,
