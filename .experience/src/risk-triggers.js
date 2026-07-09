@@ -25,6 +25,22 @@ const DEFAULT_KEYWORDS = [
 
 const MAX_TRIGGERS = 3;
 
+// A pure single alphabetic word (no space/hyphen/symbol) is matched on WORD
+// BOUNDARIES, not as a raw substring. Without this, short keywords like 'auth'
+// fire on every commit ("Co-Authored-By"), 'prod' on "reproduce"/"product",
+// 'cors' on "scores", 'token' on "tokenizer" — pure noise. Multi-word / symbol
+// keywords ('rate limit', 'rm -rf', 'force-push', 'reset --hard') keep the
+// substring semantics they rely on.
+const PURE_ALPHA_RE = /^[a-z]+$/;
+
+function keywordMatches(hay, k) {
+  if (PURE_ALPHA_RE.test(k)) {
+    // k is [a-z]+ only → safe to interpolate into a RegExp without escaping.
+    return new RegExp(`\\b${k}\\b`).test(hay);
+  }
+  return hay.includes(k);
+}
+
 function matchKeywords(text, keywords) {
   const hay = String(text || '').toLowerCase();
   if (!hay) return [];
@@ -33,7 +49,7 @@ function matchKeywords(text, keywords) {
   for (const kw of keywords) {
     const k = String(kw || '').toLowerCase().trim();
     if (!k || seen.has(k)) continue;
-    if (hay.includes(k)) { seen.add(k); hits.push(k); }
+    if (keywordMatches(hay, k)) { seen.add(k); hits.push(k); }
   }
   return hits;
 }

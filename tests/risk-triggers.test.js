@@ -75,3 +75,28 @@ test('matchKeywords: dedups and is case-insensitive', () => {
   assert.deepEqual(rt.matchKeywords('Deploy the DEPLOY now', ['deploy']), ['deploy']);
   assert.deepEqual(rt.matchKeywords('', ['deploy']), []);
 });
+
+test('word-boundary: "auth" does NOT fire on the Co-Authored-By commit trailer', () => {
+  // The regression that made the gate false-fire on every git commit.
+  const msg = 'git commit -m "fix: thing\n\nCo-Authored-By: Claude <noreply@anthropic.com>"';
+  assert.deepEqual(rt.matchKeywords(msg, ['auth']), []);
+  assert.deepEqual(rt.detectRiskTriggers({ toolInput: { command: msg } }), []);
+});
+
+test('word-boundary: "auth" fires as a whole word but not as a substring', () => {
+  assert.deepEqual(rt.matchKeywords('please wire up auth for the api', ['auth']), ['auth']);
+  assert.deepEqual(rt.matchKeywords('the authored authentication authorize handler', ['auth']), []);
+});
+
+test('word-boundary: short alpha keywords no longer over-match', () => {
+  // 'prod' ⊄ "reproduce"/"product"; 'cors' ⊄ "scores"; 'token' ⊄ "tokenizer".
+  assert.deepEqual(rt.matchKeywords('reproduce the product scores with the tokenizer', ['prod', 'cors', 'token']), []);
+  // …but the standalone words still fire.
+  assert.deepEqual(rt.matchKeywords('deploy to prod now', ['prod']), ['prod']);
+});
+
+test('symbol / multi-word keywords keep substring matching', () => {
+  assert.deepEqual(rt.matchKeywords('run rm -rf /tmp/x', ['rm -rf']), ['rm -rf']);
+  assert.deepEqual(rt.matchKeywords('please rate-limit the endpoint', ['rate-limit']), ['rate-limit']);
+  assert.ok(rt.matchKeywords('git reset --hard HEAD~1', ['reset --hard']).includes('reset --hard'));
+});
