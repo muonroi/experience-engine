@@ -1047,12 +1047,36 @@ const KNOWN_COLLECTIONS = new Set([
   'bb-behavioral',
   'bb-recipes',
   'bb-packages', // Plan 23: BB NuGet packages
+  // Sprint-2 Part D: write-during-execution workflow collections. Written via
+  // /api/workflow-event; intentionally KEPT OUT of the recall hot path (the
+  // 3-collection unrolled search in experience-core.js) so adding them cannot
+  // destabilize passive/active recall. Queried directly by the endpoint only.
+  'workflow_debate',
+  'workflow_sprint',
+  'workflow_decision',
+  'workflow_mistake',
 ]);
+
+// Sprint-2 Part D: map a workflow event `kind` → its collection.
+const WORKFLOW_KIND_TO_COLLECTION = {
+  'council-debate': 'workflow_debate',
+  debate: 'workflow_debate',
+  'sprint-execution': 'workflow_sprint',
+  sprint: 'workflow_sprint',
+  decision: 'workflow_decision',
+  mistake: 'workflow_mistake',
+};
 
 // ensureCollections — creates bb-* Qdrant collections at server startup if absent.
 // Vector dims must match the configured embedding model.
 async function ensureCollections() {
-  const BB_COLLECTIONS = ['bb-behavioral', 'bb-recipes', 'bb-packages'];
+  // Sprint-2 Part D: create workflow_* alongside bb-* at startup (only when the
+  // endpoint is enabled — no reason to provision otherwise).
+  const workflowEnabled = process.env.ENABLE_WORKFLOW_EVENT === '1' || _cfg.enableWorkflowEvent === true;
+  const WORKFLOW_COLLECTIONS = workflowEnabled
+    ? ['workflow_debate', 'workflow_sprint', 'workflow_decision', 'workflow_mistake']
+    : [];
+  const BB_COLLECTIONS = ['bb-behavioral', 'bb-recipes', 'bb-packages', ...WORKFLOW_COLLECTIONS];
   const VECTOR_SIZE = Number(runtimeConfig.getEmbedDim()) || 768;
   for (const col of BB_COLLECTIONS) {
     try {
@@ -1086,7 +1110,7 @@ async function ensureCollections() {
   // queries work. Idempotent — Qdrant treats an existing index as success; any
   // failure is logged and non-fatal (lexical leg returns [] until the index
   // lands, so recall degrades cleanly to vector-only).
-  for (const col of ['experience-principles', 'experience-behavioral', 'experience-selfqa']) {
+  for (const col of ['experience-principles', 'experience-behavioral', 'experience-selfqa', ...WORKFLOW_COLLECTIONS]) {
     try {
       const idx = await fetch(`${QDRANT_BASE}/collections/${col}/index`, {
         method: 'PUT',
@@ -1137,6 +1161,12 @@ async function handleRecall(req, res) {
     lang: derived.lang,
     framework: derived.framework,
     project_slug: derived.project_slug,
+    // Sprint-2 Part D: optional stance/role hint for per-stance recall. Recorded
+    // on meta (non-breaking — ignored when absent). The recall search hot path
+    // stays unrolled to the 3 experience-* collections; wiring stance into
+    // collection weighting is a follow-up that requires looping that path.
+    stance: typeof body.stance === 'string' ? body.stance : null,
+    role: typeof body.role === 'string' ? body.role : null,
   };
 
   const { interceptWithMeta } = loadExperienceCore();
@@ -1571,6 +1601,76 @@ async function handlePhaseOutcome(req, res) {
   json(res, result);
 }
 
+// Sprint-2 Part D: write-during-execution channel. Unlike /api/phase-outcome
+// (which only REINFORCES existing point IDs), this CREATES a new experience
+// entry in a workflow_* collection so council rounds / sprint outcomes /
+// decisions / mistakes captured mid-run are recallable in later runs. Gated by
+// ENABLE_WORKFLOW_EVENT=1 (or _cfg.enableWorkflowEvent). Fire-and-forget from
+// the client's side; here we embed + upsert directly (handleIngestPoint pattern)
+// so no recall-hot-path code is touched.
+async function handleWorkflowEvent(req, res) {
+  if (process.env.ENABLE_WORKFLOW_EVENT !== '1' && _cfg.enableWorkflowEvent !== true) {
+    return error(res, 'workflow-event endpoint is disabled (set ENABLE_WORKFLOW_EVENT=1)', 404);
+  }
+  const body = await readBody(req);
+  const v = validateBody(body, {
+    kind: { type: 'string', required: true },
+    phaseRef: { type: 'string', required: true },
+  });
+  if (!v.ok) return error(res, v.error);
+
+  const collection = WORKFLOW_KIND_TO_COLLECTION[body.kind];
+  if (!collection) {
+    return error(res, `unknown workflow kind: ${body.kind} (expected one of ${Object.keys(WORKFLOW_KIND_TO_COLLECTION).join(', ')})`);
+  }
+
+  // Build the embeddable text. Prefer an explicit `text`/`summary`; else derive
+  // a compact string from the payload so recall has something meaningful.
+  const payload = body.payload && typeof body.payload === 'object' ? body.payload : {};
+  const text =
+    (typeof body.text === 'string' && body.text.trim()) ||
+    (typeof payload.summary === 'string' && payload.summary.trim()) ||
+    `${body.kind} ${body.phaseRef} ${JSON.stringify(payload).slice(0, 800)}`;
+
+  try {
+    const { getEmbeddingRaw } = loadExperienceCore();
+    const vector = await getEmbeddingRaw(text);
+    if (!Array.isArray(vector) || vector.length === 0) {
+      return error(res, 'embedding_failed', 503);
+    }
+    const crypto = require('node:crypto');
+    const id = typeof body.id === 'string' && body.id ? body.id : crypto.randomUUID();
+    const point = {
+      id,
+      vector,
+      payload: {
+        kind: body.kind,
+        phaseRef: body.phaseRef,
+        sessionId: body.sessionId || null,
+        tier: 'intra-session', // hot experience — not yet promoted to a long-term principle
+        createdAt: new Date().toISOString(),
+        ...payload,
+        text,
+        // Full-text leg parity with the experience-* collections.
+        text_search: text.toLowerCase(),
+      },
+    };
+    const upsert = await fetch(`${QDRANT_BASE}/collections/${collection}/points?wait=true`, {
+      method: 'PUT',
+      headers: qdrantHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ points: [point] }),
+    });
+    if (!upsert.ok) {
+      const errBody = await upsert.text();
+      return error(res, `qdrant_upsert_failed: ${upsert.status} ${errBody.slice(0, 200)}`);
+    }
+    json(res, { ok: true, id, collection, kind: body.kind });
+  } catch (err) {
+    slog('error', 'workflow_event_error', { error: String(err), kind: body.kind });
+    return error(res, String(err), 500);
+  }
+}
+
 // --- Server ---
 
 const server = http.createServer(async (req, res) => {
@@ -1632,6 +1732,7 @@ const server = http.createServer(async (req, res) => {
       if (p === '/api/import-memory') return await handleImportMemory(req, res);
       if (p === '/api/pil-context') return await handlePilContext(req, res);
       if (p === '/api/phase-outcome') return await handlePhaseOutcome(req, res);
+      if (p === '/api/workflow-event') return await handleWorkflowEvent(req, res);
       if (p === '/api/project-brief') return await handleProjectBrief(req, res, url);
     }
 
