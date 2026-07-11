@@ -30,6 +30,7 @@ const _router = require('./src/router');
 const _activity = require('./src/activity');
 const _hittrack = require('./src/hittrack');
 const _intercept = require('./src/intercept');
+const _stance = require('./src/stance-weights');
 const _brief = require('./src/brief');
 const _fusion = require('./src/fusion');
 
@@ -393,6 +394,31 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   if (noiseSuppressed.length > 0) {
     for (const [reason, count] of Object.entries(noiseSuppressed.reduce((acc, item) => { acc[item.reason] = (acc[item.reason] || 0) + 1; return acc; }, {}))) {
       _activity.activityLog({ op: 'noise-suppressed', reason, count, actionKind, tool: toolName, project: filePath || null, ...sourceMeta });
+    }
+  }
+
+  // Sprint-2 item 3 — per-stance recall weighting. The debate opener tags recall
+  // with the council stance/role; scale each collection's recall ranking score by
+  // that stance's affinity so its favored collection floats up (and thus fills
+  // more of the single combined budget below), while a weight of 0 deselects a
+  // collection outright. Default/absent stance → [1,1,1] (strict no-op), so this
+  // only ever fires for stance-tagged recall. COLLECTIONS order is [principles,
+  // behavioral, selfqa]; the weight vector is aligned to it.
+  if (recallMode) {
+    const stanceW = _stance.weightsForStance(sourceMeta && (sourceMeta.stance || sourceMeta.role));
+    if (stanceW.some((w) => w !== 1)) {
+      const applyStanceW = (pts, w) => {
+        if (w === 1) return pts;
+        if (w === 0) return []; // explicit deselect — collection contributes nothing
+        for (const p of pts) {
+          p._effectiveScore = (p._effectiveScore ?? p.score ?? 0) * w;
+          p._stanceWeight = w;
+        }
+        return pts;
+      };
+      r0 = applyStanceW(r0, stanceW[0]);
+      r1 = applyStanceW(r1, stanceW[1]);
+      r2 = applyStanceW(r2, stanceW[2]);
     }
   }
 

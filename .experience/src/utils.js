@@ -634,6 +634,12 @@ function normalizeSourceMeta(meta) {
     ...(meta.framework ? { framework: meta.framework } : {}),
     ...(meta.project_slug ? { project_slug: meta.project_slug } : {}),
     ...(meta.cwd ? { cwd: meta.cwd } : {}),
+    // Sprint-2 item 3: per-stance recall. The debate opener tags recall with the
+    // council stance/role so the search can weight/select collections toward the
+    // knowledge that stance cares about. Preserved here or it never reaches the
+    // hot path (normalizeSourceMeta is the choke point for all recall meta).
+    ...(meta.stance ? { stance: meta.stance } : {}),
+    ...(meta.role ? { role: meta.role } : {}),
   };
 }
 
