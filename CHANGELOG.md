@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-07-17
+
+### Fixed
+- **2026-07-17:** `ee_query` charged feedback debt for entries the agent was
+  never shown. The ledger recorded every entry the brain returned, while the
+  rendered index is truncated from the tail at `maxChars` (default 6000 against
+  a recall that routinely renders ~30k chars). Verified live against the hosted
+  brain: one `ee_query` returned 24 entries / 29779 chars, rendered 1166 chars
+  with **zero** `[id col]` handles visible (`format.js:191` appends the handle at
+  the *end* of each entry), and the next `ee_query` demanded a verdict on all 24.
+  Under `EXPERIENCE_RECALL_FEEDBACK_GATE=hard` that unsettleable debt refuses the
+  next recall outright. Debt is now charged only for handles that survived into
+  the rendered text (`ee-api.js` `visibleEntries`), which is the only honest
+  record of what the agent could see well enough to rate.
+
+### Changed
+- **2026-07-17:** The `ee_*` tool descriptions are the ONLY thing teaching a
+  foreign agent how to use the brain — a client registering `exp-mcp` has no
+  CLAUDE.md — so the parts that were load-bearing-by-omission are now spelled
+  out. `ee_feedback` listed the four noise reasons as a bare enum with no
+  semantics, which invites defaulting to `wrong_task`: the one reason that
+  preserves nothing and permanently deletes an entry that may have been valid for
+  every other repo and language. It now carries the ordered decision tree and
+  says which reasons narrow scope (entry survives) versus delete. `ee_health`
+  explains `status:0` (no response at all) versus a real HTTP status (401 auth,
+  429 back off). `ee_query` states that an omitted `project` derives scope from
+  the *server process's* cwd — wrong for a globally-registered server — and that
+  the default `maxChars` shows roughly the strongest fifth of a broad recall.
+
 ## [0.7.0] - 2026-07-17
 
 ### Added

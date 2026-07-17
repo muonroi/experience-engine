@@ -192,6 +192,55 @@ test('ee_query: returns the [id col] index and records the entries as unrated de
   assert.equal(ledger.pendingCount(), 1, 'a recall must create feedback debt');
 });
 
+// A recall routinely renders ~30k chars while maxChars defaults to 6000, so most
+// of what the brain returns never reaches the agent. Debt for an entry whose
+// handle was truncated away is debt the agent cannot possibly settle: it never
+// saw the `[id col]`. Under gate=hard that unsettleable debt refuses the NEXT
+// recall outright. Only what was rendered may be charged.
+const TRUNCATING_RESP = {
+  text: [
+    `first ${'x'.repeat(300)}\n   [id:aaaaaaaa col:experience-behavioral]`,
+    `second ${'y'.repeat(300)}\n   [id:bbbbbbbb col:experience-behavioral]`,
+    `third ${'z'.repeat(300)}\n   [id:cccccccc col:experience-behavioral]`,
+  ].join('\n'),
+  // Real entries carry the full UUID; format.js renders only an 8-char prefix.
+  entries: [
+    { id: 'aaaaaaaa-1111-4111-8111-111111111111', collection: 'experience-behavioral' },
+    { id: 'bbbbbbbb-2222-4222-8222-222222222222', collection: 'experience-behavioral' },
+    { id: 'cccccccc-3333-4333-8333-333333333333', collection: 'experience-behavioral' },
+  ],
+  count: 3,
+  query: 'q',
+};
+
+test('ee_query: charges feedback debt ONLY for entries whose handle survived truncation', async () => {
+  const ledger = createRecallLedger();
+  const out = await call(
+    'ee_query',
+    { query: 'q', maxChars: 500 },
+    { api: apiStub({ recall: async () => TRUNCATING_RESP }), ledger, env: {} },
+  );
+
+  assert.match(out.content[0].text, /\[id:aaaaaaaa col:experience-behavioral\]/);
+  assert.doesNotMatch(out.content[0].text, /\[id:cccccccc/, 'precondition: the tail must be truncated away');
+  assert.equal(ledger.pendingCount(), 1, 'only the rendered entry may become debt');
+  assert.equal(ledger.pending()[0].id, 'aaaaaaaa-1111-4111-8111-111111111111', 'debt keeps the full id');
+});
+
+test('ee_query: an index with no surviving handle charges no debt at all', async () => {
+  const ledger = createRecallLedger();
+  await call(
+    'ee_query',
+    { query: 'q', maxChars: 500 },
+    {
+      api: apiStub({ recall: async () => ({ ...TRUNCATING_RESP, text: 'body with no handle at all' }) }),
+      ledger,
+      env: {},
+    },
+  );
+  assert.equal(ledger.pendingCount(), 0);
+});
+
 test('ee_query: a null response is ee_unavailable, not an empty index', async () => {
   const out = await call('ee_query', { query: 'q' }, { api: apiStub({ recall: async () => null }), ledger: createRecallLedger(), env: {} });
   assert.equal(out.isError, true);

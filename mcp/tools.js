@@ -54,10 +54,13 @@ function buildTools(deps = {}) {
         'here is cheaper than re-deriving or repeating a past mistake. Returns a formatted index whose entries ' +
         'carry `[id col]` handles — after you act on a recall, rate each entry you used or judged with the ' +
         'ee_feedback tool (followed/ignored/noise) so the brain keeps what helped and prunes the rest; unrated ' +
-        'recalls are surfaced back to you on the next ee_query. Optional project scopes the recall. Returns a ' +
-        'compact ranked index (cosine-ranked, strongest first), capped at maxChars (default 6000, range ' +
-        '500-20000) and truncated from the tail; raise maxChars to see more. Returns ee_unavailable if EE is ' +
-        'down (then proceed without it).',
+        'recalls are surfaced back to you on the next ee_query (only entries actually shown to you are counted). ' +
+        'Returns a compact ranked index (cosine-ranked, strongest first), capped at maxChars (default 6000, range ' +
+        '500-20000) and truncated from the tail — a broad recall routinely renders ~30k chars, so the default ' +
+        'shows you roughly the strongest fifth; narrow the query or raise maxChars to see more. `project` scopes ' +
+        'the recall to one repo slug — pass it whenever you know it, because if omitted the scope is derived from ' +
+        "the SERVER process's working directory, which for a globally-registered server may not be the repo you " +
+        'are working in. Returns ee_unavailable if EE is down (then proceed without it).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -80,8 +83,12 @@ function buildTools(deps = {}) {
           if (resp === null || resp === undefined) {
             return fail('ee_unavailable', 'EE recall returned no response (server down, timeout, or circuit open)');
           }
-          if (gate.mode !== 'off') ledger.record(resp.entries, query);
           const index = api.formatRecallForAgent(resp, { query, maxChars });
+          // Charge debt for what was RENDERED, not for what the brain returned:
+          // the index is truncated from the tail, and an entry whose `[id col]`
+          // never reached the agent is an entry the agent cannot rate.
+          const seen = (api.visibleEntries || defaultApi.visibleEntries)(resp.entries, index);
+          if (gate.mode !== 'off') ledger.record(seen, query);
           if (gate.mode !== 'off' && pendingBefore.length > 0) {
             return okText(`${formatPendingBlock(pendingBefore, false)}\n\n${index}`);
           }
@@ -97,9 +104,20 @@ function buildTools(deps = {}) {
       description:
         'Rate an Experience Engine recall entry so the brain keeps what helped and prunes the rest. Call after ' +
         "acting on an ee_query result — once per `[id col]` you used or judged. verdict: 'followed' (you changed " +
-        "your approach because of it), 'ignored' (topical but did not apply this time), 'noise' (wrong by category — " +
-        'REQUIRES reason: wrong_repo | wrong_language | wrong_task | stale_rule). id may be a short prefix; the ' +
-        "server resolves it. Clears the entry from this session's pending-feedback gate.",
+        "your approach because of it), 'ignored' (topical but did not apply this time), 'noise' (wrong by CATEGORY, " +
+        'not merely unhelpful — REQUIRES reason). ' +
+        'PICK THE noise REASON CAREFULLY: it decides whether the entry is narrowed or destroyed. Check in order, ' +
+        'first match wins. (1) stale_rule — cites an API/lib/version that no longer exists or was replaced; the ' +
+        'entry is genuinely obsolete, so deleting it is correct. (2) wrong_repo — your project differs from the ' +
+        "entry's scope; your project is excluded and the entry SURVIVES for the repos it is right about. " +
+        '(3) wrong_language — your language differs, or the rule is clearly for another language even if it claims ' +
+        '"any"; your language is excluded and the entry SURVIVES. (4) wrong_task — LAST RESORT: irrelevant in ' +
+        'EVERY context, with no project or language that would narrow it; this preserves nothing, and 4 reports ' +
+        'past 14 days delete the entry permanently. ' +
+        'Never reach for wrong_task because it is the quickest to justify — an entry that was valid for other ' +
+        'repos or languages is then lost for them too. A hint that is merely over-broad or off-target for this ' +
+        "turn is 'ignored', not noise. id may be a short prefix; the server resolves it. Clears the entry from " +
+        "this session's pending-feedback gate.",
       inputSchema: {
         type: 'object',
         properties: {
@@ -137,7 +155,13 @@ function buildTools(deps = {}) {
 
     {
       name: 'ee_health',
-      description: 'Check Experience Engine server reachability.',
+      description:
+        'Check Experience Engine server reachability. Call this when ee_query returned ee_unavailable and you ' +
+        'need to know whether to retry or just proceed without the brain. Returns {ok, status}: ok=true means the ' +
+        'brain answered. status=0 means NO response reached us at all (server down, DNS, timeout, wrong URL) and ' +
+        'an `error` field carries the reason — retrying rarely helps. A non-zero status is what the server ' +
+        'actually replied (401/403 = auth token missing or wrong in ~/.experience/config.json; 429 = rate limited, ' +
+        'so back off and retry; 5xx = brain-side fault). Never blocks your work: if the brain is down, proceed.',
       inputSchema: { type: 'object', properties: {} },
       async handler() {
         try {

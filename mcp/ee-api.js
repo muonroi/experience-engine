@@ -66,6 +66,38 @@ function formatRecallForAgent(resp, opts = {}) {
   return `${body}\n\n${footer}`;
 }
 
+/**
+ * The `[id col]` handles an agent can actually SEE in a rendered index.
+ *
+ * formatRecallForAgent drops the tail, so `resp.entries` (what the brain
+ * returned) and what the agent was shown are different sets — routinely by 5x,
+ * since a recall renders ~30k chars against a 6000-char default budget. The
+ * rendered text is the only honest record of what was surfaced: an entry whose
+ * handle got truncated away cannot be rated, because the agent never saw the id
+ * to pass to ee_feedback.
+ */
+const RECALL_HANDLE_RE = /\[id:([^\s\]]+) col:([^\]]+)\]/g;
+
+function extractRenderedIds(text) {
+  const ids = new Set();
+  for (const m of String(text || '').matchAll(RECALL_HANDLE_RE)) ids.add(m[1].trim());
+  return ids;
+}
+
+/** Subset of `entries` whose handle survived truncation into `index`. */
+function visibleEntries(entries, index) {
+  if (!Array.isArray(entries)) return [];
+  const shown = extractRenderedIds(index);
+  if (shown.size === 0) return [];
+  return entries.filter((e) => {
+    const id = e && e.id != null ? String(e.id).trim() : '';
+    if (!id) return false;
+    // format.js renders `[id:<8-char prefix> …]`; entries carry the full UUID.
+    for (const s of shown) if (id === s || id.startsWith(s)) return true;
+    return false;
+  });
+}
+
 /** Active recall via POST /api/recall (recallMode). Throws on transport failure. */
 async function recall(query, opts = {}) {
   return recallViaCli(query, { project: opts.project || null, cwd: opts.cwd || process.cwd() });
@@ -150,4 +182,7 @@ async function write(lesson, opts = {}, homeDir = os.homedir()) {
   }
 }
 
-module.exports = { recall, health, feedback, write, formatRecallForAgent, clampRecallChars };
+module.exports = {
+  recall, health, feedback, write,
+  formatRecallForAgent, clampRecallChars, extractRenderedIds, visibleEntries,
+};
