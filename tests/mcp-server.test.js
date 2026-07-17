@@ -6,8 +6,8 @@
  *
  * The MCP surface used to live in muonroi-cli, which meant the brain was only
  * reachable from one CLI. It lives here now so any MCP client can install the
- * engine and get the same four tools; muonroi-cli keeps calling the brain
- * natively (no MCP hop, no SDK).
+ * engine and get the same tools; muonroi-cli keeps calling the brain natively
+ * (no MCP hop, no SDK).
  *
  * @modelcontextprotocol/sdk is NOT used: this package is zero-runtime-dependency
  * by policy, and a tools-only stdio server owes a client three methods. The cost
@@ -112,10 +112,10 @@ test('unknown method → JSON-RPC method-not-found', async () => {
   assert.match(res.error.message, /resources\/list/);
 });
 
-test('tools/list: exposes exactly the four ee_* tools, each with a schema', async () => {
+test('tools/list: exposes exactly the five ee_* tools, each with a schema', async () => {
   const res = await handleMessage({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, ctxWith());
   const names = res.result.tools.map((t) => t.name).sort();
-  assert.deepEqual(names, ['ee_feedback', 'ee_health', 'ee_query', 'ee_write']);
+  assert.deepEqual(names, ['ee_feedback', 'ee_health', 'ee_projects', 'ee_query', 'ee_write']);
   for (const t of res.result.tools) {
     assert.ok(t.description && t.description.length > 20, `${t.name} needs a description an agent can act on`);
     assert.equal(t.inputSchema.type, 'object');
@@ -168,13 +168,15 @@ const RECALL_RESP = {
 };
 
 function apiStub(over = {}) {
-  const realFormat = require(path.join(MCP_DIR, 'ee-api.js')).formatRecallForAgent;
+  const real = require(path.join(MCP_DIR, 'ee-api.js'));
   return {
     recall: async () => RECALL_RESP,
     health: async () => ({ ok: true, status: 200 }),
     feedback: async () => ({ ok: true, resolvedId: 'aaaaaaaa', verdict: 'FOLLOWED' }),
     write: async () => ({ ok: true, id: 'new-id' }),
-    formatRecallForAgent: realFormat,
+    projects: async () => ({ ok: true, projects: [{ slug: 'muonroi-cli', count: 116 }], unscoped: 147 }),
+    formatRecallForAgent: real.formatRecallForAgent,
+    formatProjectsForAgent: real.formatProjectsForAgent,
     ...over,
   };
 }
@@ -239,6 +241,40 @@ test('ee_query: an index with no surviving handle charges no debt at all', async
     },
   );
   assert.equal(ledger.pendingCount(), 0);
+});
+
+test('ee_projects: lists slugs an agent can copy verbatim, and says what unscoped means', async () => {
+  const out = await call('ee_projects', {}, { api: apiStub(), ledger: createRecallLedger(), env: {} });
+  assert.equal(out.isError, undefined);
+  assert.match(out.content[0].text, /muonroi-cli\s+116 entries/);
+  assert.match(out.content[0].text, /147 unscoped/);
+});
+
+test('ee_projects: an empty brain tells the agent to OMIT project, not to guess', async () => {
+  const api = apiStub({ projects: async () => ({ ok: true, projects: [], unscoped: 0 }) });
+  const out = await call('ee_projects', {}, { api, ledger: createRecallLedger(), env: {} });
+  assert.match(out.content[0].text, /Omit `project`/);
+});
+
+test('ee_projects: a partial or truncated directory is flagged, never passed off as complete', async () => {
+  // A short list that looks authoritative is worse than no list: the agent
+  // concludes its repo has no slug and omits project forever.
+  const api = apiStub({
+    projects: async () => ({
+      ok: true, projects: [{ slug: 'muonroi-cli', count: 116 }], unscoped: 5,
+      truncated: true, failed: ['experience-selfqa'],
+    }),
+  });
+  const out = await call('ee_projects', {}, { api, ledger: createRecallLedger(), env: {} });
+  assert.match(out.content[0].text, /TRUNCATED/);
+  assert.match(out.content[0].text, /INCOMPLETE: could not read experience-selfqa/);
+});
+
+test('ee_projects: a down directory is ee_unavailable, not an empty slug list', async () => {
+  const api = apiStub({ projects: async () => ({ ok: false, error: 'HTTP 503', status: 503 }) });
+  const out = await call('ee_projects', {}, { api, ledger: createRecallLedger(), env: {} });
+  assert.equal(out.isError, true);
+  assert.match(out.content[0].text, /ee_unavailable/);
 });
 
 test('ee_query: a null response is ee_unavailable, not an empty index', async () => {
@@ -470,7 +506,7 @@ test('exp-mcp binary: a real client handshake reaches the real brain API', async
     child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
     child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' })}\n`);
     const list = await waitFor(2);
-    assert.deepEqual(list.result.tools.map((t) => t.name).sort(), ['ee_feedback', 'ee_health', 'ee_query', 'ee_write']);
+    assert.deepEqual(list.result.tools.map((t) => t.name).sort(), ['ee_feedback', 'ee_health', 'ee_projects', 'ee_query', 'ee_write']);
 
     child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'ee_query', arguments: { query: 'what do we know' } } })}\n`);
     const call3 = await waitFor(3);

@@ -228,7 +228,86 @@ function isProtectedGetPath(pathname) {
 }
 
 function isReadOnlyApiPath(pathname) {
-  return pathname === '/api/stats' || pathname === '/api/gates' || pathname === '/api/project-brief';
+  return pathname === '/api/stats' || pathname === '/api/gates' || pathname === '/api/project-brief'
+    || pathname === '/api/projects';
+}
+
+// ── /api/projects — the slug directory ────────────────────────────────────────
+//
+// Every ee_query/ee_write caller has to put something in `project`, and without
+// this it can only guess. Guessing is not harmless: the slug space is polluted
+// with canonicalization debris from bad cwds (`.gemini`, `e:/tiennv`, `c:/users`,
+// `tmp`, `any` all exist alongside `muonroi-cli` and `experience-engine`), so the
+// slug an agent would invent and the slug that matches stored entries are
+// routinely different strings — and a miss silently drops exactly the
+// project-scoped entries the caller wanted, looking identical to an empty brain.
+//
+// Aggregates the FLAT top-level `scope_project_slug`. The nested
+// experience.scope.project_slug is inside the opaque `json` payload string and is
+// not filterable, so advertising it would hand agents values the filter can never
+// match.
+const PROJECT_SLUG_COLLECTIONS = ['experience-behavioral', 'experience-principles', 'experience-selfqa'];
+const PROJECTS_CACHE_TTL_MS = 5 * 60 * 1000;
+const PROJECTS_SCROLL_LIMIT = 5000;
+let _projectsCache = null;
+
+function _resetProjectsCache() {
+  _projectsCache = null;
+}
+
+async function collectProjectSlugs({ scroll, limit = PROJECTS_SCROLL_LIMIT, collections = PROJECT_SLUG_COLLECTIONS } = {}) {
+  const scrollFn = scroll || require(path.join(RUNTIME_DIR, 'src', 'qdrant.js')).scrollCollection;
+  const counts = new Map();
+  const perCollection = {};
+  const failed = [];
+  let unscoped = 0;
+  let total = 0;
+  let truncated = false;
+
+  for (const coll of collections) {
+    let points;
+    try {
+      points = await scrollFn(coll, null, limit);
+    } catch (err) {
+      // Partial beats nothing — but the caller must be told the answer is partial
+      // rather than reading a short list as "these are all the projects".
+      failed.push(coll);
+      slog('warn', 'projects_scroll_failed', { collection: coll, error: logger.serializeError(err) });
+      continue;
+    }
+    points = Array.isArray(points) ? points : [];
+    if (points.length >= limit) truncated = true;
+    perCollection[coll] = points.length;
+    total += points.length;
+
+    for (const p of points) {
+      const raw = p?.payload?.scope_project_slug;
+      const slug = typeof raw === 'string' ? raw.trim() : '';
+      if (!slug) { unscoped++; continue; }
+      const entry = counts.get(slug) || { slug, count: 0, collections: {} };
+      entry.count++;
+      entry.collections[coll] = (entry.collections[coll] || 0) + 1;
+      counts.set(slug, entry);
+    }
+  }
+
+  const projects = [...counts.values()].sort((a, b) => b.count - a.count || a.slug.localeCompare(b.slug));
+  return { projects, unscoped, total, collections: perCollection, failed, truncated };
+}
+
+async function handleProjects(req, res) {
+  const now = Date.now();
+  if (_projectsCache && now - _projectsCache.ts < PROJECTS_CACHE_TTL_MS) {
+    return json(res, { ..._projectsCache.data, cached: true });
+  }
+  try {
+    const data = await collectProjectSlugs();
+    _projectsCache = { ts: now, data };
+    return json(res, { ...data, cached: false });
+  } catch (err) {
+    slog('error', 'projects_failed', { error: logger.serializeError(err) });
+    return error(res, `project directory unavailable: ${err?.message || String(err)}`, 503);
+  }
 }
 
 async function resolvePointIdPrefix(collection, pointId) {
@@ -1747,6 +1826,7 @@ const server = http.createServer(async (req, res) => {
       if (!requireAuth(req, res, { allowReadToken: isReadOnlyApiPath(p) })) return;
     }
     if (p === '/api/stats' && req.method === 'GET') return await handleStats(req, res, url);
+    if (p === '/api/projects' && req.method === 'GET') return await handleProjects(req, res);
     if (p === '/api/gates' && req.method === 'GET') return await handleGates(req, res);
     if (p === '/api/graph' && req.method === 'GET') return await handleGraph(req, res, url);
     if (p === '/api/project-brief' && req.method === 'GET') return await handleProjectBrief(req, res, url);
@@ -1830,6 +1910,9 @@ module.exports = {
   handleExtract,
   handleEvolve,
   handleStats,
+  handleProjects,
+  collectProjectSlugs,
+  _resetProjectsCache,
   handleGates,
   handleGraph,
   handleTimeline,

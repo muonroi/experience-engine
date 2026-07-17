@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-17
+
+### Added
+- **2026-07-17:** `GET /api/projects` + the `ee_projects` MCP tool — the slug
+  directory, so `project` is PICKED rather than invented. Every ee_query/ee_write
+  caller has to put something in `project`, and nothing told it what was valid.
+  Guessing is not harmless: measured on the live brain, 30 distinct slugs exist
+  across the three recall collections and roughly a third are canonicalization
+  debris from whatever cwd wrote the entry — `.gemini` (20), `e:/tiennv` (19),
+  `d:/personal` (18), `c:/users` (10), `new` (16), `tmp`, `any`, `core` sit
+  alongside `muonroi-cli` (116), `storyflow` (36), `storyflow_ui` (22) and
+  `experience-engine` (21). The slug an agent would invent from its repo name and
+  the slug that matches stored entries are routinely different strings, and a
+  miss does not error — it silently drops exactly the project-scoped entries the
+  caller wanted, which is indistinguishable from a brain that knows nothing.
+  Read-token gated, 5-minute cache, and it reports `truncated` / `failed` rather
+  than passing a partial directory off as complete (a short list that looks
+  authoritative teaches the agent its repo has no slug).
+  Aggregates the FLAT top-level `scope_project_slug`: the nested
+  `experience.scope.project_slug` lives inside the opaque `json` payload string,
+  is invisible to Qdrant filters, and aggregating it reports zero slugs against a
+  brain that has thirty.
+
+### Changed
+- **2026-07-17:** `ee_query` and `ee_write` now tell the caller to take `project`
+  from `ee_projects` verbatim, and say what an unmatched slug actually does
+  (silently narrows, never errors) and that omitting it widens rather than empties
+  the recall.
+
 ## [0.7.1] - 2026-07-17
 
 ### Fixed

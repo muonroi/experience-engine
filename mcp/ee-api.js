@@ -103,6 +103,47 @@ async function recall(query, opts = {}) {
   return recallViaCli(query, { project: opts.project || null, cwd: opts.cwd || process.cwd() });
 }
 
+/**
+ * The project slugs the brain actually holds, so `project` is PICKED and never
+ * invented. Never throws; returns {ok,...}.
+ */
+async function projects(homeDir = os.homedir()) {
+  const { baseUrl, authToken } = resolveServerConfig(homeDir);
+  const headers = {};
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  try {
+    const res = await fetch(`${baseUrl}/api/projects`, { headers, signal: AbortSignal.timeout(15000) });
+    const text = await res.text();
+    let parsed = null;
+    try { parsed = JSON.parse(text); } catch { /* non-JSON error body — fall through to status */ }
+    if (!res.ok) return { ok: false, error: parsed?.error || text || `HTTP ${res.status}`, status: res.status };
+    return { ok: true, ...parsed };
+  } catch (err) {
+    return { ok: false, error: `${err?.name || 'Error'}: ${err?.message || String(err)}`, status: 0 };
+  }
+}
+
+/** Render the slug directory as something an agent picks from, not JSON to parse. */
+function formatProjectsForAgent(resp) {
+  const list = Array.isArray(resp?.projects) ? resp.projects : [];
+  if (list.length === 0) {
+    return '[projects: none — the brain holds no project-scoped entries. Omit `project`; every entry is unscoped and recallable from anywhere.]';
+  }
+  const width = Math.max(...list.map((p) => p.slug.length));
+  const lines = list.map((p) => `  ${p.slug.padEnd(width)}  ${String(p.count).padStart(4)} entries`);
+  const notes = [`${list.length} slugs`, `${resp.unscoped ?? 0} unscoped entries (recallable from ANY project)`];
+  if (resp.truncated) notes.push('COUNTS TRUNCATED at the scroll limit — treat as a floor');
+  if (Array.isArray(resp.failed) && resp.failed.length) notes.push(`INCOMPLETE: could not read ${resp.failed.join(', ')}`);
+  return [
+    'Project slugs the brain actually holds — pass one of these VERBATIM as `project`:',
+    ...lines,
+    '',
+    `[${notes.join(' · ')}]`,
+    'Slugs are derived from whatever cwd wrote the entry, so some are debris (drive letters, temp dirs).',
+    'Pick the one naming your repo; if none matches, omit `project` rather than inventing a slug.',
+  ].join('\n');
+}
+
 /** Reachability probe. Never throws — {ok:false,status:0} means "no response". */
 async function health(homeDir = os.homedir()) {
   const { baseUrl } = resolveServerConfig(homeDir);
@@ -183,6 +224,6 @@ async function write(lesson, opts = {}, homeDir = os.homedir()) {
 }
 
 module.exports = {
-  recall, health, feedback, write,
-  formatRecallForAgent, clampRecallChars, extractRenderedIds, visibleEntries,
+  recall, health, feedback, write, projects,
+  formatRecallForAgent, formatProjectsForAgent, clampRecallChars, extractRenderedIds, visibleEntries,
 };

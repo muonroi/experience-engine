@@ -58,9 +58,10 @@ function buildTools(deps = {}) {
         'Returns a compact ranked index (cosine-ranked, strongest first), capped at maxChars (default 6000, range ' +
         '500-20000) and truncated from the tail — a broad recall routinely renders ~30k chars, so the default ' +
         'shows you roughly the strongest fifth; narrow the query or raise maxChars to see more. `project` scopes ' +
-        'the recall to one repo slug — pass it whenever you know it, because if omitted the scope is derived from ' +
-        "the SERVER process's working directory, which for a globally-registered server may not be the repo you " +
-        'are working in. Returns ee_unavailable if EE is down (then proceed without it).',
+        'the recall to one repo slug: get it from ee_projects and pass it VERBATIM — never invent one, because a ' +
+        'slug that matches nothing silently drops the project-scoped entries instead of erroring. If omitted, ' +
+        "scope is derived from the SERVER process's working directory, which for a globally-registered server may " +
+        'not be your repo. Returns ee_unavailable if EE is down (then proceed without it).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -154,6 +155,31 @@ function buildTools(deps = {}) {
     },
 
     {
+      name: 'ee_projects',
+      description:
+        'List the project slugs the brain actually holds, with entry counts. Call this BEFORE passing `project` to ' +
+        'ee_query or ee_write — pick a slug from the list VERBATIM instead of inventing one from your repo name. A ' +
+        'slug that matches nothing does not error: it silently drops exactly the project-scoped entries you wanted ' +
+        'and looks identical to a brain that knows nothing about your project. Slugs are derived from whatever ' +
+        'working directory wrote each entry, so the list contains real repos AND debris (drive letters, temp dirs) ' +
+        '— the right slug is often not the one you would guess. If no slug names your repo, omit `project` rather ' +
+        'than inventing one: unscoped entries are recallable from everywhere, so an omitted project is a wider ' +
+        'recall, never an empty one.',
+      inputSchema: { type: 'object', properties: {} },
+      async handler() {
+        try {
+          const resp = await api.projects();
+          if (!resp || resp.ok !== true) {
+            return fail('ee_unavailable', resp?.error || 'project directory unavailable');
+          }
+          return okText(api.formatProjectsForAgent(resp));
+        } catch (e) {
+          return fail('ee_unavailable', e instanceof Error ? e.message : String(e));
+        }
+      },
+    },
+
+    {
       name: 'ee_health',
       description:
         'Check Experience Engine server reachability. Call this when ee_query returned ee_unavailable and you ' +
@@ -180,8 +206,10 @@ function buildTools(deps = {}) {
         'generalizable lesson (1-3 sentences — what to do or avoid next time, NOT a play-by-play of this turn). The ' +
         'lesson is embedded immediately (via /api/import-memory: dense + sparse) and becomes recallable via ee_query ' +
         'in this and future sessions. Use ee_query first if unsure a lesson already exists. collection defaults to ' +
-        'experience-behavioral (use experience-principles only for a broad, project-independent principle); project ' +
-        'scopes the lesson.',
+        'experience-behavioral (use experience-principles only for a broad, project-independent principle). ' +
+        '`project` scopes the lesson — take the slug from ee_projects and pass it VERBATIM, since a slug you ' +
+        'invent files the lesson under a name nobody will ever recall by; omit it for a lesson that is true ' +
+        'everywhere.',
       inputSchema: {
         type: 'object',
         properties: {
