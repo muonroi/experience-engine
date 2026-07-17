@@ -171,7 +171,15 @@ Reply with the relevant warning numbers separated by commas (e.g. "1,3"), or "no
       return null; // keep all hints when brain response is ambiguous
     }
     return validIndices.map(i => suggestionLines[i]);
-  } catch {
+  } catch (err) {
+    // Fail-open (null = keep all hints). Logged because the bare catch that used
+    // to be here made a dead filter indistinguishable from a filter that kept
+    // everything — the failure mode is invisible in the response either way.
+    log('warn', 'brain_relevance_filter_failed', {
+      provider: getBrainProvider(),
+      lines: suggestionLines.length,
+      error: serializeError(err),
+    });
     return null;
   }
 }

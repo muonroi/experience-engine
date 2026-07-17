@@ -33,6 +33,7 @@ const _intercept = require('./src/intercept');
 const _stance = require('./src/stance-weights');
 const _brief = require('./src/brief');
 const _fusion = require('./src/fusion');
+const _logger = require('./src/logger');
 
 // Wire the config-level activityLog stub to the real file logger. config.js
 // exposes activityLog as a setter-guarded no-op (to avoid a require cycle with
@@ -520,6 +521,9 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
 
   if (!hookRealtimeFastPath && lines.length > 0 && _config.getConfig().brainFilter !== false) {
     try {
+      // buildQuery() decorates and truncates the action ("[tool:Bash] running
+      // command …"); judge relevance against what the agent is really about to run.
+      const rawAction = String(toolInput?.command || toolInput?.file_path || query);
       const brainQuery = rawAction.length > query.length ? rawAction.slice(0, 300) : query;
       const kept = await _brainllm.brainRelevanceFilter(brainQuery, lines, signal, queryProjectSlug);
       if (kept !== null) {
@@ -527,7 +531,16 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
         lines.length = 0; lines.push(...kept);
         if (removed > 0) _activity.activityLog({ op: 'brain-filter', removed, kept: kept.length, ...sourceMeta });
       }
-    } catch {}
+    } catch (err) {
+      // Fail-open: a broken filter must never cost the agent its hints. But never
+      // SILENTLY — the bare catch that used to be here swallowed a ReferenceError
+      // that disabled this filter outright for ~8 weeks (3ba9b33).
+      _logger.log('warn', 'brain_filter_failed', {
+        tool: toolName,
+        lines: lines.length,
+        error: _logger.serializeError(err),
+      });
+    }
   }
 
   if (lines.length > 1) {
