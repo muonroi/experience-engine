@@ -17,6 +17,7 @@ const { estimateTextUnits, logCostCall, getEmbedding } = require("./embedding");
 const { checkQdrant, fileStoreRead, fileStoreWrite, fileStoreUpsert, searchCollection, buildQdrantUserFilter } = require("./qdrant");
 const { extractProjectSlug } = require("./utils");
 const { callBrainWithFallback } = require("./brain-llm");
+const { log, serializeError } = require("./logger");
 
 
 function isRouterEnabled() {
@@ -449,8 +450,21 @@ async function storeRouteDecision(taskText, taskHash, tier, model, runtime, cont
     createdAt: new Date().toISOString(), feedbackAt: null,
   };
 
-  // Dual-write: FileStore always, Qdrant when available
-  try { fileStoreUpsert(ROUTES_COLLECTION, id, vector, { json: JSON.stringify(routeData), user: getExpUser() }); } catch { /* non-blocking */ }
+  // Qdrant is the primary store; FileStore is the OFFLINE FALLBACK, matching
+  // updatePointPayload / searchCollection / fetchPointById, which all gate their
+  // FileStore branch on `!(await checkQdrant())`.
+  //
+  // This used to be an unconditional "dual-write: FileStore always". That was
+  // pathological here in a way it is not for other collections:
+  //   - fileStoreUpsert is a read-modify-write of the ENTIRE collection
+  //     (fileStoreRead -> push -> JSON.stringify(entries, null, 2) -> write),
+  //   - `id` is a fresh randomUUID every call, so findIndex never matches and
+  //     the entry is ALWAYS appended — the file grows by one 1024-dim vector
+  //     per routed request, forever,
+  //   - so every request paid O(filesize), synchronously, on the hot path.
+  // In production experience-routes.json had reached 307MB / 10937 entries:
+  // ONE recall read 310MB and wrote 307MB, blocking the event loop ~3.1s and
+  // stalling every concurrent request. Qdrant already had the identical record.
   if (await checkQdrant()) {
     try {
       await fetch(`${getQdrantBase()}/collections/${ROUTES_COLLECTION}/points`, {
@@ -459,7 +473,15 @@ async function storeRouteDecision(taskText, taskHash, tier, model, runtime, cont
         body: JSON.stringify({ points: [{ id, vector, payload: { json: JSON.stringify(routeData), user: getExpUser() } }] }),
         signal: AbortSignal.timeout(5000),
       });
-    } catch { /* non-blocking */ }
+    } catch (err) {
+      log('warn', 'route_store_qdrant_failed', { id, taskHash, error: serializeError(err) });
+    }
+    return;
+  }
+  try {
+    fileStoreUpsert(ROUTES_COLLECTION, id, vector, { json: JSON.stringify(routeData), user: getExpUser() });
+  } catch (err) {
+    log('warn', 'route_store_filestore_failed', { id, taskHash, error: serializeError(err) });
   }
 }
 async function routeModel(task, context, runtime) {
