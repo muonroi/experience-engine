@@ -203,6 +203,19 @@ async function fetchPointById(collection, pointId) {
  * is REQUIRED for correctness when post-retrieval gates would otherwise drain
  * top-K (e.g. foreign repo + org-doc-dominated brain → 0 surfaces).
  */
+/**
+ * An aborted request means the caller's time budget is already spent. Falling
+ * back to fileStoreSearch there is actively harmful: it is a whole-file read +
+ * an in-JS cosine scan over every entry (experience-routes.json is ~306MB in
+ * production), so it blocks the event loop for far longer than the request we
+ * just gave up on — turning one slow recall into a server-wide stall that times
+ * out every other in-flight request. Degrade to empty instead; the FileStore
+ * path stays reserved for "Qdrant is genuinely down".
+ */
+function isAbort(err, signal) {
+  return err?.name === 'AbortError' || err?.name === 'TimeoutError' || !!signal?.aborted;
+}
+
 async function searchCollection(name, vector, topK, signal, extraFilter) {
   if (!(await checkQdrant())) return fileStoreSearch(name, vector, topK);
   try {
@@ -218,9 +231,19 @@ async function searchCollection(name, vector, topK, signal, extraFilter) {
       body: JSON.stringify({ query: vector, limit: topK, with_payload: true, filter }),
       signal,
     });
-    if (!res.ok) return fileStoreSearch(name, vector, topK);
+    if (!res.ok) {
+      console.error(`[qdrant] searchCollection ${name} returned HTTP ${res.status}; falling back to FileStore`);
+      return fileStoreSearch(name, vector, topK);
+    }
     return (await res.json()).result?.points ?? [];
-  } catch { return fileStoreSearch(name, vector, topK); }
+  } catch (err) {
+    if (isAbort(err, signal)) {
+      console.error(`[qdrant] searchCollection ${name} aborted (budget spent): ${err?.message}`);
+      return [];
+    }
+    console.error(`[qdrant] searchCollection ${name} failed: ${err?.message}; falling back to FileStore`, { name: err?.name });
+    return fileStoreSearch(name, vector, topK);
+  }
 }
 
 /**

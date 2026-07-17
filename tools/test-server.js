@@ -200,7 +200,13 @@ async function getJson(base, requestPath, token = '') {
       }, AUTH_TOKEN);
       const extractData = await extractRes.json();
       assert(extractRes.status === 200, 'extract returns 200');
-      assert(extractData.stored === 0, 'extract with short transcript stores 0');
+      // /api/extract ACKs immediately and finishes extraction in the background
+      // (handleExtract: "ACK immediately; the long-lived server finishes
+      // extraction + consolidation"). The stored count is only known after the
+      // response, so it is logged server-side rather than returned — asserting
+      // on `stored` here pinned a synchronous contract that no longer exists.
+      assert(extractData.accepted === true, 'extract ACKs the request');
+      assert(extractData.async === true, 'extract defers extraction to the background');
 
       console.log('\n--- POST /api/extract (validation) ---');
       const extractBadRes = await postJson(base, '/api/extract', {}, AUTH_TOKEN);
