@@ -1180,10 +1180,11 @@ async function handleRecall(req, res) {
   // permanent-noise (ignore≥20 & hit=0), irrelevant≥3, learned lang/project
   // exclusions, and the min-confidence quality floor. Surfaces are still
   // recorded so the agent's /api/feedback verdict grows + cleans the brain.
-  // body.fast → fast recall: skip the brainRelevanceFilter LLM rerank (~8s) so
-  // latency-bound callers (the prompt risk gate) get a ~1.5-2s recall that still
-  // carries [id col]. Full pipeline otherwise. Bound the internal budget tighter
-  // in fast mode so a slow embed can't blow the caller's hook deadline.
+  // body.fast → fast recall: skip the model-routing side-effect and bound the
+  // internal budget tighter (4s vs 8s) so a slow embed can't blow a latency-bound
+  // caller's hook deadline (the prompt risk gate). It no longer distinguishes
+  // itself by skipping the brainRelevanceFilter — recallMode skips that for every
+  // recall now, fast or not; see experience-core.js for the measurements.
   const fast = !!body.fast;
   const result = await interceptWithMeta(
     'UserPrompt',

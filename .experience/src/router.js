@@ -707,24 +707,34 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
   };
 
   let found = false;
+  const qdrantUp = await checkQdrant();
 
-  // FileStore: scan and update
-  try {
-    const entries = fileStoreRead(ROUTES_COLLECTION);
-    for (const entry of entries) {
-      const data = (() => { try { return JSON.parse(entry.payload?.json || '{}'); } catch { return {}; } })();
-      if (data.taskHash === taskHash) {
-        applyUpdate(data);
-        entry.payload.json = JSON.stringify(data);
-        fileStoreWrite(ROUTES_COLLECTION, entries);
-        found = true;
-        break;
+  // FileStore is the OFFLINE FALLBACK, never a dual-write — same contract as
+  // storeRouteDecision / updatePointPayload / searchCollection. This scan used to
+  // run unconditionally: fileStoreRead parses the WHOLE collection, and a hit then
+  // wrote the whole thing back. experience-routes.json reached 308MB in production,
+  // so the first caller of this endpoint would have paid a ~3s event-loop block to
+  // update one field Qdrant already holds.
+  if (!qdrantUp) {
+    try {
+      const entries = fileStoreRead(ROUTES_COLLECTION);
+      for (const entry of entries) {
+        const data = (() => { try { return JSON.parse(entry.payload?.json || '{}'); } catch { return {}; } })();
+        if (data.taskHash === taskHash) {
+          applyUpdate(data);
+          entry.payload.json = JSON.stringify(data);
+          fileStoreWrite(ROUTES_COLLECTION, entries);
+          found = true;
+          break;
+        }
       }
+    } catch (err) {
+      log('warn', 'route_feedback_filestore_failed', { taskHash, error: serializeError(err) });
     }
-  } catch { /* FileStore scan failed — continue to Qdrant */ }
+  }
 
-  // Qdrant: scroll and update (always try, not just when FileStore misses)
-  if (await checkQdrant()) {
+  // Qdrant: scroll and update
+  if (qdrantUp) {
     try {
       let offset = null;
       do {
@@ -755,7 +765,9 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
         }
         offset = found ? null : (scrollBody.result?.next_page_offset || null);
       } while (offset && !found);
-    } catch { /* Qdrant scroll failed */ }
+    } catch (err) {
+      log('warn', 'route_feedback_qdrant_failed', { taskHash, error: serializeError(err) });
+    }
   }
 
   activityLog({ op: 'route-feedback', taskHash, tier, outcome: normalizedOutcome, retryCount: retryCount || 0, duration: duration || null });

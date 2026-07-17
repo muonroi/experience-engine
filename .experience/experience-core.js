@@ -519,7 +519,16 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     if (flagged.length > 0) Promise.all(flagged.map(f => _hittrack.incrementIgnoreCount(f.collection, f.id))).catch(() => {});
   }
 
-  if (!hookRealtimeFastPath && lines.length > 0 && _config.getConfig().brainFilter !== false) {
+  // Passive-hint precision gate — deliberately NOT run for active recall, for the
+  // same reason session-dedup is skipped above: these are noise controls for an
+  // UNSOLICITED hint, and recall is a deliberate query. The filter's prompt asks
+  // which hints help "avoid a mistake for THIS action"; a recall is a question,
+  // not an action. Measured on the VPS once it was un-broken: it fired on 8/8
+  // recalls (recallMode bypasses the score floor, so there are always lines to
+  // burn a call on), cost p50 ~2.5s — recall p50 1508ms → 4203ms — and removed 0
+  // hints in 8/8. Passive intercepts, by contrast, mostly produce 0 lines (the
+  // score floor drops them), so the gate is nearly free where it belongs.
+  if (!hookRealtimeFastPath && !recallMode && lines.length > 0 && _config.getConfig().brainFilter !== false) {
     try {
       // buildQuery() decorates and truncates the action ("[tool:Bash] running
       // command …"); judge relevance against what the agent is really about to run.

@@ -34,7 +34,23 @@ const ROUTER_PATH = path.join(__dirname, '..', '.experience', 'src', 'router.js'
 const QDRANT_PATH = path.join(__dirname, '..', '.experience', 'src', 'qdrant.js');
 const CONFIG_PATH = path.join(__dirname, '..', '.experience', 'src', 'config.js');
 
-let testHome, qdrantServer, qdrantPort, qdrantWrites;
+let testHome, qdrantServer, qdrantPort, qdrantWrites, qdrantPayloadUpdates;
+
+// Counts full reads of the routes FileStore. Size checks only prove nothing was
+// WRITTEN; the 308MB incident was dominated by the read + JSON.parse, so the read
+// itself is what must be asserted away.
+function countRouteReads(fn) {
+  const realRead = fs.readFileSync;
+  let reads = 0;
+  fs.readFileSync = function (p, ...rest) {
+    if (typeof p === 'string' && p.includes('experience-routes.json')) reads++;
+    return realRead.call(this, p, ...rest);
+  };
+  return Promise.resolve()
+    .then(fn)
+    .finally(() => { fs.readFileSync = realRead; })
+    .then(() => reads);
+}
 
 function storeDir() {
   return path.join(testHome, '.experience', 'store', 'default');
@@ -70,9 +86,27 @@ test.before(async () => {
   process.env.USERPROFILE = testHome;
 
   qdrantServer = http.createServer((req, res) => {
-    if (req.method === 'PUT' && req.url.includes('/points')) qdrantWrites++;
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ result: { collections: [] }, status: 'ok' }));
+    let raw = '';
+    req.on('data', (c) => { raw += c; });
+    req.on('end', () => {
+      if (req.method === 'PUT' && req.url.includes('/points')) qdrantWrites++;
+      if (req.method === 'POST' && req.url.endsWith('/points/scroll')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          result: {
+            points: [{ id: 'route-target', payload: { json: JSON.stringify({ taskHash: 'fb-hash', outcome: null }) } }],
+            next_page_offset: null,
+          },
+        }));
+      }
+      if (req.method === 'POST' && req.url.endsWith('/points/payload')) {
+        qdrantPayloadUpdates.push(raw ? JSON.parse(raw) : {});
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ result: { status: 'ok' } }));
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ result: { collections: [] }, status: 'ok' }));
+    });
   });
   await new Promise(r => qdrantServer.listen(0, '127.0.0.1', r));
   qdrantPort = qdrantServer.address().port;
@@ -83,7 +117,7 @@ test.after(async () => {
   try { fs.rmSync(testHome, { recursive: true, force: true }); } catch {}
 });
 
-test.beforeEach(() => { qdrantWrites = 0; });
+test.beforeEach(() => { qdrantWrites = 0; qdrantPayloadUpdates = []; });
 
 test('Qdrant up: route decision does NOT rewrite the FileStore collection', async () => {
   writeConfig(`http://127.0.0.1:${qdrantPort}`);
@@ -122,6 +156,56 @@ test('Qdrant write failure is logged, not thrown (catch arm is reachable)', asyn
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+// ---------------------------------------------------------------------------
+// routeFeedback carried the SAME read-modify-write defect as storeRouteDecision,
+// undetected only because nothing calls it yet: activity.jsonl has 0 route-feedback
+// rows across its whole history, while server.js:1520 exposes it as a live
+// endpoint. Its FileStore scan was never gated on Qdrant, so the first client to
+// POST feedback would read all 308MB and — on a hit — write all 308MB back.
+// ---------------------------------------------------------------------------
+
+test('Qdrant up: routeFeedback never touches the FileStore collection', async () => {
+  writeConfig(`http://127.0.0.1:${qdrantPort}`);
+  seedRoutes();
+  const { routeFeedback } = loadRouter();
+  assert.ok(routeFeedback, 'routeFeedback must be exported for testing');
+
+  const before = fs.statSync(routesPath());
+  const reads = await countRouteReads(() => routeFeedback('fb-hash', 'balanced', 'model-z', 'success', 0, 1200));
+  const after = fs.statSync(routesPath());
+
+  assert.equal(reads, 0, 'must not read the routes FileStore at all while Qdrant is up');
+  assert.equal(after.size, before.size, 'must not rewrite the routes FileStore while Qdrant is up');
+  assert.equal(qdrantPayloadUpdates.length, 1, 'the outcome must still be recorded, via Qdrant');
+  assert.equal(JSON.parse(qdrantPayloadUpdates[0].payload.json).outcome, 'success');
+});
+
+test('Qdrant down: routeFeedback still records the outcome in the FileStore fallback', async () => {
+  writeConfig('http://127.0.0.1:1'); // refused
+  fs.mkdirSync(storeDir(), { recursive: true });
+  fs.writeFileSync(routesPath(), JSON.stringify([
+    { id: 'seed-1', vector: [1, 0, 0, 0, 0], payload: { json: '{"id":"seed-1","taskHash":"fb-hash"}' } },
+  ], null, 2));
+  const { routeFeedback } = loadRouter();
+
+  const ok = await routeFeedback('fb-hash', 'balanced', 'model-z', 'fail', 2, 900);
+
+  assert.equal(ok, true, 'offline fallback must still find and update the route');
+  const entries = JSON.parse(fs.readFileSync(routesPath(), 'utf8'));
+  const data = JSON.parse(entries[0].payload.json);
+  assert.equal(data.outcome, 'fail');
+  assert.equal(data.retryCount, 2);
+});
+
+test('Qdrant down: routeFeedback on an unknown hash reports miss without throwing', async () => {
+  writeConfig('http://127.0.0.1:1');
+  seedRoutes();
+  const { routeFeedback } = loadRouter();
+
+  const ok = await routeFeedback('no-such-hash', 'fast', 'model-q', 'success', 0, 100);
+  assert.equal(ok, false, 'a miss must report false, not throw');
 });
 
 test('Qdrant down: route decision still lands in the FileStore fallback', async () => {

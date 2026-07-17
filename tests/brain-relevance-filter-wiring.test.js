@@ -142,3 +142,20 @@ test('fast path skips the filter entirely (latency-bound callers opt out)', asyn
   await core.interceptWithMeta('Bash', { command: 'git push --force origin main' }, undefined, {}, { fast: true });
   assert.equal(brainCalls.length, 0, 'options.fast must skip the ~2s LLM rerank');
 });
+
+test('active recall skips the filter — it is a passive-hint gate, and it cost 2.7s for nothing', async () => {
+  // Measured on the production VPS once the ReferenceError was fixed: the filter
+  // fired on 8/8 recalls, cost p50 ~2.5s (recall p50 1508ms → 4203ms), and removed
+  // 0 hints in 8/8. It is framed for passive hints — its prompt asks which hints
+  // help "avoid a mistake for THIS action", but a recall is a question, not an
+  // action, and recallMode already bypasses the search-score floor so it always
+  // has lines to burn an LLM call on. Same reasoning as the session-dedup skip
+  // above it: passive-hint noise controls are wrong for a deliberate query.
+  await core.interceptWithMeta('UserPrompt', { command: 'how do I restart the server' }, undefined, {}, { recallMode: true });
+  assert.equal(brainCalls.length, 0, 'recallMode must not pay for the LLM rerank');
+});
+
+test('passive hints still get the filter (recallMode is the only carve-out)', async () => {
+  await core.interceptWithMeta('Bash', { command: 'git push --force origin main' }, undefined, {}, { recallMode: false });
+  assert.equal(brainCalls.length, 1, 'the passive-hint path must keep its precision gate');
+});
