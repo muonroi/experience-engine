@@ -239,10 +239,37 @@ function extractProjectSlug(filePath) {
   }
   const explicitRepo = normalized.match(/\/([^/]+)\/(?:src|tests|test|tools|docs|sdk|\.experience|bin)(?:\/|$)/i);
   if (explicitRepo) return explicitRepo[1].toLowerCase();
-  // Fallback: use first 2 meaningful path segments
+  // Fallback: use first 2 meaningful path segments. NOTE this returns a
+  // PATH-LIKE value (`c:/users`, `d:/personal`, `home/muonroi`) — it is the
+  // "could not resolve a project root" signal, NOT a project name. Callers that
+  // STORE the result must gate it through isCanonicalProjectSlug; a path-like
+  // slug pinned onto an entry is worse than no slug, because the passive-hint
+  // project gate drops the entry for every caller whose slug differs — which is
+  // everyone, since no action ever derives `c:/users`.
   const parts = normalized.split('/').filter(p => p && p !== '.' && p !== '..');
   if (parts.length >= 2) return parts.slice(0, 2).join('/').toLowerCase();
   return null;
+}
+
+/**
+ * Is this a real project slug (a single path segment), as opposed to
+ * extractProjectSlug's path-like "unresolved" signal or an agent config dir?
+ * Single source of truth: memory-import and the session extractor must agree, or
+ * one producer keeps writing slugs the other would have rejected.
+ */
+function isCanonicalProjectSlug(s) {
+  if (!s || typeof s !== 'string') return false;
+  const v = s.trim();
+  if (v.length <= 1) return false;
+  if (v.indexOf('/') >= 0 || v.indexOf(':') >= 0 || v.indexOf('\\') >= 0) return false;
+  if (v.startsWith('.')) return false; // `.gemini` / `.codex` — runtime dirs, never projects
+  return true;
+}
+
+/** extractProjectSlug, but null instead of a path-like non-answer. For STORE paths. */
+function extractCanonicalProjectSlug(filePath) {
+  const slug = extractProjectSlug(filePath);
+  return isCanonicalProjectSlug(slug) ? slug : null;
 }
 
 // Org-stack membership test — hints tagged scope.org=<orgName> only fire when
@@ -670,6 +697,7 @@ function detectRuntime(toolName) {
 module.exports = {
   detectContext, normalizeTechLabel, commandSuggestsDomain, detectFrameworkFromProject,
   extractProjectPath, extractProjectSlug, extractPathFromCommand, isAbsolutePath,
+  isCanonicalProjectSlug, extractCanonicalProjectSlug,
   isOrgStackRepo,
   buildQuery, QUERY_MAX_CHARS,
   computeEffectiveConfidence, computeEffectiveScore, getValidatedHitCount,

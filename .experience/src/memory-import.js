@@ -28,7 +28,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const { extractProjectSlug } = require('./utils');
+const { extractProjectSlug, isCanonicalProjectSlug } = require('./utils');
 const { log } = require('./logger');
 
 const BEHAVIORAL_COLLECTION = 'experience-behavioral'; // T1
@@ -168,26 +168,40 @@ function fileExists(p) {
  * CANNOT resolve a real project root — that is the signal for "workspace root / home
  * dir", which should be GLOBAL scope (null), not pinned to a bogus slug that no
  * action's derived slug will ever match.
+ *
+ * Re-exported from utils so this importer and the session extractor cannot drift
+ * into disagreeing about what a slug is — they write to the same field.
  */
-function isCanonicalSlug(s) {
-  if (!s || typeof s !== 'string') return false;
-  if (s.length <= 1) return false;
-  return s.indexOf('/') < 0 && s.indexOf(':') < 0 && s.indexOf('\\') < 0;
-}
+const isCanonicalSlug = isCanonicalProjectSlug;
 
 function dirSlugToProjectSlug(dirSlug) {
   const realPath = dirSlugToRealPath(dirSlug);
-  const viaExtract = realPath ? extractProjectSlug(realPath) : null;
-  if (isCanonicalSlug(viaExtract)) return viaExtract; // resolved to a real repo slug
-  // A path-like result (e.g. `d:/sources`) means extractProjectSlug hit its
-  // 2-segment fallback — the memory dir is a workspace root / home dir, not a
-  // project → GLOBAL scope (null), never a bogus slug.
-  if (viaExtract) return null;
-  // Path didn't resolve at all → fall back to the dir-slug tail (covers a bare
-  // single-name project dir), but only if it is itself a canonical slug.
-  const tail = String(dirSlug || '').split('-').filter(Boolean).pop();
-  const tailSlug = tail ? tail.toLowerCase() : null;
-  return isCanonicalSlug(tailSlug) ? tailSlug : null;
+  // dirSlugToRealPath returns a BEST-EFFORT path even when nothing on disk
+  // matches, so extractProjectSlug on it happily invents a canonical-looking
+  // slug from a path that does not exist. Only a path that actually resolves
+  // may name a project.
+  if (realPath && fileExists(realPath)) {
+    const viaExtract = extractProjectSlug(realPath);
+    if (isCanonicalSlug(viaExtract)) return viaExtract; // resolved to a real repo slug
+    // A path-like result (e.g. `d:/sources`) means extractProjectSlug hit its
+    // 2-segment fallback — the memory dir is a workspace root / home dir, not a
+    // project → GLOBAL scope (null), never a bogus slug.
+    return null;
+  }
+  // Unresolvable (project moved/renamed, or importing on another machine). If
+  // the slug ENCODES A PATH — drive prefix or several `-` tokens — its tail is
+  // just the last path segment and means nothing as a project name: that is what
+  // filed eberth-planner memories under `new` and workspace memories under
+  // `core`, slugs no caller's derived project_slug will ever match, so the
+  // passive-hint project gate hides them from the repo they came from. Only a
+  // BARE single-name dir is the project naming itself.
+  const hasDrive = /^[A-Za-z]--/.test(String(dirSlug || ''));
+  const tokens = String(dirSlug || '').split('-').filter(Boolean);
+  if (hasDrive || tokens.length !== 1) return null;
+  // isCanonicalSlug also rejects `.gemini` / `.codex` — agent config dirs that
+  // are single tokens but never a project.
+  const tail = tokens[0].toLowerCase();
+  return isCanonicalSlug(tail) ? tail : null;
 }
 
 // --- adapters ---
@@ -200,7 +214,7 @@ function dirSlugToProjectSlug(dirSlug) {
  * `Foo #2`, …) so two same-labelled bullets don't collide on stableId and
  * silently clobber each other.
  */
-function parseMemoryMd(raw, file, runtime, projectSlug) {
+function parseMemoryMd(raw, file, runtime, projectSlug, dirSlug) {
   const lines = raw.split(/\r?\n/);
   const items = [];
   let currentSection = '';
@@ -283,6 +297,7 @@ function parseMemoryMd(raw, file, runtime, projectSlug) {
       description: item.description || name,
       body,
       projectSlug,
+      dirSlug,
       file,
       nodeKind: null,
       derivedFromId: null,
@@ -337,7 +352,7 @@ function createStandardAdapter(runtime, relativeProjectsPath, opts = {}) {
       if (path.basename(file) === 'MEMORY.md') {
         const dirSlug = path.basename(path.dirname(path.dirname(file)));
         const projectSlug = dirSlugToProjectSlug(dirSlug);
-        return parseMemoryMd(raw, file, runtime, projectSlug);
+        return parseMemoryMd(raw, file, runtime, projectSlug, dirSlug);
       }
       const { frontmatter, body } = parseFrontmatter(raw);
       const name = frontmatter.name || path.basename(file, '.md');
@@ -351,7 +366,7 @@ function createStandardAdapter(runtime, relativeProjectsPath, opts = {}) {
       const derivedFromId = parseIdList(frontmatter.derivedFromId);
       const dirSlug = path.basename(path.dirname(path.dirname(file)));
       const projectSlug = dirSlugToProjectSlug(dirSlug);
-      return { runtime, name, type, description, body, projectSlug, file, nodeKind, derivedFromId };
+      return { runtime, name, type, description, body, projectSlug, dirSlug, file, nodeKind, derivedFromId };
     },
   };
 }
@@ -457,7 +472,18 @@ function mapMemoryToExperience(record, opts = {}) {
     : body;
 
   const id = stableId(record.runtime, record.projectSlug, record.name);
-  const scope = record.projectSlug ? { project_slug: record.projectSlug } : undefined;
+  // Keep the RAW memory dir name even when (especially when) we refused to
+  // derive a slug from it. Any resolver is lossy — `D--sources-eBerth-planner-new`
+  // is `eberth-planner` to a reader and `planner`/`new` to every heuristic — so
+  // the one thing we must not do is discard the evidence. `project_slug: null` +
+  // `project_source` means "not known YET" and stays repairable by a later pass
+  // (or an agent that can simply read the path); dropping the dir name would make
+  // it permanently unknowable. Inert to applyScopeFilter, which reads only
+  // project_slug / lang / *_exclude.
+  const scopeFields = {};
+  if (record.projectSlug) scopeFields.project_slug = record.projectSlug;
+  if (record.dirSlug) scopeFields.project_source = record.dirSlug;
+  const scope = Object.keys(scopeFields).length ? scopeFields : undefined;
   const qa = {
     trigger: record.description,
     question: record.description,

@@ -16,6 +16,91 @@ const os = require('node:os');
 
 const mi = require('../.experience/src/memory-import.js');
 
+// --- dirSlugToProjectSlug: the mislabelling source ---
+//
+// Claude encodes a project cwd as a dir name (`D:\sources\Core\muonroi-cli` ->
+// `D--sources-Core-muonroi-cli`). dirSlugToRealPath resolves it against the real
+// filesystem; when the path no longer exists (project moved, renamed, or the
+// import runs on another machine) the old fallback took the dir-slug's LAST
+// TOKEN as the project slug. For a slug that encodes a PATH, that token is just
+// the final path segment and is meaningless as a project name.
+//
+// This is not hypothetical. On the live brain it produced `new` (16 entries of
+// eberth-planner content: vessel queues, berth-derived terminals), `core` (2),
+// `tmp` and `automation` — slugs no caller's derived project_slug will ever
+// match, so the passive-hint project gate (experience-core applyScopeFilter:
+// "when both sides carry a project_slug AND they differ, drop") hides those
+// entries from the very repo they came from.
+//
+// The file already states the correct rule for the path-like case — "never
+// pinned to a bogus slug that no action's derived slug will ever match" — the
+// tail fallback simply contradicted it.
+
+test('dirSlugToProjectSlug: an unresolvable PATH-encoding slug is global, not its tail', () => {
+  // `D--sources-eBerth-planner-new` -> the real cause of the live `new` slug.
+  assert.equal(mi.dirSlugToProjectSlug('D--sources-eBerth-planner-new'), null);
+  assert.equal(mi.dirSlugToProjectSlug('D--sources-Core'), null);
+  assert.equal(mi.dirSlugToProjectSlug('Z--nope-does-not-exist-tmp'), null);
+});
+
+test('dirSlugToProjectSlug: a bare single-name dir still yields its slug', () => {
+  // The case the tail fallback was actually written for: a memory dir named
+  // after the project itself, with no path encoded in it.
+  assert.equal(mi.dirSlugToProjectSlug('storyflow'), 'storyflow');
+  assert.equal(mi.dirSlugToProjectSlug('Storyflow'), 'storyflow');
+});
+
+test('dirSlugToProjectSlug: a runtime config dir is never a project', () => {
+  // `.gemini` / `.codex` are agent config dirs. They are single tokens and pass
+  // isCanonicalSlug, so nothing stopped them becoming a "project".
+  assert.equal(mi.dirSlugToProjectSlug('.gemini'), null);
+  assert.equal(mi.dirSlugToProjectSlug('.codex'), null);
+});
+
+test('mapMemoryToExperience: an unresolved slug keeps the raw dir as project_source', () => {
+  // Refusing to guess must not destroy the evidence: null + project_source means
+  // "not known yet" and is repairable; a bare null is unknowable forever.
+  const mapped = mi.mapMemoryToExperience({
+    runtime: 'claude', name: 'n', type: 'project', description: 'd',
+    body: 'a lesson body', projectSlug: null, dirSlug: 'D--sources-eBerth-planner-new',
+  });
+  assert.equal(mapped.qa.scope.project_slug, undefined);
+  assert.equal(mapped.qa.scope.project_source, 'D--sources-eBerth-planner-new');
+});
+
+test('mapMemoryToExperience: a resolved slug carries both the slug and its source', () => {
+  const mapped = mi.mapMemoryToExperience({
+    runtime: 'claude', name: 'n', type: 'project', description: 'd',
+    body: 'a lesson body', projectSlug: 'muonroi-cli', dirSlug: 'D--sources-Core-muonroi-cli',
+  });
+  assert.equal(mapped.qa.scope.project_slug, 'muonroi-cli');
+  assert.equal(mapped.qa.scope.project_source, 'D--sources-Core-muonroi-cli');
+});
+
+test('dirSlugToProjectSlug: a resolvable path wins over any fallback', () => {
+  // The importer runs where the dirs exist; that path must keep resolving to the
+  // canonical repo slug rather than the tail (`...-muonroi-cli` tail is `cli`).
+  // No hyphen in the prefix: a `-` in the temp path itself would need several
+  // simultaneous token re-merges, which dirSlugToRealPath deliberately does not
+  // attempt — that would be testing the harness, not the fallback.
+  // The repo sits under `projects/` so extractProjectSlug recognizes it as a
+  // workspace layout; on an unrecognized path it correctly falls back to two
+  // path segments (`c:/users`), which is not a slug at all.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'eeslug'));
+  const repo = path.join(tmp, 'projects', 'muonroi-cli');
+  fs.mkdirSync(repo, { recursive: true });
+  try {
+    const root = path.parse(repo).root;
+    const drive = root.replace(/[:\\/]/g, '');
+    const rel = repo.slice(root.length).replace(/[\\/]/g, '-').replace(/\./g, '-');
+    const dirSlug = drive ? `${drive}--${rel}` : `-${rel}`;
+    const slug = mi.dirSlugToProjectSlug(dirSlug);
+    assert.equal(slug, 'muonroi-cli', 'a resolvable path must not degrade to the tail token `cli`');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 // --- parseFrontmatter ---
 
 test('parseFrontmatter: full metadata block flattens type/node_type', () => {

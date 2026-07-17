@@ -489,7 +489,16 @@ async function extractFromSession(transcript, projectPath, meta = {}) {
       // Per-experience slug (client-resolved from this experience's own touched
       // files) wins over the session-level slug, so a session spanning multiple
       // repos stores each experience scoped to its actual repo instead of NONE.
-      const projectSlug = exp._projectSlug || meta?.project_slug || _utils.extractProjectSlug(projectPath);
+      // Gate every candidate: extractProjectSlug answers with a PATH-LIKE value
+      // (`c:/users`, `d:/personal`, `e:/tiennv`) when it cannot resolve a repo
+      // root, and storing that pins the lesson to a slug no caller will ever
+      // derive — the passive-hint project gate then hides it from every project,
+      // including the one it came from. Unknown must mean global, not a bogus pin.
+      const slugCandidate = exp._projectSlug || meta?.project_slug || _utils.extractProjectSlug(projectPath);
+      const projectSlug = _utils.isCanonicalProjectSlug(slugCandidate) ? slugCandidate : null;
+      if (slugCandidate && !projectSlug) {
+        _log('rejected non-canonical project slug → global scope', { i, candidate: slugCandidate });
+      }
       _log('calling extractQA', { i, type: exp.type, lang: meta?.lang, fw: meta?.framework, slug: projectSlug, excerptLen: exp?.excerpt?.length });
       const qa = await _brainllm.extractQA(exp, {
         framework: meta?.framework || null,
