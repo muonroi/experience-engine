@@ -35,7 +35,31 @@ test('classify: only the explicitly-reviewed slugs are remapped', () => {
     { action: classify('new').action, to: classify('new').to },
     { action: 'remap', to: 'eberth-planner' },
   );
-  assert.equal(classify('core').to, 'muonroi');
+  assert.equal(classify('planner').to, 'eberth-planner');
+});
+
+test('classify: a workspace root is unscoped, NOT remapped to a repo under it', () => {
+  // `core` is D:\sources\Core, the workspace holding every muonroi repo. Its
+  // entries are VPS/infra notes true for all of them; pinning them to `muonroi`
+  // would hide them from muonroi-cli and experience-engine. Nearest-looking
+  // project is not the same as correct project.
+  const v = classify('core');
+  assert.equal(v.action, 'unscope');
+  assert.equal(v.to, null);
+});
+
+test('classify: an ambiguous slug is flagged for review, never written', () => {
+  // The tool exists because a producer guessed. It does not get to guess.
+  const v = classify('automation');
+  assert.equal(v.action, 'review');
+  assert.match(v.why, /AMBIGUOUS/);
+});
+
+test('classify: canonical-LOOKING scratch slugs are still caught', () => {
+  // Single token, no separators — isCanonicalProjectSlug passes them, so only an
+  // explicit review list catches these.
+  assert.equal(classify('tmp').action, 'unscope');
+  assert.equal(classify('any').action, 'unscope');
 });
 
 test('classify: a real slug is left alone, and a global entry is skipped', () => {

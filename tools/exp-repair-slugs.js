@@ -41,14 +41,40 @@ const COLLECTIONS = ['experience-behavioral', 'experience-principles', 'experien
 const REMAP = {
   new: 'eberth-planner',
   planner: 'eberth-planner',
-  core: 'muonroi',
 };
+
+/**
+ * Slugs that LOOK canonical — single token, no separators — but name no repo, so
+ * isCanonicalProjectSlug cannot catch them. Each entry here was read, not
+ * pattern-matched:
+ *  - `core`: the D:\sources\Core WORKSPACE root. Its entries are VPS/infra notes
+ *    true for every repo under it; pinning them to any one repo (`muonroi`) would
+ *    hide them from muonroi-cli, experience-engine and the rest. Global is the
+ *    correct scope, not a nearest-looking project.
+ *  - `workspaces-ecosystems`: the same D:\sources\Core workspace under another
+ *    name (.claude.json maps it there). Its entries span repos and languages
+ *    (dotnet build, a Jira TypeScript script, npm-on-Windows, ssh key perms).
+ *  - `tmp`, `any`: scratch/placeholder, never a project.
+ */
+const UNSCOPE = new Set(['core', 'workspaces-ecosystems', 'tmp', 'any']);
+
+/**
+ * Canonical-looking slugs whose content did NOT settle the question. Reported by
+ * the dry-run and left untouched: this tool exists because something guessed, so
+ * it does not get to guess. `automation` mixes what looks like
+ * tcis.tpg.automation.test material (fixture files, legacy tsconfig) with
+ * unrelated Codex-skill notes — one of those is mislabelled and reading 10
+ * entries could not tell which.
+ */
+const REVIEW = new Set(['automation']);
 
 /** Decide this point's fate from its stored slug. */
 function classify(slug) {
   if (!slug) return { action: 'skip', to: null, why: 'already global' };
   const s = String(slug).trim().toLowerCase();
   if (REMAP[s]) return { action: 'remap', to: REMAP[s], why: 'producer bug: bogus slug, content identifies the repo' };
+  if (UNSCOPE.has(s)) return { action: 'unscope', to: null, why: 'workspace root / scratch — true everywhere, belongs to no one repo' };
+  if (REVIEW.has(s)) return { action: 'review', to: s, why: 'AMBIGUOUS — content did not settle it; left untouched, decide by hand' };
   if (!isCanonicalProjectSlug(s)) return { action: 'unscope', to: null, why: 'path-like: extractProjectSlug "unresolved" signal, stored verbatim' };
   return { action: 'keep', to: s, why: 'canonical' };
 }
@@ -107,14 +133,19 @@ async function main() {
     }
   }
 
+  // Reported, never written. A tool that quietly skips what it cannot decide
+  // reads as "nothing left to do" — which is how the bogus slugs survived.
+  const review = rows.filter((r) => r.action === 'review');
+  const writes = rows.filter((r) => r.action !== 'review');
+
   const byFrom = new Map();
-  for (const r of rows) {
+  for (const r of writes) {
     const k = `${r.from} -> ${r.to || '(global)'}`;
     if (!byFrom.has(k)) byFrom.set(k, { k, action: r.action, why: r.why, n: 0 });
     byFrom.get(k).n++;
   }
 
-  console.log(`\n${apply ? 'APPLY' : 'DRY-RUN'} — ${rows.length} points to re-label (0 deleted; nothing is ever deleted)\n`);
+  console.log(`\n${apply ? 'APPLY' : 'DRY-RUN'} — ${writes.length} points to re-label (0 deleted; nothing is ever deleted)\n`);
   const w = Math.max(...[...byFrom.keys()].map((k) => k.length), 10);
   console.log(`  ${'CHANGE'.padEnd(w)}  ${'N'.padStart(4)}  ACTION    WHY`);
   console.log(`  ${'-'.repeat(w)}  ----  --------  ---`);
@@ -122,19 +153,26 @@ async function main() {
     console.log(`  ${v.k.padEnd(w)}  ${String(v.n).padStart(4)}  ${v.action.padEnd(8)}  ${v.why}`);
   }
 
+  if (review.length) {
+    const bySlug = new Map();
+    for (const r of review) bySlug.set(r.from, (bySlug.get(r.from) || 0) + 1);
+    console.log(`\n  NEEDS A HUMAN — left untouched by --apply:`);
+    for (const [slug, n] of bySlug) console.log(`  ${slug.padEnd(w)}  ${String(n).padStart(4)}  review    ${review[0].why}`);
+  }
+
   if (!apply) {
     console.log('\nRe-run with --apply to write. Back up Qdrant first.\n');
     return;
   }
   let ok = 0;
-  for (const r of rows) {
+  for (const r of writes) {
     await qdrant(base, 'POST', `/collections/${r.coll}/points/payload`, {
       payload: patchFor(r.point, r.to),
       points: [r.id],
     });
     ok++;
   }
-  console.log(`\napplied: ${ok}/${rows.length}\n`);
+  console.log(`\napplied: ${ok}/${writes.length}${review.length ? ` · ${review.length} left for review` : ''}\n`);
 }
 
 if (require.main === module) {
