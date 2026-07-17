@@ -7,10 +7,12 @@
   "bin": {
     "experience-engine": "bin/experience-engine.js",
     "exp-engine": "bin/experience-engine.js",
+    "exp-mcp": "bin/exp-mcp.js",
     "qdrant-find": "tools/qdrant-find.js"
   },
   "files": [
     "bin/",
+    "mcp/",
     ".experience/activity-watch.js",
     ".experience/exp-bootstrap.sh",
     ".experience/exp-client-drain.js",
