@@ -57,11 +57,12 @@ function buildTools(deps = {}) {
         'recalls are surfaced back to you on the next ee_query (only entries actually shown to you are counted). ' +
         'Returns a compact ranked index (cosine-ranked, strongest first), capped at maxChars (default 6000, range ' +
         '500-20000) and truncated from the tail — a broad recall routinely renders ~30k chars, so the default ' +
-        'shows you roughly the strongest fifth; narrow the query or raise maxChars to see more. `project` scopes ' +
-        'the recall to one repo slug: get it from ee_projects and pass it VERBATIM — never invent one, because a ' +
-        'slug that matches nothing silently drops the project-scoped entries instead of erroring. If omitted, ' +
-        "scope is derived from the SERVER process's working directory, which for a globally-registered server may " +
-        'not be your repo. Returns ee_unavailable if EE is down (then proceed without it).',
+        'shows you roughly the strongest fifth; narrow the query or raise maxChars to see more. `project` does NOT ' +
+        'narrow what recall can see (active recall is semantic and cross-repo by design) — it improves ranking for ' +
+        'your repo and applies the noise exclusions learned for it, so get the slug from ee_projects and pass it ' +
+        'VERBATIM rather than inventing one. If omitted, it is derived from the SERVER process\'s working ' +
+        'directory, which for a globally-registered server may not be your repo. Returns ee_unavailable if EE is ' +
+        'down (then proceed without it).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -158,13 +159,14 @@ function buildTools(deps = {}) {
       name: 'ee_projects',
       description:
         'List the project slugs the brain actually holds, with entry counts. Call this BEFORE passing `project` to ' +
-        'ee_query or ee_write — pick a slug from the list VERBATIM instead of inventing one from your repo name. A ' +
-        'slug that matches nothing does not error: it silently drops exactly the project-scoped entries you wanted ' +
-        'and looks identical to a brain that knows nothing about your project. Slugs are derived from whatever ' +
-        'working directory wrote each entry, so the list contains real repos AND debris (drive letters, temp dirs) ' +
-        '— the right slug is often not the one you would guess. If no slug names your repo, omit `project` rather ' +
-        'than inventing one: unscoped entries are recallable from everywhere, so an omitted project is a wider ' +
-        'recall, never an empty one.',
+        'ee_query or ee_write — pick a slug from the list VERBATIM instead of inventing one from your repo name; the ' +
+        'right slug is often not the one you would guess. A slug that matches nothing never errors, it just quietly ' +
+        'does nothing useful: on ee_query it costs you the same-project ranking boost and the noise exclusions ' +
+        'learned for your repo (active recall is semantic — it does NOT drop entries scoped to other projects, so a ' +
+        'wrong slug degrades ranking, not coverage). It matters most on ee_write: the slug you file a lesson under ' +
+        'decides which repo ever sees it as a passive hint, and a lesson filed under a slug no one derives is ' +
+        'invisible to hints everywhere. If no slug names your repo, omit `project` rather than inventing one — ' +
+        'unscoped entries are recallable and hintable from everywhere, so an omitted project is wider, never empty.',
       inputSchema: { type: 'object', properties: {} },
       async handler() {
         try {

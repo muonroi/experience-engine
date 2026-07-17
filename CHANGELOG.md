@@ -2,6 +2,51 @@
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-07-17
+
+### Fixed
+- **2026-07-17:** Two producers were inventing project slugs no caller ever
+  derives. This is not cosmetic: `applyScopeFilter` drops a passive hint "when
+  both sides carry a project_slug AND they differ", so an entry labelled
+  `c:/users` was invisible to hints for EVERY project, including the one it came
+  from. (Active recall is unaffected — `recallMode` skips the project gate and
+  honors only learned exclusions.)
+  1. `memory-import`: `dirSlugToRealPath` returns a best-effort path even when
+     nothing on disk matches, so `extractProjectSlug` ran over a non-existent
+     path and produced a canonical-*looking* answer
+     (`D--sources-eBerth-planner-new` → `planner`). Only a resolvable path may
+     name a project; an unresolvable slug that encodes a path is global, and only
+     a bare single-name dir may name itself.
+  2. The session extractor stored `extractProjectSlug`'s output verbatim — but
+     that function answers with a PATH-LIKE value from its two-segment fallback
+     (`c:/users`, `d:/personal`, `e:/tiennv`) when it cannot resolve a repo root.
+     That is an "unresolved" signal, not a name; it is now gated as
+     `memory-import` already gated it.
+  `isCanonicalProjectSlug` moves to `utils.js` as the single definition, beside
+  the fallback that produces the values it rejects — two producers writing the
+  same field must not disagree about what a slug is.
+- **2026-07-17:** `ee_projects` / `ee_query` descriptions claimed a wrong
+  `project` slug "silently drops the project-scoped entries you wanted". That is
+  false for active recall, which is semantic and cross-repo by design: a wrong
+  slug costs ranking and learned exclusions, not coverage. It is true for passive
+  hints, which is where `ee_write`'s slug choice actually bites.
+
+### Added
+- **2026-07-17:** `scope.project_source` — the raw memory dir name, kept even
+  (especially) when no slug could be derived from it. Every resolver is lossy:
+  `D--sources-eBerth-planner-new` is `eberth-planner` to a reader and
+  `planner`/`new` to every heuristic. Refusing to guess must not also discard the
+  evidence — `project_slug: null` + `project_source` means "not known YET" and
+  stays repairable by a later pass or an agent that can simply read the path.
+  Inert to `applyScopeFilter`.
+- **2026-07-17:** `tools/exp-repair-slugs.js` — re-labels what the bugs already
+  wrote. Dry-run by default; cannot delete. Applied to the live brain: 104 points
+  re-labelled, 0 deleted, 557 unchanged in count — 88 unscoped (global 147→235)
+  and 16 `new` → `eberth-planner` (13→29). Patches the flat `scope_project_slug`
+  AND the nested copy `applyScopeFilter` actually reads, keeps the old label as
+  `scope.project_repaired_from`, and reports ambiguous slugs instead of guessing
+  or silently skipping them.
+
 ## [0.8.0] - 2026-07-17
 
 ### Added
