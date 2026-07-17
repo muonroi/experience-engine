@@ -2,6 +2,200 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-17
+
+### Added
+- **2026-07-17:** `exp-mcp` — an MCP server that serves the brain to any MCP
+  client directly (`npm i -g @muonroi/experience-engine` then `claude mcp add
+  experience-engine -- exp-mcp`). The `ee_*` tools previously lived in
+  muonroi-cli, so reaching the brain over MCP meant installing a whole CLI you
+  had no other use for. Four tools: `ee_query` (active recall), `ee_feedback`
+  (rate an entry), `ee_write` (record a lesson), `ee_health`. No
+  `@modelcontextprotocol/sdk` and no zod — the package stays
+  zero-runtime-dependency, with `mcp/server.js` as the JSON-RPC loop and
+  `mcp/validate.js` as a JSON-Schema-subset validator. `ee_query`/`ee_feedback`
+  delegate to `exp-recall.js` / `exp-feedback.js` rather than re-implementing
+  transport, so they resolve the hosted brain from `~/.experience/config.json`
+  on thin clients and still mirror recalls into the local `activity.jsonl`.
+  Recall output is capped for the MCP per-result token limit: a verified live
+  `ee_query` returned 22 entries / 30189 chars, capped to 597.
+- **2026-07-11:** `POST /api/workflow-event` — a write-during-execution channel
+  that upserts a NEW point into `workflow_{debate,sprint,decision,mistake}` with
+  `tier:"intra-session"`, for persisting experience mid-run rather than only
+  reinforcing existing points at phase end. Disabled by default (404) unless
+  `ENABLE_WORKFLOW_EVENT=1` or `enableWorkflowEvent` is set. The `workflow_*`
+  collections are deliberately kept OUT of the recall hot path — the endpoint
+  queries them directly — so the change cannot destabilize recall.
+- **2026-07-11:** Per-stance collection weighting in recall. `handleRecall` now
+  accepts optional `stance`/`role` (non-breaking) and `normalizeSourceMeta` no
+  longer strips them, so each stance scales the `[principles, behavioral,
+  selfqa]` collections by its affinity before the cross-collection merge — a
+  researcher sees more principles, an implementer more behavioral how-to, a
+  verifier more self-QA. A weight of 0 deselects a collection outright; an
+  unknown or default stance yields `[1,1,1]`, a strict no-op.
+- **2026-07-05:** `brainExtract{Provider,Endpoint,Key}` config — the extract and
+  evolve path can now run on a different provider, endpoint, and key than the
+  hot-path brain, and `/api/brain` honours `useExtractModel` to route there.
+  This exists because SiliconFlow rate-limits DeepSeek-V3 hard (HTTP 429, code
+  50609 "System is too busy"), which silently null-ed every who-am-i and
+  style-extract call. Each getter falls back to its hot-path equivalent when
+  unset, so single-provider installs are unchanged and explicit caller
+  `options.*` still win.
+- **2026-06-30:** Prompt-injection filter on rendered hints
+  (`src/security-filter.js`). `format.js` now drops any stored point whose
+  payload matches a known injection pattern (`ignore … instructions`, `system
+  prompt`, `assistant:`/`user:` role prefixes, and similar) and logs
+  `security_filter_blocked_point`, so a poisoned experience cannot be rendered
+  into an agent's context.
+- **2026-06-21:** Hybrid dense+sparse retrieval on `/api/search` (was
+  dense-only, so it buried experiences matching on exact terms but sitting far
+  from the query embedding). `searchCollectionHybrid()` runs the dense cosine
+  leg and a lexical leg (native BM25 sparse when the collection is
+  sparse-migrated, else boolean `MatchText`) and fuses them with Reciprocal Rank
+  Fusion (`RRF_K=60`), reusing the same `_fusion.hybridFuse` recall already
+  applies. On by default; `EXPERIENCE_SEARCH_HYBRID` / `searchHybrid` reverts to
+  dense-only without a redeploy. Fail-open by design — any unexpected throw
+  returns the dense leg untouched, so hybrid can never regress dense-only
+  behaviour.
+- **2026-06-21:** `/api/pil-context` returns the Qdrant point `id` and source
+  `collection` on each `t0_principles` / `t2_patterns` item, so passively
+  injected points are rateable via `ee_feedback(id, collection, verdict)` —
+  previously `toScoredText` dropped both, leaving the feedback loop half-open on
+  that path (the negative prompt-stale arm still decayed those points, but
+  nothing could credit them). `schema_version` 1.0 → 1.1; additive and backward
+  compatible, so older clients strip the unknown fields and older servers still
+  parse.
+- **2026-06-19:** "Who Am I" v4.0 — the on-device profile is now consumed, not
+  just written. `profile.yaml` was written by the Stop hook but read by nothing
+  except the viewer; the SessionStart hook now renders and injects it via a pure
+  `src/profile-render.js`, entirely on-device. Injection re-filters per
+  dimension against the LIVE privacy level (`off`=none, `minimal`=Tier 1,
+  `standard`/`full`=+Tier 2, with a namespace guard), composed fresh each session
+  so a profile edit or privacy-off takes effect next session, and fails open to
+  brief-only rather than dropping the injection. Two new signals ship with it:
+  `work_patterns.session_length` (per-session voting bucketed
+  short/medium/long) and `work_patterns.delegation_style`
+  (autonomous/collaborative, Vietnamese + English).
+
+### Changed
+- **2026-07-17:** The rate limiter keys on caller identity instead of the
+  proxy's IP. Every bucket used `req.socket.remoteAddress` with a flat 120/min,
+  but behind the reverse proxy that is not a per-client limit at all — Apache
+  reverse-proxies to `127.0.0.1:8082`, so EVERY agent on EVERY machine arrived
+  as `127.0.0.1` and shared ONE 120/min bucket, a fleet-wide throughput ceiling
+  on authenticated callers while an anonymous attacker got the same 120. Now: a
+  valid token gets a per-token bucket capped at `server.rateLimit` (default
+  6000/min, a runaway backstop rather than a quota); no token gets a per-IP
+  bucket capped at `server.rateLimitAnon` (default 120/min); an install with no
+  `authToken` configured is treated as trusted. `X-Forwarded-For` is honoured
+  ONLY from a loopback peer — trusting it from a direct peer would let one
+  attacker mint a fresh bucket per request and bypass the limiter entirely. An
+  explicit `rateLimit: 0` now really disables the limit — the old `|| 120`
+  silently turned "disabled" into 120/min, the opposite of the operator's
+  intent.
+- **2026-07-17:** Active recall no longer pays for `brainRelevanceFilter`. Once
+  the filter ran for the first time in ~8 weeks (see Fixed), its real cost and
+  value became measurable: it fired on 8/8 recalls at p50 ~2.5s, taking recall
+  p50 from 1508ms to 4203ms, and removed 0 hints in 8/8. That is structural, not
+  sampling — `recallMode` bypasses the search-score floor so a recall always has
+  lines and always burns a call, and the filter's prompt is framed for passive
+  hints ("avoid a mistake for THIS action") while telling itself to INCLUDE when
+  unsure. Passive hints keep the gate, where it stays nearly free (6/6 sampled
+  intercepts produced 0 lines, so the filter never runs). `/api/recall` p50
+  returns to ~1.5-2.0s.
+- **2026-07-01:** `setup.sh` is now a v4 router (thin client, Docker, init,
+  upgrade) and the default install path is the thin client. The legacy
+  ~2000-line full-local embed/brain/Qdrant wizard moves to `setup-full.sh`,
+  reachable with `--full`.
+
+### Fixed
+- **2026-07-17:** `brainRelevanceFilter` had thrown on EVERY call for ~8 weeks
+  and nobody noticed, because a bare catch ate the error and the response looked
+  identical either way. A commit that removed debug logs deleted the line that
+  also declared `rawAction`, leaving the reference on the next line, so every
+  call threw `ReferenceError: rawAction is not defined` straight into `catch {}`.
+  Proved on production by instrumenting the catch, and corroborated by
+  `activity.jsonl`, which contains not one `cost-call kind=brain
+  source=brain-filter` row across its entire history despite `brain-llm.js`
+  logging one unconditionally per completed call. The declaration is restored
+  and wrapped in `String()`, and both bare catches now log — a dead filter and a
+  filter that keeps everything are indistinguishable from the outside, so a log
+  line is the only way this surfaces.
+- **2026-07-17:** Recall blocked the event loop for seconds per request, so a
+  few concurrent recalls starved the single-threaded server and clients saw
+  `[ee_unavailable]` with `ee_health {"ok":false,"status":0}`. Three defects,
+  each measured on production: (1) `storeRouteDecision` did an unconditional
+  FileStore dual-write, and since `fileStoreUpsert` is a read-modify-write of
+  the ENTIRE collection with a fresh UUID per call, the file grew without bound
+  and every request paid O(filesize) — `experience-routes.json` had reached
+  307MB / 10937 entries, one `/api/recall` read 310MB and wrote 307MB, and
+  `readFileSync` + `JSON.parse` of that file alone timed at 3121ms; (2)
+  `getEdgesForId` re-read and re-parsed the whole edge store on every call,
+  ~90 times per recall at 28.8ms each (2.57MB / 6534 edges) = ~2.6s of
+  uninterrupted blocking, now served from a stat-keyed Map index; (3)
+  `searchCollection` caught the caller's AbortSignal along with real connection
+  errors and fell back to a whole-file read plus an in-JS cosine scan, making a
+  slow brain worse — abort now degrades to empty, and the FileStore path stays
+  reserved for a genuinely unreachable Qdrant. `routeFeedback` carried the same
+  read-modify-write defect, undetected only because nothing calls it; it is now
+  gated on Qdrant too. Recall p50 is ~1.5-2.0s with no event-loop block.
+- **2026-07-09:** The sensitive-keyword risk gate used a raw substring match, so
+  short alphabetic keywords fired constantly on unrelated text — `auth` matched
+  the `Co-Authored-By` trailer present in EVERY commit message, `prod` matched
+  "reproduce"/"product", `cors` matched "scores", `token` matched "tokenizer".
+  Every git commit tripped the gate. Pure single-word alphabetic keywords now
+  match on word boundaries; multi-word and symbol keywords (`rate limit`,
+  `rm -rf`, `force-push`, `reset --hard`) keep substring semantics.
+- **2026-07-06:** Offline queue head-of-line poison blocking — the queue grew to
+  ~2900 stuck events on a healthy client with the server reachable.
+  `interceptor-post.js` POSTed PostToolUse events with an empty `toolName`
+  (codex/antigravity payloads carrying no tool name), which `/api/posttool`
+  rejects 400, and the catch queued the rejection as permanent poison; because
+  `flushQueue` broke on ANY error, the 2 oldest poison records froze all valid
+  events behind them (one hit 15,314 attempts while 2,675 valid events never
+  drained). The POST is now skipped entirely when `toolName` is empty, and
+  `flushQueue` quarantines permanent 4xx (all except 429/408) and continues past
+  them; transient errors keep break-and-backoff.
+- **2026-07-05:** Session extraction ran up to 10 sequential `extractQA` calls
+  (~9s each on the slow extract model) synchronously on the request, so any
+  client with a short deadline (muonroi-cli's 2s on cli-exit) aborted and
+  nothing was ever learned. `handleExtract` now ACKs immediately and runs
+  extraction + consolidation in the background on the long-lived server, and
+  surviving experiences process with bounded concurrency (4) instead of a fully
+  sequential loop — `N*~9s` wall time becomes `ceil(N/4)*~9s`.
+- **2026-07-01:** Credential exposure in the thin-client path.
+  `setup-thin-client.sh` shipped a hardcoded server URL and tokens, so an
+  upgrade exposed them; it now reuses `~/.experience/config.json`, gains an
+  `--upgrade` mode, and requires user input on a fresh install. Built-in server
+  defaults are dropped from `ssh_tunnel_manager.js`, and `health-check` output
+  redacts IPs and raw URLs from check details, suggested fixes, and gate paths
+  (HTTP 000 is now reported as "unreachable" rather than exposing the
+  connection target).
+- **2026-07-01:** Hook registration across agents. `register-hooks` skipped
+  muonroi-cli on upgrade even when `~/.muonroi-cli/user-settings.json` existed
+  (a present settings file now counts as opt-in, and the health check is skipped
+  when the CLI is absent), and Antigravity hooks needed a set of fixes to
+  register at all: the global hooks path moved to `~/.gemini/config/hooks.json`,
+  registration now covers both the CLI and the IDE, the `toolCall` wrapper
+  schema is accepted, a wildcard `*` matcher is used, `run_command` matches in
+  `interceptor.js`, and the health check verifies the result.
+- **2026-06-23:** `/api/brain` dropped classification options — `handleBrainProxy`
+  now forwards `systemPrompt`, `responseFormat`, `model`, `maxTokens`, and
+  `provider` through to `classifyViaBrain`, so callers can request JSON output
+  and override the model tier.
+- **2026-06-21:** Two hybrid-retrieval correctness bugs. `syncToQdrant` upserted
+  points dense-only and never computed the `text_bm25` sparse vector, so
+  anything written after a sparse migration silently drifted out of
+  hybrid-retrieval coverage for both `/api/recall` and `/api/search` — on
+  production, `experience-selfqa` had 104/446 points (~23%) missing `text_bm25`.
+  Writes now derive the lexical text and upsert the named-vector shape, falling
+  back to dense-only (logged at warn) on token-less text or a build error so a
+  write is never blocked, and staying dense-only on pre-migration installs.
+  Separately, `searchCollectionHybrid` returned the full fused list rather than
+  slicing it, so `/api/search` returned up to 2×`limit` results for a `limit=N`
+  request — a broken limit contract and a token-thrift regression; the
+  RRF-ordered fusion is now sliced back to `topK`.
+
 ## [0.6.0] - 2026-06-19
 
 ### Added
