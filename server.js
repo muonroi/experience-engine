@@ -1380,7 +1380,7 @@ async function handleSearch(req, res) {
     collections = ['experience-behavioral'];
   }
 
-  const { getEmbeddingRaw, searchCollection, searchCollectionHybrid } = loadExperienceCore();
+  const { getEmbeddingRaw, searchCollection, searchCollectionHybrid, _rerankByQuality } = loadExperienceCore();
   const vector = await getEmbeddingRaw(body.query, AbortSignal.timeout(2000));
   if (!vector) return error(res, 'Embedding unavailable', 503);
 
@@ -1396,13 +1396,30 @@ async function handleSearch(req, res) {
       ? searchCollectionHybrid(c, body.query, vector, limit, searchSignal)
       : searchCollection(c, vector, limit)
   ));
+  // Effective-score rerank: /api/search is the PASSIVE PIL-injection path, so apply
+  // the precision penalty stack (ignoreCount / irrelevantCount / unusedCount /
+  // noiseReasonCounts / recency) that scoring.computeEffectiveScore exists to enforce
+  // "to suppress passive-hint noise" — otherwise a generic, over-ignored principle at
+  // ~0.48 raw cosine clears the client floor on any query and dominates injection. We
+  // return `_effectiveScore` as `score` so the client's minConfidence floor drops the
+  // penalized entries; raw cosine is preserved as `cosine` for observability. Caller
+  // context (lang/project_slug/cwd) is honoured when present so the project/domain
+  // penalties apply; when absent the precision penalties still fire (they need neither).
+  // Deliberate recall is unaffected — that path is /api/recall, not this one.
+  const rerankEnabled = runtimeConfig.getSearchRerank() && typeof _rerankByQuality === 'function';
+  const queryDomain = typeof body.domain === 'string' ? body.domain : undefined;
+  const queryProjectSlug = typeof body.project_slug === 'string' ? body.project_slug : undefined;
   const mapped = [];
   for (let i = 0; i < collections.length; i++) {
     const collection = collections[i];
-    for (const p of results[i] || []) {
+    const raw = results[i] || [];
+    const ranked = rerankEnabled ? _rerankByQuality(raw, queryDomain, queryProjectSlug, body.query) : raw;
+    for (const p of ranked) {
       const payload = p.payload || {};
       const json = (() => { try { return JSON.parse(payload.json || '{}'); } catch { return {}; } })();
-      mapped.push({ id: p.id, score: p.score, text: payload.text || json.solution || '', collection });
+      const cosine = p.score;
+      const score = rerankEnabled && typeof p._effectiveScore === 'number' ? p._effectiveScore : p.score;
+      mapped.push({ id: p.id, score, cosine, text: payload.text || json.solution || '', collection });
     }
   }
 
