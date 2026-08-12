@@ -377,12 +377,18 @@ test('ee_write: a too-short lesson is rejected (one word is not a lesson)', asyn
   assert.match(out.content[0].text, /invalid_arguments/);
 });
 
-test('ee_write: an over-long lesson is truncated, not rejected', async () => {
+test('ee_write: a lesson within schema limits (<=4000 chars) is stored verbatim, not re-truncated', async () => {
   let seen = '';
   const api = apiStub({ write: async (lesson) => { seen = lesson; return { ok: true, id: 'w1' }; } });
-  await call('ee_write', { lesson: 'x'.repeat(3000) }, { api, ledger: createRecallLedger(), env: {} });
-  assert.equal(seen.length, 1500);
-  assert.ok(seen.endsWith('...'));
+  const out = await call('ee_write', { lesson: 'x'.repeat(3000) }, { api, ledger: createRecallLedger(), env: {} });
+  assert.equal(seen.length, 3000, 'a lesson the schema already accepted must not be silently re-cut');
+  assert.equal(JSON.parse(out.content[0].text).truncated, undefined);
+});
+
+test('ee_write: a lesson over 4000 chars is rejected by schema validation before the handler runs', async () => {
+  const out = await call('ee_write', { lesson: 'x'.repeat(4001) }, { api: apiStub(), ledger: createRecallLedger(), env: {} });
+  assert.equal(out.isError, true);
+  assert.match(out.content[0].text, /invalid_arguments/);
 });
 
 test('ee_health: passes the probe through verbatim', async () => {

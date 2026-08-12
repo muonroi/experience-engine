@@ -224,7 +224,17 @@ function buildTools(deps = {}) {
       },
       async handler({ lesson, title, collection, project }) {
         const trimmed = lesson.trim();
-        const text = trimmed.length > 1500 ? `${trimmed.slice(0, 1497)}...` : trimmed;
+        // Schema already rejects >4000 chars (mcp/validate.js) before we get here — this
+        // truncation is a defensive backstop only, not the real limit. It used to silently
+        // re-cut at 1500 with a bare "...", which is how two long agent-authored lessons
+        // lost their tail (mid-sentence, no signal to the caller) on 2026-08-12. Annotate
+        // any cut so it's visible in recall, and tell the caller so they can split the
+        // remainder into a linked follow-up entry instead of losing it.
+        const LIMIT = 4000;
+        const truncated = trimmed.length > LIMIT;
+        const text = truncated
+          ? `${trimmed.slice(0, LIMIT - 40)}\n\n[…truncated ${trimmed.length - (LIMIT - 40)} chars — write the rest as a separate linked ee_write]`
+          : trimmed;
         const targetCollection = collection ?? 'experience-behavioral';
         try {
           const result = await api.write(text, {
@@ -234,7 +244,13 @@ function buildTools(deps = {}) {
             confidence: 0.65,
           });
           if (!result.ok) return fail('write_failed', result.error ?? 'import-memory POST failed');
-          return ok({ ok: true, id: result.id, collection: targetCollection, recallable: 'now via ee_query' });
+          return ok({
+            ok: true,
+            id: result.id,
+            collection: targetCollection,
+            recallable: 'now via ee_query',
+            ...(truncated ? { truncated: true, originalLength: trimmed.length } : {}),
+          });
         } catch (e) {
           return fail('write_failed', e instanceof Error ? e.message : String(e));
         }

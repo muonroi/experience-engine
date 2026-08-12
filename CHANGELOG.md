@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-08-12
+
+### Fixed
+- **2026-08-12:** `ee_write`'s handler silently re-truncated any lesson over
+  1500 chars to a bare `"..."`, even though the tool's own `inputSchema`
+  advertises `maxLength: 4000` and `mcp/validate.js` already accepts up to
+  4000 chars before the handler runs. The mismatch meant a caller who checked
+  the schema and stayed under 4000 chars could still lose everything past
+  char 1500, with no error, no annotation, and no field telling them it
+  happened. Two long agent-authored lessons (Shipd false-positive-shape
+  analysis) died mid-sentence this way and were unrecoverable from the brain
+  alone — only recoverable because the source markdown still existed on disk.
+  The handler now honors the already-validated 4000-char limit; if a further
+  cut is ever needed it is annotated (`[…truncated N chars…]`) and the tool
+  result carries `truncated: true, originalLength` so the caller can split
+  the remainder into a linked follow-up entry instead of losing it silently.
+  Live-brain repair (not part of this code change, run directly against
+  Qdrant): 2 truncated entries recovered in full from their source memory
+  file; 16 more found truncated by the same bug with no recoverable source,
+  annotated as unrecoverable rather than left as a bare `"..."`; 16
+  mis-scoped Shipd/Olympus entries retagged from `workspaces-ecosystems` /
+  `muonroi-cli` to `shipd-challenges` for consistent recall ranking.
+
 ## [0.8.1] - 2026-07-17
 
 ### Fixed
