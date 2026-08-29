@@ -160,6 +160,24 @@ function getSearchHybrid() {
   return String(v).toLowerCase() !== 'false';
 }
 
+// --- /api/search effective-score rerank (consumed by server.handleSearch) ---
+// /api/search is the PASSIVE PIL-injection path (muonroi-cli bridge.searchByText),
+// distinct from the deliberate /api/recall (ee_query). It historically returned RAW
+// cosine, so the precision penalty stack in scoring.computeEffectiveScore
+// (ignoreCount / irrelevantCount / unusedCount / noiseReasonCounts / recency) — which
+// exists specifically "to suppress passive-hint noise" — never applied. Effect: a
+// generic, over-ignored principle at ~0.48 cosine cleared the client floor on any
+// query and dominated injection (observed: top-3 points = 32% of all injection slots).
+// Reranking + returning the effective score lets the client floor drop those. Set
+// EXPERIENCE_SEARCH_RERANK=false (or "searchRerank": false in config.json) to revert
+// /api/search to raw cosine.
+function getSearchRerank() {
+  const v = cfgValue('searchRerank', 'EXPERIENCE_SEARCH_RERANK', true);
+  if (v === true) return true;
+  if (v === false) return false;
+  return String(v).toLowerCase() !== 'false';
+}
+
 // --- Prompt triviality gate (consumed by interceptor-prompt.js) ---
 // Decides whether a UserPromptSubmit prompt is worth running retrieval +
 // injecting the active-recall nudge. Previously hardcoded in the hook; now
@@ -338,7 +356,7 @@ module.exports = {
   getBrainExtractProvider, getBrainExtractEndpoint, getBrainExtractKey,
   getMinConfidence, getHighConfidence, getMinSearchScore,
   getPassiveHybrid, getPassiveLexicalMaxAdds, getPassiveLexicalDisplayScore,
-  getSearchHybrid,
+  getSearchHybrid, getSearchRerank,
   getMinPromptLength, getPromptSkipRegex, DEFAULT_PROMPT_SKIP_WORDS,
   getExpUser, EXP_USER,
   getHomeExpDir, getStoreDir, getActivityLogPath,
