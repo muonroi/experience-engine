@@ -1288,9 +1288,11 @@ async function handleRecall(req, res) {
     framework: derived.framework,
     project_slug: derived.project_slug,
     // Sprint-2 Part D: optional stance/role hint for per-stance recall. Recorded
-    // on meta (non-breaking — ignored when absent). The recall search hot path
-    // stays unrolled to the 3 experience-* collections; wiring stance into
-    // collection weighting is a follow-up that requires looping that path.
+    // on meta (non-breaking — ignored when absent) AND consumed downstream: the
+    // recall hot path weights each of the 3 experience-* collections' ranking by
+    // this stance's affinity (70c7a0f — see the runtime core's applyStanceW /
+    // _stance.weightsForStance and src/stance-weights.js). Absent/default stance
+    // → [1,1,1], a strict no-op, so untagged recall is unchanged.
     stance: typeof body.stance === 'string' ? body.stance : null,
     role: typeof body.role === 'string' ? body.role : null,
   };
