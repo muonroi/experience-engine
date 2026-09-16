@@ -1685,10 +1685,23 @@ async function handleBrainProxy(req, res) {
     // extract provider. Each getter falls back to the hot-path brain when unconfigured, so a
     // single-provider box is unchanged. Explicit caller overrides (options.*) still win.
     if (body.useExtractModel) {
-      if (!options.model) options.model = runtimeConfig.getBrainExtractModel();
-      if (!options.provider) options.provider = runtimeConfig.getBrainExtractProvider();
-      if (!options.endpoint) options.endpoint = runtimeConfig.getBrainExtractEndpoint();
-      if (!options.key) options.key = runtimeConfig.getBrainExtractKey();
+      // One resolver for provider+endpoint+key+model, and `=== undefined` checks: a
+      // resolved-empty key means "this vendor has no key configured, fail closed", and
+      // a `!options.key` test would discard that and let the hot-path key through.
+      const extractTarget = runtimeConfig.resolveBrainTarget('extract');
+      if (extractTarget.keySuppressed) {
+        // Otherwise this path answers 200 {"result":null} with nothing in the log and
+        // the operator has no console to read: /api/brain is the remote entry point.
+        slog('warn', 'brain_extract_key_suppressed', {
+          provider: extractTarget.provider,
+          hotProvider: runtimeConfig.getBrainProvider(),
+          reason: 'brainExtractKey unset while the extract path targets another provider/origin — refusing to send the hot-path key',
+        });
+      }
+      if (options.model === undefined) options.model = extractTarget.model;
+      if (options.provider === undefined) options.provider = extractTarget.provider;
+      if (options.endpoint === undefined) options.endpoint = extractTarget.endpoint;
+      if (options.key === undefined) options.key = extractTarget.key;
     }
     const result = await classifyViaBrain(body.prompt, timeoutMs, options);
     res.writeHead(200, { 'Content-Type': 'application/json', ...CORS });

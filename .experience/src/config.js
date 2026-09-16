@@ -108,9 +108,120 @@ function getBrainExtractModel() {
 // the extract model to DeepSeek's native API instead). Each falls back to the hot-path brain
 // getter when unset, so a box that does NOT configure a separate extract provider keeps its
 // existing single-provider behaviour unchanged (backward-compatible).
-function getBrainExtractProvider() { return cfgValue('brainExtractProvider', 'EXPERIENCE_BRAIN_EXTRACT_PROVIDER', '') || getBrainProvider(); }
+// Provider ids that speak the SAME wire protocol and are served by the same client.
+// A rename between them (openai ↔ custom ↔ siliconflow) must not be read as "the call
+// moved to another vendor". `deepseek` keeps its own family: it is OpenAI-shaped but has
+// a DIFFERENT default host, so treating it as interchangeable would let a DeepSeek model
+// inherit the SiliconFlow endpoint — the original 400 "Model does not exist".
+const _BRAIN_PROVIDER_FAMILY = { openai: 'openai-compatible', siliconflow: 'openai-compatible', custom: 'openai-compatible' };
+// The host each client falls back to when no endpoint is configured. ONE table, imported
+// by brain-llm.js and router.js, so "where does provider X go by default" has a single
+// answer — two copies had already drifted to two different DeepSeek paths. Keyed by
+// PROVIDER, not by family: siliconflow and openai share a client but not a host, and
+// resolving siliconflow to the OpenAI default would POST a SiliconFlow key to OpenAI.
+const BRAIN_DEFAULT_ENDPOINTS = {
+  openai: 'https://api.openai.com/v1/chat/completions',
+  custom: 'https://api.openai.com/v1/chat/completions',
+  siliconflow: 'https://api.siliconflow.com/v1/chat/completions',
+  'openai-compatible': 'https://api.openai.com/v1/chat/completions',
+  deepseek: 'https://api.deepseek.com/chat/completions',
+  gemini: 'https://generativelanguage.googleapis.com/v1beta/models',
+  claude: 'https://api.anthropic.com/v1/messages',
+};
+function defaultBrainEndpoint(provider) {
+  const p = String(provider || '').toLowerCase();
+  return BRAIN_DEFAULT_ENDPOINTS[p] || BRAIN_DEFAULT_ENDPOINTS[_providerFamily(p)] || '';
+}
+function _providerFamily(provider) {
+  const p = String(provider || '').toLowerCase();
+  return _BRAIN_PROVIDER_FAMILY[p] || p;
+}
+// Only these clients POST to a configurable chat/completions URL, which is the shape
+// `brainEndpoint` holds. An endpoint may therefore be INHERITED only by these; one
+// configured explicitly for a Gemini/Anthropic target (a private gateway, LiteLLM,
+// Vertex) is that client's own shape and is always honoured — dropping it while keeping
+// its key is how a gateway-only credential would reach Google or Anthropic.
+function _acceptsChatEndpoint(provider) {
+  const f = _providerFamily(provider);
+  return f === 'openai-compatible' || f === 'deepseek';
+}
+// Origins, not strings: `https://h/v1/chat` and `https://h/v1/big/chat` are the same host
+// (one gateway, two routes) and a trailing slash is not a different vendor.
+function _sameOrigin(a, b) {
+  if (!a || !b) return a === b;
+  try { return new URL(a).origin === new URL(b).origin; } catch { return a === b; }
+}
+// Where a call will ACTUALLY land, including the client's own default — an unset
+// brainEndpoint still resolves to a real host, so comparing the raw config fields would
+// call a config "cross-vendor" when both sides hit the same API.
+// Always resolves to the host the request will ACTUALLY reach, never to '': leaving the
+// client to fill in a blank meant it guessed from the HOT provider while the key had been
+// decided for the target provider, so one vendor's host received another vendor's key.
+function _effectiveEndpoint(provider, ownEndpoint, hotProvider, hotEndpoint) {
+  if (ownEndpoint) return ownEndpoint;
+  if (_inheritsEndpoint(provider, hotProvider) && hotEndpoint) return hotEndpoint;
+  return defaultBrainEndpoint(provider);
+}
+// An endpoint configured for the hot path describes the hot client. It may be reused only
+// by the same client family, and only by a family whose protocol that field's shape fits.
+function _inheritsEndpoint(provider, hotProvider) {
+  return _providerFamily(provider) === _providerFamily(hotProvider) && _acceptsChatEndpoint(provider);
+}
+function getBrainExtractProvider() {
+  const own = cfgValue('brainExtractProvider', 'EXPERIENCE_BRAIN_EXTRACT_PROVIDER', '');
+  if (own) return own;
+  // Ollama speaks its own protocol on a fixed local URL and ignores an HTTP chat
+  // endpoint, so an operator who configured an extract ENDPOINT while the hot path runs
+  // on Ollama means "call this remote", not "post the remote model id to localhost".
+  const ownEndpoint = cfgValue('brainExtractEndpoint', 'EXPERIENCE_BRAIN_EXTRACT_ENDPOINT', '');
+  if (ownEndpoint && _providerFamily(getBrainProvider()) === 'ollama') return 'custom';
+  return getBrainProvider();
+}
 function getBrainExtractEndpoint() { return cfgValue('brainExtractEndpoint', 'EXPERIENCE_BRAIN_EXTRACT_ENDPOINT', '') || getBrainEndpoint(); }
-function getBrainExtractKey()      { return cfgValue('brainExtractKey', 'EXPERIENCE_BRAIN_EXTRACT_KEY', '') || getBrainKey(); }
+function getBrainExtractKey() { return resolveBrainTarget('extract').key; }
+
+// The complete routing target for one call source: provider, endpoint, key and model
+// resolved TOGETHER. Resolving them apart is what sent a DeepSeek model id to SiliconFlow
+// (400 "Model does not exist", measured on the VPS 2026-09-16 — every extraction lost) and
+// what would hand one vendor's key to another. Callers pass every field to the provider
+// client, so the client never guesses: an empty endpoint means "use your own default
+// host", never "use the hot-path host".
+function resolveBrainTarget(source) {
+  const hotProvider = getBrainProvider();
+  // `brainEndpoint` holds a chat/completions URL; the Gemini and Claude clients never read
+  // it (pre-split behaviour), so a value left from another provider is not part of the hot
+  // target at all — neither to call, nor to compare origins against.
+  const hotEndpoint = _acceptsChatEndpoint(hotProvider) ? getBrainEndpoint() : '';
+  const hotKey = getBrainKey();
+  const hotResolved = _effectiveEndpoint(hotProvider, hotEndpoint, hotProvider, hotEndpoint);
+  if (source !== 'extract' && source !== 'evolve') {
+    return {
+      provider: hotProvider,
+      endpoint: hotResolved,
+      key: hotKey,
+      model: getBrainModel(),
+      keySuppressed: false,
+    };
+  }
+  const ownEndpoint = cfgValue('brainExtractEndpoint', 'EXPERIENCE_BRAIN_EXTRACT_ENDPOINT', '');
+  const ownKey = cfgValue('brainExtractKey', 'EXPERIENCE_BRAIN_EXTRACT_KEY', '');
+  const provider = getBrainExtractProvider();
+  const endpoint = _effectiveEndpoint(provider, ownEndpoint, hotProvider, hotEndpoint);
+  // Inherit the hot-path credential only when the request reaches the SAME origin the hot
+  // path already authenticates against. Both sides are fully resolved hosts, so a provider
+  // rename, an unset brainEndpoint or a client default never reads as a vendor change.
+  const sameTarget = _sameOrigin(endpoint, hotResolved);
+  // Fail closed rather than lend a credential across vendors: a 401 is diagnosable, a
+  // leaked key is not. keySuppressed lets the caller log WHY, so the 401 is readable.
+  const key = ownKey || (sameTarget ? hotKey : '');
+  return {
+    provider,
+    endpoint,
+    key,
+    model: getBrainExtractModel(),
+    keySuppressed: !ownKey && !sameTarget && !!hotKey,
+  };
+}
 // Source-aware model picker. Sources are set by callers via meta.source in callBrainWithFallback.
 function getBrainModelForSource(source) {
   if (source === 'extract' || source === 'evolve') return getBrainExtractModel();
@@ -335,7 +446,8 @@ module.exports = {
   getOllamaBase, getOllamaEmbedUrl, getOllamaGenerateUrl,
   getEmbedProvider, getEmbedModel, getOllamaEmbedModel, getEmbedEndpoint, getEmbedKey, getEmbedDim, getEmbedTimeoutMs,
   getBrainProvider, getBrainModel, getBrainExtractModel, getBrainModelForSource, getBrainEndpoint, getBrainKey,
-  getBrainExtractProvider, getBrainExtractEndpoint, getBrainExtractKey,
+  getBrainExtractProvider, getBrainExtractEndpoint, getBrainExtractKey, resolveBrainTarget,
+  BRAIN_DEFAULT_ENDPOINTS, defaultBrainEndpoint,
   getMinConfidence, getHighConfidence, getMinSearchScore,
   getPassiveHybrid, getPassiveLexicalMaxAdds, getPassiveLexicalDisplayScore,
   getSearchHybrid,

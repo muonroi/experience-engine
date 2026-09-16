@@ -10,6 +10,7 @@ const {
   ROUTES_COLLECTION, getExpUser, cfgValue, getConfig,
   getQdrantBase, getQdrantApiKey, getEmbedDim,
   getBrainProvider, getBrainModel, getBrainEndpoint, getBrainKey,
+  defaultBrainEndpoint,
   getOllamaGenerateUrl,
   activityLog,
 } = require("./config");
@@ -183,18 +184,35 @@ async function ensureRoutesCollection() {
 
 // Fire once on module load — removes per-call overhead from routeModel()
 ensureRoutesCollection().catch(() => {});
+const OPENAI_SHAPED_PROVIDERS = new Set(['siliconflow', 'openai', 'custom', 'deepseek']);
+// Providers this function knows how to reach. A NAMED provider outside the OpenAI-shaped
+// set (gemini takes its key in the query string, claude uses x-api-key and its own body)
+// must not be dragged into the chat/completions branch just because an endpoint is
+// present — that would put its credential on the wire in a scheme it cannot parse.
+// An endpoint with no recognised provider keeps the legacy meaning: OpenAI-shaped.
+const KNOWN_BRAIN_PROVIDERS = new Set([...OPENAI_SHAPED_PROVIDERS, 'ollama', 'gemini', 'claude']);
+
 async function classifyViaBrain(prompt, timeoutMs = 10000, options = {}) {
   // P1 Item 2: optional per-call overrides for cross-model judge consensus.
   // When omitted, falls back to env-driven brain config (existing behavior).
-  const brainProvider = options.provider || getBrainProvider();
-  const endpoint = options.endpoint || getBrainEndpoint();
+  // Normalised once: the config resolver, the default-host table and the BRAIN_FNS lookup
+  // are all case-insensitive, so a raw-case comparison here would let `"Gemini"` walk past
+  // the protocol guard below and put that key on the wire as a Bearer header.
+  const brainProvider = String(options.provider || getBrainProvider() || '').toLowerCase();
+  // A DEFINED override is authoritative even when empty. `||` here used to turn the
+  // extract path's deliberate "no key for this vendor" into "send the hot-path key",
+  // which shipped one provider's secret to another through /api/brain.
+  const endpoint = options.endpoint !== undefined ? options.endpoint : getBrainEndpoint();
   const brainModel = options.model || getBrainModel();
-  const key = options.key || getBrainKey() || '';
+  const key = (options.key !== undefined ? options.key : getBrainKey()) || '';
   const units = estimateTextUnits(prompt, 4000);
 
-  if (brainProvider === 'siliconflow' || endpoint) {
+  // Every OpenAI-shaped provider goes through this branch. Without the provider list a
+  // caller that passes an empty endpoint (meaning "use the provider default") would fall
+  // through to the Ollama branch and silently answer null.
+  if (OPENAI_SHAPED_PROVIDERS.has(brainProvider) || (endpoint && !KNOWN_BRAIN_PROVIDERS.has(brainProvider))) {
     if (!key) return null;
-    const targetEndpoint = endpoint || 'https://api.siliconflow.com/v1/chat/completions';
+    const targetEndpoint = endpoint || defaultBrainEndpoint(brainProvider) || defaultBrainEndpoint('siliconflow');
     const startedAt = Date.now();
     try {
       // Default system prompt is for the tier classifier (fast/balanced/premium).
