@@ -9,6 +9,7 @@ const { estimateTextUnits, logCostCall } = require('./embedding');
 const { log, serializeError } = require('./logger');
 
 const cfgValue = _config.cfgValue;
+const numericCfg = _config.numericCfg;
 const getBrainProvider = _config.getBrainProvider;
 const getBrainModel = _config.getBrainModel;
 const getBrainModelForSource = _config.getBrainModelForSource;
@@ -38,10 +39,29 @@ const BRAIN_FNS = {
 
 // One explicit time budget for the extract/evolve path, so routing it to another provider
 // cannot silently shrink it to that provider's own default (see callBrainWithFallback).
-// Strictly BELOW the thin client's serverExtractTimeoutMs default of 60s (bin/init.js,
-// remote-client.js): the server still has to embed and upsert after the brain answers, so
-// a budget equal to the client's leaves no room for that work to land.
-const EXTRACT_BRAIN_TIMEOUT_MS = 45000;
+// Configurable because the right number is a property of the MODEL, not of this code: a
+// reasoning model spends most of its budget thinking before it emits a token. Measured
+// 2026-09-17 on a real extract prompt at EXTRACT_CONCURRENCY=4 — step-3.7-flash took
+// 36-52s per call and was cut off by the 45s default, losing the extraction. Raise
+// brainExtractTimeoutMs for such a model: /api/extract ACKs asynchronously (server.js
+// answers before extractFromSession runs), so a server-side budget above the thin client's
+// 60s serverExtractTimeoutMs never blocks a caller — the client is waiting on the ACK, not
+// on the brain.
+const DEFAULT_EXTRACT_BRAIN_TIMEOUT_MS = 45000;
+// Band, not just a positivity check: below 1s no provider can answer, and above 10min the
+// value is a unit mistake. numericCfg explains what each rejected shape used to do.
+function getExtractBrainTimeoutMs() {
+  return numericCfg('brainExtractTimeoutMs', 'EXPERIENCE_BRAIN_EXTRACT_TIMEOUT_MS',
+    DEFAULT_EXTRACT_BRAIN_TIMEOUT_MS, 1000, 600000);
+}
+// Answer budget for the hint-relevance filter. Same reason: a reasoning model needs room
+// to think before the answer, and 120 tokens buys it nothing but an empty string. Each
+// branch passes its own historical default (HTTP 120, Ollama 20) so an unconfigured box is
+// byte-identical; the knob overrides both.
+function getRelevanceMaxTokens(fallback = 120) {
+  return numericCfg('brainRelevanceMaxTokens', 'EXPERIENCE_BRAIN_RELEVANCE_MAX_TOKENS',
+    fallback, 1, 32768);
+}
 
 // Fallback config: primary provider → fallback provider
 function getBrainFallback() {
@@ -93,7 +113,7 @@ async function callBrainWithFallback(prompt, meta = {}) {
   // SHORTER budget. Pin one budget for the extract path so routing cannot change it.
   const timeoutMs = meta.timeoutMs != null
     ? Number(meta.timeoutMs)
-    : (isExtractSource ? EXTRACT_BRAIN_TIMEOUT_MS : 0);
+    : (isExtractSource ? getExtractBrainTimeoutMs() : 0);
   const signal = meta.signal || (Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined);
 
   let startedAt = Date.now();
@@ -133,7 +153,8 @@ async function callBrainWithFallback(prompt, meta = {}) {
 
 // P6: Brain relevance filter — lightweight brain call to check if suggestions match the action
 // Input: the action query + numbered warnings. Output: which numbers are relevant.
-// Timeout: 3s (tight — fail-open if brain is slow). Cost: ~80 tokens input, ~5 tokens output.
+// Timeout: relevanceTimeoutMs (default 6.5s, fail-open if the brain is slow). Answer
+// budget: brainRelevanceMaxTokens (default 120 on HTTP, 20 on Ollama).
 async function brainRelevanceFilter(actionQuery, suggestionLines, signal, projectSlug) {
   if (!suggestionLines || suggestionLines.length === 0) return null;
 
@@ -178,7 +199,7 @@ Reply with the relevant warning numbers separated by commas (e.g. "1,3"), or "no
       const res = await fetch(getOllamaGenerateUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: getBrainModel(), prompt, stream: false, options: { temperature: 0.1, num_predict: 20 } }),
+        body: JSON.stringify({ model: getBrainModel(), prompt, stream: false, options: { temperature: 0.1, num_predict: getRelevanceMaxTokens(20) } }),
         signal: signal || AbortSignal.timeout(relevanceTimeout),
       });
       if (!res.ok) {
@@ -193,7 +214,7 @@ Reply with the relevant warning numbers separated by commas (e.g. "1,3"), or "no
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getBrainKey()}` },
-        body: JSON.stringify({ model: getBrainModel(), messages: [{ role: "user", content: prompt }], temperature: 0.1, max_tokens: 120 }),
+        body: JSON.stringify({ model: getBrainModel(), messages: [{ role: "user", content: prompt }], temperature: 0.1, max_tokens: getRelevanceMaxTokens(120) }),
         signal: signal || AbortSignal.timeout(relevanceTimeout),
       });
       if (!res.ok) {
@@ -564,6 +585,8 @@ async function brainDeepSeek(prompt, opts = {}) {
 
 module.exports = {
   BRAIN_FNS,
+  getExtractBrainTimeoutMs,
+  getRelevanceMaxTokens,
   getBrainFallback,
   callBrainWithFallback,
   brainRelevanceFilter,

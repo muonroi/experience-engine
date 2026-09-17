@@ -72,6 +72,36 @@ function cfgValue(key, envKey, fallback) {
   return _tryDecrypt(raw);
 }
 
+// Operator-settable budgets (timeouts, answer-token caps) get coerced HERE, once, because
+// `Number.isFinite(n) && n > 0` is not validation. Measured 2026-09-17, each of these was
+// accepted by that check and each broke a live path:
+//   45.5 / 99999999999  -> AbortSignal.timeout throws ERR_OUT_OF_RANGE, and because
+//                          /api/extract has ALREADY ACKed the client, the whole session's
+//                          lessons are lost with one error line and no client signal.
+//   2147483648          -> Node clamps the timer to 1 ms with only a process warning.
+//   true                -> Number(true) === 1, i.e. a 1 ms budget.
+//   "12.7" / [999]      -> a non-integer or array-derived max_tokens the provider 400s on,
+//                          which classifyViaBrain swallows into a silent null.
+//   120 (meant seconds) -> a legal 120 ms timeout that aborts every call.
+// So: accept only a number or a numeric string, truncate to an integer, and require it to
+// land inside a plausible band — anything outside is a typo, not a budget, and the caller's
+// default is safer than honouring it.
+function numericCfg(key, envKey, fallback, min, max) {
+  const raw = cfgValue(key, envKey, fallback);
+  if (typeof raw !== 'number' && typeof raw !== 'string') return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return fallback;
+  const whole = Math.trunc(parsed);
+  if (whole < min || whole > max) {
+    // Say so. A budget silently replaced by its default is exactly the invisible failure
+    // this helper exists to prevent — the operator must be able to see that the number
+    // they set was thrown away, and why.
+    activityLog({ op: 'config-rejected', key, value: String(raw).slice(0, 40), min, max, using: fallback });
+    return fallback;
+  }
+  return whole;
+}
+
 function cfgNestedValue(key, nestedPath, envKey, fallback) {
   const cfg = getConfig();
   const nested = nestedPath.reduce((value, part) => (
@@ -442,6 +472,7 @@ function activityLog(event) {
 
 module.exports = {
   getConfig, refreshConfig, cfgValue, cfgNestedValue,
+  numericCfg,
   getQdrantBase, getQdrantApiKey,
   getOllamaBase, getOllamaEmbedUrl, getOllamaGenerateUrl,
   getEmbedProvider, getEmbedModel, getOllamaEmbedModel, getEmbedEndpoint, getEmbedKey, getEmbedDim, getEmbedTimeoutMs,

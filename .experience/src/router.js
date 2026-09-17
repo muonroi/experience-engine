@@ -10,6 +10,7 @@ const {
   ROUTES_COLLECTION, getExpUser, cfgValue, getConfig,
   getQdrantBase, getQdrantApiKey, getEmbedDim,
   getBrainProvider, getBrainModel, getBrainEndpoint, getBrainKey,
+  numericCfg,
   defaultBrainEndpoint,
   getOllamaGenerateUrl,
   activityLog,
@@ -184,6 +185,29 @@ async function ensureRoutesCollection() {
 
 // Fire once on module load — removes per-call overhead from routeModel()
 ensureRoutesCollection().catch(() => {});
+// Answer budget for the one-word classifiers. 10 tokens is right for an instruct model
+// and useless for a reasoning one, which spends its whole budget thinking: measured
+// 2026-09-17, step-3.5-flash needed 880 tokens (11.7s) to emit "balanced" and returned an
+// empty string at every smaller budget. Each branch passes its own historical default
+// (HTTP 10, Ollama 5) so an unconfigured box is unchanged.
+//
+// ONE key drives three consumers — the tier classifier (router.js), the route classifier
+// and the PostToolUse judge (judge-worker.js) — so raising it for a reasoning model raises
+// the judge's per-tool-call budget too. That is deliberate: they all talk to the same
+// brainModel, so a model that cannot answer in 10 tokens cannot answer for any of them.
+function classifyMaxTokens(fallback) {
+  return numericCfg('brainClassifyMaxTokens', 'EXPERIENCE_BRAIN_CLASSIFY_MAX_TOKENS', fallback, 1, 32768);
+}
+// …and the matching TIME budget, because tokens alone do not make a reasoning model usable:
+// the same measurement took 11.7s wall, over the 10s default this function used to hardcode.
+// Only the DEFAULT is configurable — a caller that passes its own budget (judge-worker 8s,
+// /api/pil-context 3.5s) keeps it, since those numbers exist to bound a latency the operator
+// did not choose. (/api/route-task does NOT come through here: it calls callBrainWithFallback
+// and has its own routeTaskBrainTimeoutMs.)
+function classifyTimeoutMs(fallback) {
+  return numericCfg('brainClassifyTimeoutMs', 'EXPERIENCE_BRAIN_CLASSIFY_TIMEOUT_MS', fallback, 1000, 600000);
+}
+
 const OPENAI_SHAPED_PROVIDERS = new Set(['siliconflow', 'openai', 'custom', 'deepseek']);
 // Providers this function knows how to reach. A NAMED provider outside the OpenAI-shaped
 // set (gemini takes its key in the query string, claude uses x-api-key and its own body)
@@ -192,7 +216,9 @@ const OPENAI_SHAPED_PROVIDERS = new Set(['siliconflow', 'openai', 'custom', 'dee
 // An endpoint with no recognised provider keeps the legacy meaning: OpenAI-shaped.
 const KNOWN_BRAIN_PROVIDERS = new Set([...OPENAI_SHAPED_PROVIDERS, 'ollama', 'gemini', 'claude']);
 
-async function classifyViaBrain(prompt, timeoutMs = 10000, options = {}) {
+async function classifyViaBrain(prompt, timeoutMs, options = {}) {
+  // A caller-supplied budget wins; otherwise the configurable default applies.
+  const budgetMs = Number(timeoutMs) > 0 ? Number(timeoutMs) : classifyTimeoutMs(10000);
   // P1 Item 2: optional per-call overrides for cross-model judge consensus.
   // When omitted, falls back to env-driven brain config (existing behavior).
   // Normalised once: the config resolver, the default-host table and the BRAIN_FNS lookup
@@ -222,7 +248,7 @@ async function classifyViaBrain(prompt, timeoutMs = 10000, options = {}) {
       const reqBody = {
         model: brainModel || 'Qwen/Qwen2.5-7B-Instruct',
         messages,
-        max_tokens: options.maxTokens || 10,
+        max_tokens: Number(options.maxTokens) > 0 ? Number(options.maxTokens) : classifyMaxTokens(10),
         temperature: 0.0,
       };
       if (options.responseFormat) reqBody.response_format = options.responseFormat;
@@ -230,7 +256,7 @@ async function classifyViaBrain(prompt, timeoutMs = 10000, options = {}) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
         body: JSON.stringify(reqBody),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: AbortSignal.timeout(budgetMs),
       });
       if (!res.ok) {
         logCostCall('judge', brainProvider, 'judge', units, { ok: false, durationMs: Date.now() - startedAt });
@@ -255,7 +281,7 @@ async function classifyViaBrain(prompt, timeoutMs = 10000, options = {}) {
         model: brainModel || 'qwen2.5:3b',
         prompt: ollamaPrompt,
         stream: false,
-        options: { temperature: 0.0, num_predict: options.maxTokens || 5 },
+        options: { temperature: 0.0, num_predict: Number(options.maxTokens) > 0 ? Number(options.maxTokens) : classifyMaxTokens(5) },
       };
       if (options && options.responseFormat) {
         if (options.responseFormat.type === 'json_object') {
@@ -269,7 +295,7 @@ async function classifyViaBrain(prompt, timeoutMs = 10000, options = {}) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(ollamaBody),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: AbortSignal.timeout(budgetMs),
       });
       if (!res.ok) {
         logCostCall('judge', brainProvider, 'judge', units, { ok: false, durationMs: Date.now() - startedAt });
