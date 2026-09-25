@@ -1,0 +1,1184 @@
+{
+  "edit-ts-first": {
+    "result": {
+      "suggestions": "⚠️ [Experience - High Confidence (0.71)]: solution for 00000101-0000-4000-8000-000000000000\n   When: trigger for 00000101-0000-4000-8000-000000000000\n   [id:00000101 col:experience-principles]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000101 experience-principles [reason]\n---\n⚠️ [Experience - High Confidence (0.93)]: solution for 00000201-0000-4000-8000-000000000000\n   When: trigger for 00000201-0000-4000-8000-000000000000\n   Why: Handlers crashed on undefined bodies.\n   Fires when: tools: Edit\n   [id:00000201 col:experience-behavioral]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000201 experience-behavioral [reason]\n---\n💡 [Suggestion (0.58)]: solution for 00000302-0000-4000-8000-000000000000\n   When: trigger for 00000302-0000-4000-8000-000000000000\n   [id:00000302 col:experience-selfqa]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000302 experience-selfqa [reason]\n---\n💡 [Probationary Suggestion (0.22)]: solution for 00000301-0000-4000-8000-000000000000\n   When: trigger for 00000301-0000-4000-8000-000000000000\n   [id:00000301 col:experience-selfqa]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000301 experience-selfqa [reason]\n───\nFeedback reasons: wrong_repo | wrong_language | wrong_task | stale_rule — or verdict:\"IGNORED\" if you chose to skip.",
+      "surfacedIds": [
+        {
+          "collection": "experience-principles",
+          "id": "00000101-0000-4000-8000-000000000000",
+          "solution": "solution for 00000101-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": null,
+          "scope": {
+            "lang": "all"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 0,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-behavioral",
+          "id": "00000201-0000-4000-8000-000000000000",
+          "solution": "solution for 00000201-0000-4000-8000-000000000000",
+          "domain": "TypeScript",
+          "projectSlug": "golden-app",
+          "scope": {
+            "lang": "typescript",
+            "project_slug": "golden-app"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": "2026-08-29T12:00:00.000Z",
+          "hitCount": 5,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-selfqa",
+          "id": "00000302-0000-4000-8000-000000000000",
+          "solution": "solution for 00000302-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": "golden-app",
+          "scope": {
+            "lang": "typescript",
+            "project_slug": "golden-app"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 1,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-selfqa",
+          "id": "00000301-0000-4000-8000-000000000000",
+          "solution": "solution for 00000301-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": null,
+          "scope": {
+            "lang": "typescript"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 0,
+          "ignoreCount": 0,
+          "superseded": false
+        }
+      ],
+      "route": null
+    },
+    "recordSurface": [
+      [
+        "experience-principles",
+        "00000101-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-principles",
+        "00000103-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-principles",
+        "00000104-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000201-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000207-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000206-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000204-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000208-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000203-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000302-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000301-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000304-0000-4000-8000-000000000000"
+      ]
+    ],
+    "incrementIgnoreCount": [],
+    "brainFilterCalls": 1
+  },
+  "edit-ts-repeat": {
+    "result": {
+      "suggestions": null,
+      "surfacedIds": [],
+      "route": null
+    },
+    "recordSurface": [
+      [
+        "experience-principles",
+        "00000101-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-principles",
+        "00000103-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-principles",
+        "00000104-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000201-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000207-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000206-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000204-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000208-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000203-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000302-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000301-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000304-0000-4000-8000-000000000000"
+      ]
+    ],
+    "incrementIgnoreCount": [],
+    "brainFilterCalls": 0
+  },
+  "edit-ts-third": {
+    "result": {
+      "suggestions": null,
+      "surfacedIds": [],
+      "route": null
+    },
+    "recordSurface": [
+      [
+        "experience-principles",
+        "00000101-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-principles",
+        "00000103-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-principles",
+        "00000104-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000201-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000207-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000206-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000204-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000208-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000203-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000302-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000301-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000304-0000-4000-8000-000000000000"
+      ]
+    ],
+    "incrementIgnoreCount": [
+      [
+        "experience-principles",
+        "00000101-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-principles",
+        "00000103-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-principles",
+        "00000104-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000201-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000207-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000206-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000204-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000208-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000203-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000302-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000301-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000304-0000-4000-8000-000000000000"
+      ]
+    ],
+    "brainFilterCalls": 0
+  },
+  "bash-npm-test": {
+    "result": {
+      "suggestions": "⚠️ [Experience - High Confidence (0.75)]: solution for 00000101-0000-4000-8000-000000000000\n   When: trigger for 00000101-0000-4000-8000-000000000000\n   [id:00000101 col:experience-principles]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000101 experience-principles [reason]\n───\nFeedback reasons: wrong_repo | wrong_language | wrong_task | stale_rule — or verdict:\"IGNORED\" if you chose to skip.",
+      "surfacedIds": [
+        {
+          "collection": "experience-principles",
+          "id": "00000101-0000-4000-8000-000000000000",
+          "solution": "solution for 00000101-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": null,
+          "scope": {
+            "lang": "all"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 0,
+          "ignoreCount": 0,
+          "superseded": false
+        }
+      ],
+      "route": null
+    },
+    "recordSurface": [
+      [
+        "experience-principles",
+        "00000101-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-principles",
+        "00000103-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-principles",
+        "00000104-0000-4000-8000-000000000000"
+      ]
+    ],
+    "incrementIgnoreCount": [],
+    "brainFilterCalls": 1
+  },
+  "codex-prompt": {
+    "result": {
+      "suggestions": "⚠️ [Experience - High Confidence (0.75)]: solution for 00000101-0000-4000-8000-000000000000\n   When: trigger for 00000101-0000-4000-8000-000000000000\n   [id:00000101 col:experience-principles]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000101 experience-principles [reason]\n---\n⚠️ [Experience - High Confidence (0.76)]: solution for 00000201-0000-4000-8000-000000000000\n   When: trigger for 00000201-0000-4000-8000-000000000000\n   Why: Handlers crashed on undefined bodies.\n   Fires when: tools: Edit\n   [id:00000201 col:experience-behavioral]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000201 experience-behavioral [reason]\n---\n⚠️ [Experience - High Confidence (0.67)]: BRAIN-DROP solution for the brain filter stub\n   When: trigger for 00000207-0000-4000-8000-000000000000\n   [id:00000207 col:experience-behavioral]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000207 experience-behavioral [reason]\n---\n⚠️ [Experience - High Confidence (0.62)]: solution for 00000302-0000-4000-8000-000000000000\n   When: trigger for 00000302-0000-4000-8000-000000000000\n   [id:00000302 col:experience-selfqa]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000302 experience-selfqa [reason]\n───\nFeedback reasons: wrong_repo | wrong_language | wrong_task | stale_rule — or verdict:\"IGNORED\" if you chose to skip.",
+      "surfacedIds": [
+        {
+          "collection": "experience-principles",
+          "id": "00000101-0000-4000-8000-000000000000",
+          "solution": "solution for 00000101-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": null,
+          "scope": {
+            "lang": "all"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 0,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-behavioral",
+          "id": "00000201-0000-4000-8000-000000000000",
+          "solution": "solution for 00000201-0000-4000-8000-000000000000",
+          "domain": "TypeScript",
+          "projectSlug": "golden-app",
+          "scope": {
+            "lang": "typescript",
+            "project_slug": "golden-app"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": "2026-08-29T12:00:00.000Z",
+          "hitCount": 5,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-behavioral",
+          "id": "00000207-0000-4000-8000-000000000000",
+          "solution": "BRAIN-DROP solution for the brain filter stub",
+          "domain": null,
+          "projectSlug": "golden-app",
+          "scope": {
+            "lang": "typescript",
+            "project_slug": "golden-app"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": "2026-07-18T12:00:00.000Z",
+          "hitCount": 2,
+          "ignoreCount": 1,
+          "superseded": false
+        },
+        {
+          "collection": "experience-selfqa",
+          "id": "00000302-0000-4000-8000-000000000000",
+          "solution": "solution for 00000302-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": "golden-app",
+          "scope": {
+            "lang": "typescript",
+            "project_slug": "golden-app"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 1,
+          "ignoreCount": 0,
+          "superseded": false
+        }
+      ],
+      "route": null
+    },
+    "recordSurface": [
+      [
+        "experience-principles",
+        "00000101-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000201-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000207-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000302-0000-4000-8000-000000000000"
+      ]
+    ],
+    "incrementIgnoreCount": [],
+    "brainFilterCalls": 0
+  },
+  "claude-prompt": {
+    "result": {
+      "suggestions": "⚠️ [Experience - High Confidence (0.75)]: solution for 00000101-0000-4000-8000-000000000000\n   When: trigger for 00000101-0000-4000-8000-000000000000\n   [id:00000101 col:experience-principles]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000101 experience-principles [reason]\n---\n⚠️ [Experience - High Confidence (0.76)]: solution for 00000201-0000-4000-8000-000000000000\n   When: trigger for 00000201-0000-4000-8000-000000000000\n   Why: Handlers crashed on undefined bodies.\n   Fires when: tools: Edit\n   [id:00000201 col:experience-behavioral]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000201 experience-behavioral [reason]\n---\n💡 [Suggestion (0.41)]: solution for 00000206-0000-4000-8000-000000000000\n   When: trigger for 00000206-0000-4000-8000-000000000000\n   [id:00000206 col:experience-behavioral]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000206 experience-behavioral [reason]\n---\n⚠️ [Experience - High Confidence (0.62)]: solution for 00000302-0000-4000-8000-000000000000\n   When: trigger for 00000302-0000-4000-8000-000000000000\n   [id:00000302 col:experience-selfqa]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000302 experience-selfqa [reason]\n---\n💡 [Probationary Suggestion (0.25)]: solution for 00000301-0000-4000-8000-000000000000\n   When: trigger for 00000301-0000-4000-8000-000000000000\n   [id:00000301 col:experience-selfqa]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000301 experience-selfqa [reason]\n───\nFeedback reasons: wrong_repo | wrong_language | wrong_task | stale_rule — or verdict:\"IGNORED\" if you chose to skip.",
+      "surfacedIds": [
+        {
+          "collection": "experience-principles",
+          "id": "00000101-0000-4000-8000-000000000000",
+          "solution": "solution for 00000101-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": null,
+          "scope": {
+            "lang": "all"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 0,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-behavioral",
+          "id": "00000201-0000-4000-8000-000000000000",
+          "solution": "solution for 00000201-0000-4000-8000-000000000000",
+          "domain": "TypeScript",
+          "projectSlug": "golden-app",
+          "scope": {
+            "lang": "typescript",
+            "project_slug": "golden-app"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": "2026-08-29T12:00:00.000Z",
+          "hitCount": 5,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-behavioral",
+          "id": "00000206-0000-4000-8000-000000000000",
+          "solution": "solution for 00000206-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": "golden-app",
+          "scope": {
+            "lang": "typescript"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 2,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-selfqa",
+          "id": "00000302-0000-4000-8000-000000000000",
+          "solution": "solution for 00000302-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": "golden-app",
+          "scope": {
+            "lang": "typescript",
+            "project_slug": "golden-app"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 1,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-selfqa",
+          "id": "00000301-0000-4000-8000-000000000000",
+          "solution": "solution for 00000301-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": null,
+          "scope": {
+            "lang": "typescript"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 0,
+          "ignoreCount": 0,
+          "superseded": false
+        }
+      ],
+      "route": null
+    },
+    "recordSurface": [
+      [
+        "experience-principles",
+        "00000101-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-principles",
+        "00000103-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-principles",
+        "00000104-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000201-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000207-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000206-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000208-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000204-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000203-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000302-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000301-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000304-0000-4000-8000-000000000000"
+      ]
+    ],
+    "incrementIgnoreCount": [],
+    "brainFilterCalls": 1
+  },
+  "posttool-batch": {
+    "result": {
+      "suggestions": "⚠️ [Experience - High Confidence (0.71)]: solution for 00000101-0000-4000-8000-000000000000\n   When: trigger for 00000101-0000-4000-8000-000000000000\n   [id:00000101 col:experience-principles]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000101 experience-principles [reason]\n---\n⚠️ [Experience - High Confidence (0.76)]: solution for 00000201-0000-4000-8000-000000000000\n   When: trigger for 00000201-0000-4000-8000-000000000000\n   Why: Handlers crashed on undefined bodies.\n   Fires when: tools: Edit\n   [id:00000201 col:experience-behavioral]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000201 experience-behavioral [reason]\n---\n💡 [Suggestion (0.58)]: solution for 00000302-0000-4000-8000-000000000000\n   When: trigger for 00000302-0000-4000-8000-000000000000\n   [id:00000302 col:experience-selfqa]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000302 experience-selfqa [reason]\n---\n💡 [Probationary Suggestion (0.22)]: solution for 00000301-0000-4000-8000-000000000000\n   When: trigger for 00000301-0000-4000-8000-000000000000\n   [id:00000301 col:experience-selfqa]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000301 experience-selfqa [reason]\n───\nFeedback reasons: wrong_repo | wrong_language | wrong_task | stale_rule — or verdict:\"IGNORED\" if you chose to skip.",
+      "surfacedIds": [
+        {
+          "collection": "experience-principles",
+          "id": "00000101-0000-4000-8000-000000000000",
+          "solution": "solution for 00000101-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": null,
+          "scope": {
+            "lang": "all"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 0,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-behavioral",
+          "id": "00000201-0000-4000-8000-000000000000",
+          "solution": "solution for 00000201-0000-4000-8000-000000000000",
+          "domain": "TypeScript",
+          "projectSlug": "golden-app",
+          "scope": {
+            "lang": "typescript",
+            "project_slug": "golden-app"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": "2026-08-29T12:00:00.000Z",
+          "hitCount": 5,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-selfqa",
+          "id": "00000302-0000-4000-8000-000000000000",
+          "solution": "solution for 00000302-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": "golden-app",
+          "scope": {
+            "lang": "typescript",
+            "project_slug": "golden-app"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 1,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-selfqa",
+          "id": "00000301-0000-4000-8000-000000000000",
+          "solution": "solution for 00000301-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": null,
+          "scope": {
+            "lang": "typescript"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 0,
+          "ignoreCount": 0,
+          "superseded": false
+        }
+      ],
+      "route": null
+    },
+    "recordSurface": [
+      [
+        "experience-principles",
+        "00000101-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-principles",
+        "00000103-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-principles",
+        "00000104-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000201-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000207-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000206-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000204-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000208-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000203-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000302-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000301-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000304-0000-4000-8000-000000000000"
+      ]
+    ],
+    "incrementIgnoreCount": [],
+    "brainFilterCalls": 1
+  },
+  "edit-no-session": {
+    "result": {
+      "suggestions": "⚠️ [Experience - High Confidence (0.71)]: solution for 00000101-0000-4000-8000-000000000000\n   When: trigger for 00000101-0000-4000-8000-000000000000\n   [id:00000101 col:experience-principles]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000101 experience-principles [reason]\n---\n⚠️ [Experience - High Confidence (0.93)]: solution for 00000201-0000-4000-8000-000000000000\n   When: trigger for 00000201-0000-4000-8000-000000000000\n   Why: Handlers crashed on undefined bodies.\n   Fires when: tools: Edit\n   [id:00000201 col:experience-behavioral]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000201 experience-behavioral [reason]\n---\n💡 [Suggestion (0.58)]: solution for 00000302-0000-4000-8000-000000000000\n   When: trigger for 00000302-0000-4000-8000-000000000000\n   [id:00000302 col:experience-selfqa]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000302 experience-selfqa [reason]\n---\n💡 [Probationary Suggestion (0.22)]: solution for 00000301-0000-4000-8000-000000000000\n   When: trigger for 00000301-0000-4000-8000-000000000000\n   [id:00000301 col:experience-selfqa]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000301 experience-selfqa [reason]\n───\nFeedback reasons: wrong_repo | wrong_language | wrong_task | stale_rule — or verdict:\"IGNORED\" if you chose to skip.",
+      "surfacedIds": [
+        {
+          "collection": "experience-principles",
+          "id": "00000101-0000-4000-8000-000000000000",
+          "solution": "solution for 00000101-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": null,
+          "scope": {
+            "lang": "all"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 0,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-behavioral",
+          "id": "00000201-0000-4000-8000-000000000000",
+          "solution": "solution for 00000201-0000-4000-8000-000000000000",
+          "domain": "TypeScript",
+          "projectSlug": "golden-app",
+          "scope": {
+            "lang": "typescript",
+            "project_slug": "golden-app"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": "2026-08-29T12:00:00.000Z",
+          "hitCount": 5,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-selfqa",
+          "id": "00000302-0000-4000-8000-000000000000",
+          "solution": "solution for 00000302-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": "golden-app",
+          "scope": {
+            "lang": "typescript",
+            "project_slug": "golden-app"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 1,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-selfqa",
+          "id": "00000301-0000-4000-8000-000000000000",
+          "solution": "solution for 00000301-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": null,
+          "scope": {
+            "lang": "typescript"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 0,
+          "ignoreCount": 0,
+          "superseded": false
+        }
+      ],
+      "route": null
+    },
+    "recordSurface": [
+      [
+        "experience-principles",
+        "00000101-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-principles",
+        "00000103-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-principles",
+        "00000104-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000201-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000207-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000206-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000204-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000208-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000203-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000302-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000301-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000304-0000-4000-8000-000000000000"
+      ]
+    ],
+    "incrementIgnoreCount": [],
+    "brainFilterCalls": 1
+  },
+  "recall": {
+    "result": {
+      "suggestions": "⚠️ [Experience - High Confidence (0.83)]: solution for 00000202-0000-4000-8000-000000000000\n   When: trigger for 00000202-0000-4000-8000-000000000000\n   [id:00000202 col:experience-behavioral]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000202 experience-behavioral [reason]\n---\n⚠️ [Experience - High Confidence (0.82)]: solution for 00000101-0000-4000-8000-000000000000\n   When: trigger for 00000101-0000-4000-8000-000000000000\n   [id:00000101 col:experience-principles]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000101 experience-principles [reason]\n---\n⚠️ [Experience - High Confidence (0.80)]: solution for 00000303-0000-4000-8000-000000000000\n   When: trigger for 00000303-0000-4000-8000-000000000000\n   [id:00000303 col:experience-selfqa]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000303 experience-selfqa [reason]\n---\n⚠️ [Experience - High Confidence (0.78)]: solution for 00000201-0000-4000-8000-000000000000\n   When: trigger for 00000201-0000-4000-8000-000000000000\n   Why: Handlers crashed on undefined bodies.\n   Fires when: tools: Edit\n   [id:00000201 col:experience-behavioral]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000201 experience-behavioral [reason]\n---\n⚠️ [Experience - High Confidence (0.74)]: BRAIN-DROP solution for the brain filter stub\n   When: trigger for 00000207-0000-4000-8000-000000000000\n   [id:00000207 col:experience-behavioral]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000207 experience-behavioral [reason]\n---\n⚠️ [Experience - High Confidence (0.71)]: solution for 00000208-0000-4000-8000-000000000000\n   When: trigger for 00000208-0000-4000-8000-000000000000\n   [id:00000208 col:experience-behavioral]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000208 experience-behavioral [reason]\n---\n💡 [Probationary Suggestion (0.70)]: solution for 00000301-0000-4000-8000-000000000000\n   When: trigger for 00000301-0000-4000-8000-000000000000\n   [id:00000301 col:experience-selfqa]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000301 experience-selfqa [reason]\n---\n⚠️ [Experience - High Confidence (0.66)]: solution for 00000302-0000-4000-8000-000000000000\n   When: trigger for 00000302-0000-4000-8000-000000000000\n   [id:00000302 col:experience-selfqa]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000302 experience-selfqa [reason]\n---\n⚠️ [Experience - High Confidence (0.64)]: solution for 00000304-0000-4000-8000-000000000000\n   When: trigger for 00000304-0000-4000-8000-000000000000\n   [id:00000304 col:experience-selfqa]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000304 experience-selfqa [reason]\n---\n⚠️ [Experience - High Confidence (0.61)]: solution for 00000104-0000-4000-8000-000000000000\n   When: trigger for 00000104-0000-4000-8000-000000000000\n   [id:00000104 col:experience-principles]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000104 experience-principles [reason]\n---\n💡 [Suggestion (0.35)]: solution for 00000206-0000-4000-8000-000000000000\n   When: trigger for 00000206-0000-4000-8000-000000000000\n   [id:00000206 col:experience-behavioral]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000206 experience-behavioral [reason]\n---\n💡 [Suggestion (0.36)]: solution for 00000401-0000-4000-8000-000000000000\n   When: trigger for 00000401-0000-4000-8000-000000000000\n   [id:00000401 col:experience-selfqa]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000401 experience-selfqa [reason]\n───\nFeedback reasons: wrong_repo | wrong_language | wrong_task | stale_rule — or verdict:\"IGNORED\" if you chose to skip.",
+      "surfacedIds": [
+        {
+          "collection": "experience-principles",
+          "id": "00000101-0000-4000-8000-000000000000",
+          "solution": "solution for 00000101-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": null,
+          "scope": {
+            "lang": "all"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 0,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-principles",
+          "id": "00000104-0000-4000-8000-000000000000",
+          "solution": "solution for 00000104-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": null,
+          "scope": null,
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": "2026-08-30T12:00:00.000Z",
+          "hitCount": 3,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-behavioral",
+          "id": "00000201-0000-4000-8000-000000000000",
+          "solution": "solution for 00000201-0000-4000-8000-000000000000",
+          "domain": "TypeScript",
+          "projectSlug": "golden-app",
+          "scope": {
+            "lang": "typescript",
+            "project_slug": "golden-app"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": "2026-08-29T12:00:00.000Z",
+          "hitCount": 5,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-behavioral",
+          "id": "00000202-0000-4000-8000-000000000000",
+          "solution": "solution for 00000202-0000-4000-8000-000000000000",
+          "domain": "C#",
+          "projectSlug": null,
+          "scope": {
+            "lang": "c#"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 0,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-behavioral",
+          "id": "00000206-0000-4000-8000-000000000000",
+          "solution": "solution for 00000206-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": "golden-app",
+          "scope": {
+            "lang": "typescript"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 2,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-behavioral",
+          "id": "00000207-0000-4000-8000-000000000000",
+          "solution": "BRAIN-DROP solution for the brain filter stub",
+          "domain": null,
+          "projectSlug": "golden-app",
+          "scope": {
+            "lang": "typescript",
+            "project_slug": "golden-app"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": "2026-07-18T12:00:00.000Z",
+          "hitCount": 2,
+          "ignoreCount": 1,
+          "superseded": false
+        },
+        {
+          "collection": "experience-behavioral",
+          "id": "00000208-0000-4000-8000-000000000000",
+          "solution": "solution for 00000208-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": null,
+          "scope": {
+            "lang": "typescript"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 0,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-selfqa",
+          "id": "00000301-0000-4000-8000-000000000000",
+          "solution": "solution for 00000301-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": null,
+          "scope": {
+            "lang": "typescript"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 0,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-selfqa",
+          "id": "00000302-0000-4000-8000-000000000000",
+          "solution": "solution for 00000302-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": "golden-app",
+          "scope": {
+            "lang": "typescript",
+            "project_slug": "golden-app"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 1,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-selfqa",
+          "id": "00000303-0000-4000-8000-000000000000",
+          "solution": "solution for 00000303-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": "other-app",
+          "scope": {
+            "lang": "typescript",
+            "project_slug": "other-app"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 0,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-selfqa",
+          "id": "00000304-0000-4000-8000-000000000000",
+          "solution": "solution for 00000304-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": null,
+          "scope": {
+            "lang": "typescript"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 0,
+          "ignoreCount": 2,
+          "superseded": false
+        }
+      ],
+      "route": null
+    },
+    "recordSurface": [
+      [
+        "experience-principles",
+        "00000101-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-principles",
+        "00000103-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-principles",
+        "00000104-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000201-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000202-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000203-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000204-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000206-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000207-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000208-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000301-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000302-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000303-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000304-0000-4000-8000-000000000000"
+      ]
+    ],
+    "incrementIgnoreCount": [],
+    "brainFilterCalls": 0
+  },
+  "fast": {
+    "result": {
+      "suggestions": "⚠️ [Experience - High Confidence (0.71)]: solution for 00000101-0000-4000-8000-000000000000\n   When: trigger for 00000101-0000-4000-8000-000000000000\n   [id:00000101 col:experience-principles]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000101 experience-principles [reason]\n---\n⚠️ [Experience - High Confidence (0.93)]: solution for 00000201-0000-4000-8000-000000000000\n   When: trigger for 00000201-0000-4000-8000-000000000000\n   Why: Handlers crashed on undefined bodies.\n   Fires when: tools: Edit\n   [id:00000201 col:experience-behavioral]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000201 experience-behavioral [reason]\n---\n⚠️ [Experience - High Confidence (0.62)]: BRAIN-DROP solution for the brain filter stub\n   When: trigger for 00000207-0000-4000-8000-000000000000\n   [id:00000207 col:experience-behavioral]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000207 experience-behavioral [reason]\n---\n💡 [Suggestion (0.58)]: solution for 00000302-0000-4000-8000-000000000000\n   When: trigger for 00000302-0000-4000-8000-000000000000\n   [id:00000302 col:experience-selfqa]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000302 experience-selfqa [reason]\n---\n💡 [Probationary Suggestion (0.22)]: solution for 00000301-0000-4000-8000-000000000000\n   When: trigger for 00000301-0000-4000-8000-000000000000\n   [id:00000301 col:experience-selfqa]\n   ↩ feedback: node ~/.experience/exp-feedback.js followed|ignored|noise 00000301 experience-selfqa [reason]\n───\nFeedback reasons: wrong_repo | wrong_language | wrong_task | stale_rule — or verdict:\"IGNORED\" if you chose to skip.",
+      "surfacedIds": [
+        {
+          "collection": "experience-principles",
+          "id": "00000101-0000-4000-8000-000000000000",
+          "solution": "solution for 00000101-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": null,
+          "scope": {
+            "lang": "all"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 0,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-behavioral",
+          "id": "00000201-0000-4000-8000-000000000000",
+          "solution": "solution for 00000201-0000-4000-8000-000000000000",
+          "domain": "TypeScript",
+          "projectSlug": "golden-app",
+          "scope": {
+            "lang": "typescript",
+            "project_slug": "golden-app"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": "2026-08-29T12:00:00.000Z",
+          "hitCount": 5,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-behavioral",
+          "id": "00000207-0000-4000-8000-000000000000",
+          "solution": "BRAIN-DROP solution for the brain filter stub",
+          "domain": null,
+          "projectSlug": "golden-app",
+          "scope": {
+            "lang": "typescript",
+            "project_slug": "golden-app"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": "2026-07-18T12:00:00.000Z",
+          "hitCount": 2,
+          "ignoreCount": 1,
+          "superseded": false
+        },
+        {
+          "collection": "experience-selfqa",
+          "id": "00000302-0000-4000-8000-000000000000",
+          "solution": "solution for 00000302-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": "golden-app",
+          "scope": {
+            "lang": "typescript",
+            "project_slug": "golden-app"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 1,
+          "ignoreCount": 0,
+          "superseded": false
+        },
+        {
+          "collection": "experience-selfqa",
+          "id": "00000301-0000-4000-8000-000000000000",
+          "solution": "solution for 00000301-0000-4000-8000-000000000000",
+          "domain": null,
+          "projectSlug": null,
+          "scope": {
+            "lang": "typescript"
+          },
+          "createdAt": "2026-07-23T12:00:00.000Z",
+          "lastHitAt": null,
+          "hitCount": 0,
+          "ignoreCount": 0,
+          "superseded": false
+        }
+      ],
+      "route": null
+    },
+    "recordSurface": [
+      [
+        "experience-principles",
+        "00000101-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-principles",
+        "00000103-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-principles",
+        "00000104-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000201-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000207-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000206-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000204-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000208-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-behavioral",
+        "00000203-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000302-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000301-0000-4000-8000-000000000000"
+      ],
+      [
+        "experience-selfqa",
+        "00000304-0000-4000-8000-000000000000"
+      ]
+    ],
+    "incrementIgnoreCount": [],
+    "brainFilterCalls": 0
+  },
+  "read-only": {
+    "result": {
+      "suggestions": null,
+      "surfacedIds": []
+    },
+    "recordSurface": [],
+    "incrementIgnoreCount": [],
+    "brainFilterCalls": 0
+  }
+}
