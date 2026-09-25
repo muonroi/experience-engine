@@ -8,6 +8,7 @@ const logger = require('../../.experience/src/logger');
 const { error, json, readBody, slog } = require('../http');
 const { QDRANT_BASE, RUNTIME_JUDGE_WORKER_PATH, TMP_DIR, deriveCallerMeta, loadExperienceCore, qdrantHeaders } = require('../config');
 const { KNOWN_COLLECTIONS } = require('./knowledge');
+const toolOutcome = require('../../.experience/src/tool-outcome');
 
 async function handleIntercept(req, res) {
   const body = await readBody(req);
@@ -142,6 +143,24 @@ function classifyPostToolOutcome(toolName, toolOutput) {
   return hasError ? 'error' : 'success';
 }
 
+/**
+ * Strict experiment outcome fields for one posttool event (src/tool-outcome.js).
+ * `runtime` is the client's experiment label when it sent one; otherwise the
+ * legacy sourceRuntime, which is all an older client provides.
+ */
+function buildPostToolOutcome(body, toolName, toolInput, toolOutput) {
+  const hookEvent = typeof body.hookEvent === 'string' && body.hookEvent ? body.hookEvent : 'PostToolUse';
+  const runtime = (typeof body.runtime === 'string' && body.runtime) || body.sourceRuntime || null;
+  return {
+    hookEvent,
+    toolUseId: typeof body.toolUseId === 'string' && body.toolUseId ? body.toolUseId : null,
+    inputHash: toolOutcome.inputHash(toolName, toolInput),
+    failure: toolOutcome.classifyToolFailure({ hookEvent, toolName, toolResponse: toolOutput, runtime }),
+    clientTs: typeof body.clientTs === 'string' ? body.clientTs : null,
+    runtime,
+  };
+}
+
 async function handlePostTool(req, res) {
   const body = await readBody(req);
   const v = validateBody(body, { toolName: { type: 'string', required: true } });
@@ -162,23 +181,37 @@ async function handlePostTool(req, res) {
     framework: typeof body.framework === 'string' ? body.framework : null,
     project_slug: typeof body.project_slug === 'string' ? body.project_slug : null,
   };
+  const outcome = buildPostToolOutcome(body, toolName, toolInput, toolOutput);
+  // Claude Code's PostToolUseFailure: record the outcome and stop. Before the
+  // failure hook was registered this event never reached the server, so running
+  // reconcile or the judge on it would change hint evidence under default config.
+  const isFailureEvent = toolOutcome.FAILURE_HOOK_EVENTS.has(outcome.hookEvent);
 
   let reconcile = { touched: [], pending: [], implicitUnused: [], expired: [] };
-  if (typeof reconcilePendingHints === 'function') {
+  if (!isFailureEvent && typeof reconcilePendingHints === 'function') {
     reconcile = await reconcilePendingHints(surfacedIds, toolName, toolInput, meta);
   }
 
-  const toolOutcome = classifyPostToolOutcome(toolName, toolOutput);
+  const legacyOutcome = classifyPostToolOutcome(toolName, toolOutput);
   if (typeof activityLog === 'function') {
     activityLog({
       op: 'posttool',
       tool: toolName,
       surfacedCount: surfacedIds.length,
-      toolOutcome,
+      toolOutcome: legacyOutcome,
+      failure: outcome.failure,
+      inputHash: outcome.inputHash,
+      toolUseId: outcome.toolUseId,
+      hookEvent: outcome.hookEvent,
+      runtime: outcome.runtime,
+      clientTs: outcome.clientTs,
       sourceKind: meta.sourceKind,
       sourceRuntime: meta.sourceRuntime,
       sourceSession: meta.sourceSession,
     });
+  }
+  if (isFailureEvent) {
+    return json(res, { ok: true, reconcile, judgeQueued: false, toolOutcome: legacyOutcome });
   }
 
   if (surfacedIds.length > 0) {
@@ -191,7 +224,7 @@ async function handlePostTool(req, res) {
         toolName,
         toolInputObj: toolInput || {},
         toolInput: JSON.stringify(toolInput || {}).slice(0, 300),
-        toolOutcome,
+        toolOutcome: legacyOutcome,
       }));
       const worker = childProcess.spawn(process.execPath, [RUNTIME_JUDGE_WORKER_PATH, queueFile], {
         detached: true,
@@ -210,7 +243,7 @@ async function handlePostTool(req, res) {
     }
   }
 
-  json(res, { ok: true, reconcile, judgeQueued: surfacedIds.length > 0, toolOutcome });
+  json(res, { ok: true, reconcile, judgeQueued: surfacedIds.length > 0, toolOutcome: legacyOutcome });
 }
 
 async function handlePromptStale(req, res) {
@@ -338,6 +371,7 @@ module.exports = {
   handleIntercept,
   handlePostToolBatch,
   classifyPostToolOutcome,
+  buildPostToolOutcome,
   handlePostTool,
   handlePromptStale,
   handleExtract,

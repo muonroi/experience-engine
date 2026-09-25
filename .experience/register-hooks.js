@@ -87,6 +87,16 @@ const AGENTS = [
       if (!cfg.hooks.PostToolUse.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor-post')))) {
         cfg.hooks.PostToolUse.push({ matcher: 'Edit|Write|Bash', hooks: [{ type:'command', command:`node "${interceptorPost}"`, timeout:5 }] });
       }
+      // PostToolUse fires only when a tool SUCCEEDS; failures arrive on the separate
+      // PostToolUseFailure event, which nothing listened to — so the engine never saw
+      // a failed Claude Code tool call. Same script, same matcher; --event=failure
+      // tells interceptor-post.js it is the failure event (it also reads
+      // hook_event_name). It only records the outcome: no reconcile, no judge, so the
+      // verdict pipeline is unchanged. No other runtime has an equivalent event.
+      cfg.hooks.PostToolUseFailure = cfg.hooks.PostToolUseFailure || [];
+      if (!cfg.hooks.PostToolUseFailure.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor-post')))) {
+        cfg.hooks.PostToolUseFailure.push({ matcher: 'Edit|Write|Bash', hooks: [{ type:'command', command:`node "${interceptorPost}" --event=failure`, timeout:5 }] });
+      }
       // UserPromptSubmit hook injects long-form guidance (multi-paragraph
       // recipe text) at message start. PreToolUse still emits per-tool
       // hints via additionalContext (supported since Claude CLI v2.1.9 —
