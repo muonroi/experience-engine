@@ -60,7 +60,7 @@ function outcomeToVerdict(outcome) {
  * @param {object} [payload.evidence] free-form evidence payload (logged only)
  * @param {object} deps
  * @param {Function} deps.recordFeedback — async (collection, pointId, verdict, reason, opts?) => bool
- * @param {Function} [deps.activityLog]   — sync logger
+ * @param {Function} [deps.activityLog]   - sync logger
  *
  * @returns {Promise<{ok: boolean, applied: number, skipped: number, cached?: boolean, error?: string}>}
  */

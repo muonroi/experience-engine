@@ -81,6 +81,8 @@
     "test:ci": "npm test && npm run test:unit && npm run test:tools",
     "test:coverage": "npx c8 --lines 60 --functions 50 --branches 40 --reporter=text --reporter=html --report-dir=coverage node --test --test-concurrency=1 tests/*.test.js tests/runtime/*.test.js tests/tools/*.test.js",
     "replay:holdout": "node tools/exp-holdout-harness.js --fixture fixtures/holdout --json",
+    "typecheck": "npm i --no-save --no-package-lock --no-audit --no-fund typescript@5 @types/node@22 && tsc -p jsconfig.json",
+    "check:syntax": "node scripts/check-syntax.js",
     "lint": "npx eslint server.js api/ .experience/experience-core.js .experience/src/",
     "format": "npx prettier --write server.js api/ .experience/experience-core.js .experience/src/",
     "format:check": "npx prettier --check server.js api/ .experience/experience-core.js .experience/src/",

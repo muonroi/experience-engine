@@ -24,6 +24,12 @@ jobs:
       - name: CI test suite
         run: npm run test:ci
 
+      - name: Syntax check (every tracked .js file)
+        run: npm run check:syntax
+
+      - name: Type check
+        run: npm run typecheck
+
       - name: Lint check
         run: npx eslint server.js api/ .experience/experience-core.js .experience/src/ --no-error-on-unmatched-pattern
 

@@ -109,6 +109,10 @@ function syncIDEBuffers(buffers) {
   return saveIDEBuffers(current);
 }
 
+/**
+ * @param {string} filePath
+ * @param {BufferEncoding} [encoding]
+ */
 function readBufferOrDisk(filePath, encoding = 'utf8') {
   try {
     const buffers = getIDEBuffers();

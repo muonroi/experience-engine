@@ -31,6 +31,9 @@ function _resetProjectsCache() {
   _projectsCache = null;
 }
 
+/**
+ * @param {{scroll?: Function, limit?: number, collections?: string[]}} [opts]
+ */
 async function collectProjectSlugs({ scroll, limit = PROJECTS_SCROLL_LIMIT, collections = PROJECT_SLUG_COLLECTIONS } = {}) {
   const scrollFn = scroll || require(path.join(RUNTIME_DIR, 'src', 'qdrant.js')).scrollCollection;
   const counts = new Map();

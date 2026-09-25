@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": false,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "server.js",
+    "api/**/*.js",
+    "lib/**/*.js",
+    ".experience/src/**/*.js",
+    "mcp/**/*.js",
+    "bin/**/*.js"
+  ]
+}

@@ -23,7 +23,7 @@
 /**
  * @param {object} schema  { type:'object', properties:{...}, required:[...] }
  * @param {unknown} args
- * @returns {{ok:true, value:object} | {ok:false, error:string}}
+ * @returns {{ok: boolean, value?: object, error?: string}} value when ok, error otherwise
  */
 function validate(schema, args) {
   if (args === null || args === undefined) args = {};

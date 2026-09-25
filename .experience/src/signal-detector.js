@@ -46,7 +46,7 @@ function parseTranscriptTurns(transcript) {
     const m = line.match(LABEL);
     if (m) {
       if (cur) turns.push(cur);
-      const role = m[1] === 'User' ? 'user' : m[1] === 'Assistant' ? 'assistant' : 'tool';
+      const role = /** @type {'user'|'assistant'|'tool'} */ (m[1] === 'User' ? 'user' : m[1] === 'Assistant' ? 'assistant' : 'tool');
       cur = { role, text: m[2] || '' };
     } else if (cur) {
       cur.text += (cur.text ? '\n' : '') + line;
@@ -120,7 +120,7 @@ function classifyResponse(text) {
  * @returns {{signals:Array, stats:object}}
  * Note: timestamps are read from the events themselves; no wall-clock "now" is needed.
  */
-function detectSignals({ transcript = '', activityEvents = [] } = {}) {
+function detectSignals({ transcript = '', activityEvents = [] } = /** @type {any} */ ({})) {
   const signals = [];
   const stats = { userTurns: 0, classifiedQuestions: 0, responseVotes: 0, activityRows: activityEvents.length };
 

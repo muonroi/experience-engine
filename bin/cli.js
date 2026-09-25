@@ -8,6 +8,7 @@ function packageRoot() {
   return path.resolve(__dirname, '..');
 }
 
+/** @param {NodeJS.WritableStream} [out] */
 function usage(out = process.stdout) {
   out.write(`Experience Engine CLI
 

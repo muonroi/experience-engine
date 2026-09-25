@@ -765,7 +765,7 @@ function detectRepeatedErrors(events, lines) {
         } else {
           if (currentRun && currentRun.events.length >= 2) errorRuns.push(currentRun);
           currentSig = sig;
-          currentRun = { signature: sig, events: [ev], startIdx: ev.lineIdx, endIdx: ev.lineIdx };
+          currentRun = { signature: sig, events: [ev], startIdx: ev.lineIdx, endIdx: ev.lineIdx, resolution: null };
         }
       } else {
         if (currentRun && currentRun.events.length >= 2) errorRuns.push(currentRun);
