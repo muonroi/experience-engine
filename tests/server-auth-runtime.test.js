@@ -62,7 +62,9 @@ async function startServer(config) {
   });
 
   let stderr = '';
+  let stdout = '';
   child.stderr.on('data', chunk => { stderr += chunk.toString('utf8'); });
+  child.stdout.on('data', chunk => { stdout += chunk.toString('utf8'); });
 
   const baseUrl = `http://127.0.0.1:${port}`;
   try {
@@ -76,6 +78,7 @@ async function startServer(config) {
     baseUrl,
     child,
     homeDir,
+    get stdout() { return stdout; },
     async stop() {
       child.kill('SIGTERM');
       await new Promise(resolve => child.once('exit', resolve));
@@ -138,6 +141,37 @@ test('protected GET endpoints require auth when token is configured', async () =
     assert.equal(userAuthorized.status, 200);
   } finally {
     await runtime.stop();
+  }
+});
+
+test('near-miss bearer tokens are rejected', async () => {
+  const token = 'test-server-token';
+  const runtime = await startServer({ server: { authToken: token } });
+
+  try {
+    for (const hdr of [`Bearer ${token}x`, `Bearer ${token.slice(0, -1)}`, token, `bearer ${token}`, '']) {
+      const res = await fetch(`${runtime.baseUrl}/api/user`, { headers: { Authorization: hdr } });
+      assert.equal(res.status, 401, `header ${JSON.stringify(hdr)} must not authenticate`);
+    }
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test('warns when unauthenticated on all interfaces, not when bound to loopback', async () => {
+  const open = await startServer({});
+  try {
+    assert.match(open.stdout, /server_unauthenticated/);
+  } finally {
+    await open.stop();
+  }
+
+  const loopback = await startServer({ server: { host: '127.0.0.1' } });
+  try {
+    assert.match(loopback.stdout, /"host":"127\.0\.0\.1"/);
+    assert.doesNotMatch(loopback.stdout, /server_unauthenticated/);
+  } finally {
+    await loopback.stop();
   }
 });
 

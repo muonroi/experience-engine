@@ -99,6 +99,12 @@ curl http://localhost:8082/health
 # {"status":"ok","qdrant":{"status":"ok"},"fileStore":{"status":"ok"}}
 ```
 
+Running `node server.js` directly (outside Docker) listens on all interfaces. Set
+`server.authToken` in `~/.experience/config.json` before exposing it, or bind it to
+loopback with `server.host: "127.0.0.1"` (env `EXP_SERVER_HOST`) when it sits behind a
+reverse proxy. The server logs `server_unauthenticated` at startup if it is reachable
+without a token.
+
 Then run `npx @muonroi/experience-engine init` (or `bash .experience/setup.sh` for the full local-install wizard) to wire your agent to it.
 
 ## Documentation

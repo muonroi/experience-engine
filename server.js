@@ -32,6 +32,7 @@
 
 const http = require('node:http');
 const childProcess = require('node:child_process');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -59,6 +60,9 @@ const _cfg = (() => {
 })();
 
 const PORT = _cfg.server?.port || parseInt(process.env.EXP_SERVER_PORT, 10) || 8082;
+// Unset keeps Node's default (all interfaces) so existing deployments that
+// thin clients reach directly keep working; set 127.0.0.1 behind a proxy.
+const HOST = _cfg.server?.host || process.env.EXP_SERVER_HOST || undefined;
 const QDRANT_BASE = runtimeConfig.getQdrantBase();
 const QDRANT_API_KEY = runtimeConfig.getQdrantApiKey();
 const AUTH_TOKEN = _cfg.server?.authToken || _cfg.serverAuthToken || null;
@@ -110,12 +114,21 @@ function _clientIp(req) {
   return peer;
 }
 
+// Constant-time "Bearer <token>" check. Both sides are hashed first so the
+// comparison is length-independent and timingSafeEqual never throws.
+function _bearerMatches(hdr, token) {
+  if (!token) return false;
+  const a = crypto.createHash('sha256').update(String(hdr)).digest();
+  const b = crypto.createHash('sha256').update(`Bearer ${token}`).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
 // Mirrors requireAuth's accepted tokens. Kept as a plain equality check (not a
 // call into requireAuth) because this must classify, never respond.
 function _rateLimitIdentity(req) {
   const hdr = req.headers?.['authorization'] || '';
-  if (AUTH_TOKEN && hdr === `Bearer ${AUTH_TOKEN}`) return { key: 'rw', max: RATE_LIMIT_AUTHED };
-  if (READ_AUTH_TOKEN && hdr === `Bearer ${READ_AUTH_TOKEN}`) return { key: 'ro', max: RATE_LIMIT_AUTHED };
+  if (_bearerMatches(hdr, AUTH_TOKEN)) return { key: 'rw', max: RATE_LIMIT_AUTHED };
+  if (_bearerMatches(hdr, READ_AUTH_TOKEN)) return { key: 'ro', max: RATE_LIMIT_AUTHED };
   // No auth configured at all (local full-brain install): every caller already has
   // full access, so an anon cap would only throttle the owner.
   if (!AUTH_TOKEN) return { key: `open:${_clientIp(req)}`, max: RATE_LIMIT_AUTHED };
@@ -170,7 +183,7 @@ function requireAuth(req, res, options = {}) {
   if (allowReadToken && READ_AUTH_TOKEN) acceptedTokens.push(READ_AUTH_TOKEN);
   if (acceptedTokens.length === 0) return true; // no auth configured — allow all
   const hdr = req.headers['authorization'] || '';
-  if (acceptedTokens.some(token => hdr === `Bearer ${token}`)) return true;
+  if (acceptedTokens.some(token => _bearerMatches(hdr, token))) return true;
   res.writeHead(401, { 'Content-Type': 'application/json', ...CORS });
   res.end(JSON.stringify({ error: 'Unauthorized' }));
   return false;
@@ -1907,8 +1920,13 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 
 // Only start when run directly (not when required for testing)
 if (require.main === module) {
-  server.listen(PORT, () => {
-    slog('info', 'server_started', { port: PORT, health: `http://localhost:${PORT}/health` });
+  server.listen(PORT, HOST, () => {
+    slog('info', 'server_started', { port: PORT, host: HOST || '*', health: `http://localhost:${PORT}/health` });
+    if (!AUTH_TOKEN && HOST !== 'localhost' && !_isLoopback(HOST)) {
+      slog('warn', 'server_unauthenticated', {
+        hint: 'No server.authToken set and the server is not bound to loopback: every API, including /api/brain, is open to anyone who can reach this port. Set server.authToken or server.host=127.0.0.1.',
+      });
+    }
     // Phase 2: ensure bb-behavioral and bb-recipes collections exist in Qdrant.
     ensureCollections().catch((err) => slog('error', 'ensure_collections_failed', { error: String(err) }));
   });
