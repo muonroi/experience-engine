@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+### Breaking
+- `node server.js` without `server.authToken` now listens on `127.0.0.1` only. A
+  token-less server that remote clients reach directly must set `server.host`
+  (env `EXP_SERVER_HOST`) — or, better, an auth token. Servers with a token are
+  unaffected.
+- The Docker image runs the server as the unprivileged `node` user with its data at
+  `/home/node/.experience`. `docker compose` users need no action (the volume is
+  remounted and its ownership fixed on first start); manual mounts must target the
+  new path.
+- Node.js 22+ is required (`engines.node >=22`); Node 20 is end-of-life.
+
+### Fixed
+- The npm package and Docker image did not ship `lib/`, so the server died with
+  `MODULE_NOT_FOUND` on start. CI now boots the packed tarball and the image.
+- Lang/framework reconciliation ignored `opts.frameworkPackages`, so a `.ts` file in a
+  hybrid TS/.NET repo could keep a .NET framework tag. The guarding test had been
+  crashing with a TypeError (`assert.notMatch`) instead of failing.
+- `.experience/tools/background-extractor.js` could not load (a `*/30` cron example
+  closed its header comment).
+- Bearer tokens are compared in constant time.
+- Python SDK: bearer-token support (`token=` or `EXPERIENCE_SERVER_TOKEN`), and its
+  extract test matches the async `/api/extract` ACK.
+
+### Changed
+- `server.js` is split into `api/` modules behind a route table (`api/routes.js`);
+  behaviour is unchanged.
+- `docs/openapi.yaml` documents all 32 routes and is tested against the route table;
+  its version follows `package.json`.
+- All tests live under `tests/` (`tests/runtime/`, `tests/tools/`); the tools tests
+  now run in CI.
+- CI adds a type check (`npm run typecheck`) and a syntax check of every JS file.
+- Tag-driven releases to npm and PyPI (`.github/workflows/release.yml`).
+- Python SDK 0.2.0: requires Python 3.10+.
+
 ## [0.8.2] - 2026-08-12
 
 ### Fixed

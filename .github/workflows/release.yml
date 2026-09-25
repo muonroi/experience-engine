@@ -1,0 +1,104 @@
+name: release
+
+# Publishing is tag-driven:
+#   v<semver>             -> npm  @muonroi/experience-engine  (version must equal package.json)
+#   python-sdk-v<semver>  -> PyPI muonroi-experience          (version must equal sdk/python/pyproject.toml)
+#
+# One-time setup (see CONTRIBUTING.md "Releasing"):
+#   npm:  add this workflow as a Trusted Publisher on npmjs.com, or set an NPM_TOKEN secret.
+#   PyPI: add this workflow (environment "pypi") as a Trusted Publisher on pypi.org.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - 'python-sdk-v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  npm:
+    if: startsWith(github.ref_name, 'v')
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: write   # GitHub release
+      id-token: write   # npm provenance / trusted publishing
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Tag matches package.json
+        run: |
+          pkg="v$(node -p "require('./package.json').version")"
+          [ "$pkg" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME != package.json $pkg"; exit 1; }
+
+      - name: Test
+        run: npm run test:ci && npm run check:syntax && npm run typecheck
+
+      - name: Publish to npm
+        run: |
+          npm install -g npm@latest
+          npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: GitHub release
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  pypi:
+    if: startsWith(github.ref_name, 'python-sdk-v')
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # PyPI trusted publishing
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Tag matches pyproject.toml
+        working-directory: sdk/python
+        run: |
+          ver="python-sdk-v$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
+          [ "$ver" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME != pyproject $ver"; exit 1; }
+          mod="python-sdk-v$(sed -n 's/^__version__ = "\(.*\)"/\1/p' muonroi_experience/__init__.py)"
+          [ "$mod" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME != __version__ $mod"; exit 1; }
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Test against a live server
+        run: |
+          mkdir -p ~/.experience/store/default
+          nohup node server.js > server.log 2>&1 &
+          for i in $(seq 1 20); do curl -s http://localhost:8082/health >/dev/null && break; sleep 1; done
+          cd sdk/python && pip install -e . && python test_client.py
+
+      - name: Build
+        working-directory: sdk/python
+        run: |
+          pip install build
+          python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: sdk/python/dist
