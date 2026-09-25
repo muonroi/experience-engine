@@ -97,7 +97,9 @@ class Client:
             project_path: Optional project path for context
 
         Returns:
-            dict with 'stored' (int) and 'success' (bool)
+            dict with 'accepted', 'async' and 'success' (bool). The server
+            acknowledges immediately and extracts in the background, so the
+            number of stored lessons is not part of the response.
         """
         body = {"transcript": transcript}
         if project_path:
