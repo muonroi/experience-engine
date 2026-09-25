@@ -83,6 +83,7 @@
     "lint": "npx eslint server.js api/ .experience/experience-core.js .experience/src/",
     "format": "npx prettier --write server.js api/ .experience/experience-core.js .experience/src/",
     "format:check": "npx prettier --check server.js api/ .experience/experience-core.js .experience/src/",
+    "version": "node scripts/sync-openapi-version.js && git add docs/openapi.yaml",
     "changelog": "node scripts/generate-changelog.js",
     "seed:catalog": "node scripts/seed-catalog.js",
     "config:encrypt": "node scripts/config-encrypt.js encrypt",

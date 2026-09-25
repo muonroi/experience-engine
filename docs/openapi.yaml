@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Experience Engine API
   description: REST API for AI agent experience learning system. Zero npm dependencies.
-  version: 0.1.1
+  version: 0.8.2
   license:
     name: MIT
     url: https://github.com/muonroi/experience-engine/blob/main/LICENSE
@@ -772,6 +772,456 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
+                type: object
+                properties:
+                  topic:
+                    type: string
+                  timeline:
+                    type: array
+                    items:
+                      type: object
+                  count:
+                    type: integer
+
+  /api/version:
+    get:
+      summary: Server build fingerprint
+      description: Git commit and commit date of the running server (EE_COMMIT overrides). Always open (no auth).
+      security: []
+      responses:
+        '200':
+          description: Version info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commit:
+                    type: string
+                  commitDate:
+                    type: [string, 'null']
+                  version:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /api/projects:
+    get:
+      summary: Project slug directory
+      description: >
+        Aggregates the flat scope_project_slug across the experience collections so
+        callers pick an existing project slug instead of guessing one. Cached for
+        5 minutes. Read token accepted.
+      responses:
+        '200':
+          description: Known project slugs with entry counts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  projects:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        slug:
+                          type: string
+                        count:
+                          type: integer
+                        collections:
+                          type: object
+                  unscoped:
+                    type: integer
+                  total:
+                    type: integer
+                  collections:
+                    type: object
+                  failed:
+                    type: array
+                    items:
+                      type: string
+                  truncated:
+                    type: boolean
+                  cached:
+                    type: boolean
+        '503':
+          description: Project directory unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/hint-stats:
+    get:
+      summary: Hint quality stats
+      description: Surfaces noisy, high-ignore and unscoped entries for noise triage (used by exp-hint-stats).
+      parameters:
+        - name: minIgnoreCount
+          in: query
+          schema:
+            type: integer
+            default: 2
+        - name: noiseRatio
+          in: query
+          schema:
+            type: number
+            default: 0.4
+        - name: topN
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - name: collections
+          in: query
+          description: Comma-separated collection names
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Per-collection noise stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  generatedAt:
+                    type: string
+                    format: date-time
+                  thresholds:
+                    type: object
+                  stats:
+                    type: object
+
+  /api/posttool-batch:
+    post:
+      summary: Batched post-tool hint
+      description: One intercept over a batch of tool calls, keyed on a representative file path.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tools]
+              properties:
+                tools:
+                  type: array
+                  items:
+                    type: object
+                representativeFilePath:
+                  type: string
+                sessionId:
+                  type: string
+                cwd:
+                  type: string
+                sourceKind:
+                  type: string
+                sourceRuntime:
+                  type: string
+      responses:
+        '200':
+          description: Hint for the batch (null when nothing surfaced)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hint:
+                    type: [string, 'null']
+                  surfacedIds:
+                    type: array
+                    items:
+                      type: object
+                  batchSize:
+                    type: integer
+        '400':
+          description: tools missing or not an array
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/ingest-point:
+    post:
+      summary: Ingest a curated point
+      description: Embeds text and upserts it directly into a known collection, bypassing extraction (backfill scripts).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, text, collection]
+              properties:
+                id:
+                  type: string
+                text:
+                  type: string
+                collection:
+                  type: string
+                payload:
                   type: object
+      responses:
+        '200':
+          description: Stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  collection:
+                    type: string
+                  success:
+                    type: boolean
+        '400':
+          description: Validation, unknown collection, embedding or upsert failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/sync-buffers:
+    post:
+      summary: Sync IDE buffers
+      description: Hands open-editor buffers to the engine for context.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [buffers]
+              properties:
+                buffers:
+                  type: object
+      responses:
+        '200':
+          description: Sync result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        '400':
+          description: buffers missing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/search:
+    post:
+      summary: Semantic search
+      description: Hybrid search over the experience collections (or a subset), without recall bookkeeping.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                limit:
+                  type: integer
+                  default: 5
+                  maximum: 20
+                collections:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Matching points
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  points:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        score:
+                          type: number
+                        text:
+                          type: string
+                        collection:
+                          type: string
+        '400':
+          description: query missing or unknown collections
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Embedding unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/import-memory:
+    post:
+      summary: Import curated memory
+      description: Stores curated MEMORY.md entries as experiences (used by `experience-engine sync`). Max 500 per call.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [experiences]
+              properties:
+                experiences:
+                  type: array
+                  maxItems: 500
+                  items:
+                    type: object
+      responses:
+        '200':
+          description: Import stats and per-entry results
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: experiences missing or too many
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/pil-context:
+    post:
+      summary: Prompt classification and retrieval
+      description: Classification plus retrieval in one call for muonroi-cli L1. Cached for 5 minutes per prompt and locale.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt:
+                  type: string
+                  maxLength: 10000
+                locale_hint:
+                  type: string
+      responses:
+        '200':
+          description: Classification and context
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: prompt missing or over 10KB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/phase-outcome:
+    post:
+      summary: Phase-grain reinforcement
+      description: Records a GSD phase outcome. Returns 404 unless ENABLE_PHASE_OUTCOME=1.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionId, phaseName, outcome]
+              properties:
+                sessionId:
+                  type: string
+                phaseName:
+                  type: string
+                outcome:
+                  type: string
+      responses:
+        '200':
+          description: Reinforcement result
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Validation failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Endpoint disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/workflow-event:
+    post:
+      summary: Record a workflow event
+      description: Stores a debate, sprint, decision or mistake event in its workflow_* collection. Returns 404 unless ENABLE_WORKFLOW_EVENT=1.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, phaseRef]
+              properties:
+                kind:
+                  type: string
+                  enum: [council-debate, debate, sprint-execution, sprint, decision, mistake]
+                phaseRef:
+                  type: string
+                text:
+                  type: string
+                id:
+                  type: string
+                sessionId:
+                  type: string
+                payload:
+                  type: object
+      responses:
+        '200':
+          description: Stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  id:
+                    type: string
+                  collection:
+                    type: string
+                  kind:
+                    type: string
+        '400':
+          description: Validation failure or unknown kind
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Endpoint disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
