@@ -252,6 +252,7 @@ async function handlePostTool(req, res) {
         toolInputObj: toolInput || {},
         toolInput: JSON.stringify(toolInput || {}).slice(0, 300),
         toolOutcome: legacyOutcome,
+        sourceSession: meta.sourceSession,
       }));
       const worker = childProcess.spawn(process.execPath, [RUNTIME_JUDGE_WORKER_PATH, queueFile], {
         detached: true,

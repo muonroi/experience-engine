@@ -214,7 +214,7 @@ async function main() {
     process.exit(0);
   }
 
-  const { surfacedIds = [], toolName = '', toolInput = '', toolInputObj = {}, toolOutcome = null } = data;
+  const { surfacedIds = [], toolName = '', toolInput = '', toolInputObj = {}, toolOutcome = null, sourceSession = null } = data;
 
   // Load core functions from experience-core.js
   let classifyViaBrain, recordJudgeFeedback, activityLog, extractProjectPath, extractProjectSlug, detectContext, assessHintUsage;
@@ -374,7 +374,9 @@ async function main() {
           toolOutcome,
         });
       }
-      await recordJudgeFeedback(collection, id, verdict, noiseReason);
+      // sourceSession: one betaEvidence outcome per (session, point) — a judge
+      // verdict must not stack on an explicit verdict for the same session.
+      await recordJudgeFeedback(collection, id, verdict, noiseReason, { sessionId: sourceSession });
     } catch {
       // Ignore — feedback failure must not crash worker
     }

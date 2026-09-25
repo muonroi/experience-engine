@@ -57,6 +57,7 @@
     "tools/exp-stats.js",
     "tools/exp-outcome-baseline.js",
     "tools/exp-engine-lift.js",
+    "tools/exp-beta-replay.js",
     "tools/qdrant-find.js",
     "tools/experience-bulk-seed.js",
     "fixtures/holdout/",

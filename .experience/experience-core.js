@@ -115,6 +115,17 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
       return { suggestions: null, surfacedIds: [], route: null, experiment: { arm: 'control' } };
     }
   }
+  // Confidence model (spec §3 B4), also resolved once: a beta ctx only when this
+  // session's passive path is decided by beta; shadow additionally runs the beta
+  // pipeline for logging. null ctx = the legacy path, byte for byte. Recall never
+  // gets a ctx (experiment is null for recall), nor do the brief, evolve or tools.
+  const model = experiment ? experiment.model : null;
+  if (model && model.assigned) {
+    _experiment.noteSessionArm({ sessionId: experiment.sessionId, experiment: model.assigned.experiment, arm: model.assigned.arm, salt: model.assigned.salt, runtime: experiment.runtime });
+  }
+  const confidenceCtx = model && model.arm === 'beta' ? _scoring.buildConfidenceCtx({ model: 'beta', sessionId: experiment.sessionId }) : null;
+  const shadowCtx = model && model.mode === 'shadow' ? _scoring.buildConfidenceCtx({ model: 'beta', sessionId: experiment.sessionId }) : null;
+  const interceptId = experiment ? require('crypto').randomUUID() : null;
 
   const query = _utils.buildQuery(toolName, toolInput);
   const filePath = toolInput?.file_path || toolInput?.path || _utils.extractProjectPath(toolInput) || '';
@@ -370,50 +381,60 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     });
   }
 
-  // Recall: preserve the RRF-fused order (hybridFuse already ranked); passive
-  // hints use the penalty-weighted effective-score sort.
-  const rankOpts = recallMode ? { preserveOrder: true } : {};
-  let r0 = _utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t0, COLLECTIONS[0].name), queryDomain, queryProjectSlug, query, rankOpts), COLLECTIONS[0].name);
-  let r1 = _utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t1, COLLECTIONS[1].name), queryDomain, queryProjectSlug, query, rankOpts), COLLECTIONS[1].name);
-  let r2 = _scoring.selectProbationaryT2Points(_utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t2, COLLECTIONS[2].name), queryDomain, queryProjectSlug, query, rankOpts), COLLECTIONS[2].name));
-
-  let promptPrecisionRemoved = 0;
-  if (_intercept.isPromptHookPrecisionGate(toolName, sourceMeta)) {
-    const g0 = _intercept.filterPromptHookPoints(r0, toolName, sourceMeta);
-    const g1 = _intercept.filterPromptHookPoints(r1, toolName, sourceMeta);
-    const g2 = _intercept.filterPromptHookPoints(r2, toolName, sourceMeta);
-    r0 = g0.kept; r1 = g1.kept; r2 = g2.kept;
-    promptPrecisionRemoved = g0.removed.length + g1.removed.length + g2.removed.length;
-  }
-
-  // Pre-surface relevance gate (PreToolUse only). Drop learned-tier candidates
-  // the post-hoc reconciler would mark wrong_repo/wrong_language/wrong_task so
-  // they never surface and never count against precision. Principles (r0) stay
-  // permissive — they are intentionally cross-cutting. See intercept.js
-  // filterByActionRelevance for the evidence trail (precision 57% drag).
-  let relevanceRemoved = 0;
-  if (_intercept.isActionKnownHook(toolName)) {
-    const relMeta = { cwd: sourceMeta.cwd || filePath || '' };
-    const a1 = _intercept.filterByActionRelevance(r1, COLLECTIONS[1].name, toolName, toolInput, relMeta);
-    const a2 = _intercept.filterByActionRelevance(r2, COLLECTIONS[2].name, toolName, toolInput, relMeta);
-    r1 = a1.kept; r2 = a2.kept;
-    relevanceRemoved = a1.removed.length + a2.removed.length;
-    if (relevanceRemoved > 0) {
-      _activity.activityLog({ op: 'relevance-gate', removed: relevanceRemoved, tool: toolName, project: filePath || null, ...sourceMeta });
-    }
-  }
-
   const suppressionContext = { queryProjectSlug, queryDomain, actionKind };
-  const s0 = _noise.filterNoiseSuppressedPoints(r0, suppressionContext);
-  const s1 = _noise.filterNoiseSuppressedPoints(r1, suppressionContext);
-  const s2 = _noise.filterNoiseSuppressedPoints(r2, suppressionContext);
-  r0 = s0.kept; r1 = s1.kept; r2 = s2.kept;
-  const noiseSuppressed = [...s0.suppressed, ...s1.suppressed, ...s2.suppressed];
-  if (noiseSuppressed.length > 0) {
-    for (const [reason, count] of Object.entries(noiseSuppressed.reduce((acc, item) => { acc[item.reason] = (acc[item.reason] || 0) + 1; return acc; }, {}))) {
-      _activity.activityLog({ op: 'noise-suppressed', reason, count, actionKind, tool: toolName, project: filePath || null, ...sourceMeta });
+
+  // rerank → probationary T2 → prompt precision gate → action relevance gate →
+  // noise suppression. A function so shadow mode can run the very same stages
+  // under the beta ctx with logStages=false: no activity rows, no side effects.
+  function rankAndGate(rankCtx, logStages) {
+    // Recall: preserve the RRF-fused order (hybridFuse already ranked); passive
+    // hints use the penalty-weighted effective-score sort.
+    const rankOpts = recallMode ? { preserveOrder: true } : (rankCtx ? { confidenceCtx: rankCtx } : {});
+    let q0 = _utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t0, COLLECTIONS[0].name), queryDomain, queryProjectSlug, query, rankOpts), COLLECTIONS[0].name);
+    let q1 = _utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t1, COLLECTIONS[1].name), queryDomain, queryProjectSlug, query, rankOpts), COLLECTIONS[1].name);
+    // Probationary T2 selection keeps the legacy confidence in v1 (spec §3 B3).
+    let q2 = _scoring.selectProbationaryT2Points(_utils.dedupePointsBySource(_scoring.rerankByQuality(applyScopeFilter(t2, COLLECTIONS[2].name), queryDomain, queryProjectSlug, query, rankOpts), COLLECTIONS[2].name));
+
+    let promptRemoved = 0;
+    if (_intercept.isPromptHookPrecisionGate(toolName, sourceMeta)) {
+      const g0 = _intercept.filterPromptHookPoints(q0, toolName, sourceMeta);
+      const g1 = _intercept.filterPromptHookPoints(q1, toolName, sourceMeta);
+      const g2 = _intercept.filterPromptHookPoints(q2, toolName, sourceMeta);
+      q0 = g0.kept; q1 = g1.kept; q2 = g2.kept;
+      promptRemoved = g0.removed.length + g1.removed.length + g2.removed.length;
     }
+
+    // Pre-surface relevance gate (PreToolUse only). Drop learned-tier candidates
+    // the post-hoc reconciler would mark wrong_repo/wrong_language/wrong_task so
+    // they never surface and never count against precision. Principles (r0) stay
+    // permissive — they are intentionally cross-cutting. See intercept.js
+    // filterByActionRelevance for the evidence trail (precision 57% drag).
+    if (_intercept.isActionKnownHook(toolName)) {
+      const relMeta = { cwd: sourceMeta.cwd || filePath || '' };
+      const a1 = _intercept.filterByActionRelevance(q1, COLLECTIONS[1].name, toolName, toolInput, relMeta);
+      const a2 = _intercept.filterByActionRelevance(q2, COLLECTIONS[2].name, toolName, toolInput, relMeta);
+      q1 = a1.kept; q2 = a2.kept;
+      const relevanceRemoved = a1.removed.length + a2.removed.length;
+      if (logStages && relevanceRemoved > 0) {
+        _activity.activityLog({ op: 'relevance-gate', removed: relevanceRemoved, tool: toolName, project: filePath || null, ...sourceMeta });
+      }
+    }
+
+    const s0 = _noise.filterNoiseSuppressedPoints(q0, suppressionContext);
+    const s1 = _noise.filterNoiseSuppressedPoints(q1, suppressionContext);
+    const s2 = _noise.filterNoiseSuppressedPoints(q2, suppressionContext);
+    const noiseSuppressed = [...s0.suppressed, ...s1.suppressed, ...s2.suppressed];
+    if (logStages && noiseSuppressed.length > 0) {
+      for (const [reason, count] of Object.entries(noiseSuppressed.reduce((acc, item) => { acc[item.reason] = (acc[item.reason] || 0) + 1; return acc; }, {}))) {
+        _activity.activityLog({ op: 'noise-suppressed', reason, count, actionKind, tool: toolName, project: filePath || null, ...sourceMeta });
+      }
+    }
+    return { r0: s0.kept, r1: s1.kept, r2: s2.kept, promptPrecisionRemoved: promptRemoved };
   }
+
+  const ranked = rankAndGate(confidenceCtx, true);
+  let r0 = ranked.r0, r1 = ranked.r1, r2 = ranked.r2;
+  let promptPrecisionRemoved = ranked.promptPrecisionRemoved;
 
   // Sprint-2 item 3 — per-stance recall weighting. The debate opener tags recall
   // with the council stance/role; scale each collection's recall ranking score by
@@ -440,7 +461,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     }
   }
 
-  const fmtOpts = { skipSearchScoreGate: recallMode };
+  const fmtOpts = { skipSearchScoreGate: recallMode, ...(confidenceCtx ? { confidenceCtx } : {}) };
   // Recall casts a wide net and wants depth → larger display budget than the
   // tight passive-hint budget (which would drop whole entries).
   const budgetFor = (i) => (recallMode ? (COLLECTIONS[i].recallBudgetChars || COLLECTIONS[i].budgetChars) : COLLECTIONS[i].budgetChars);
@@ -470,6 +491,39 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
       ..._format.applyBudget(_format.formatPoints(r1, fmtOpts), budgetFor(1)),
       ..._format.applyBudget(_format.formatPoints(r2, fmtOpts), budgetFor(2)),
     ];
+  }
+
+  // Shadow (spec §3 B4): legacy decided `lines` above. Run the same passive
+  // ranking + formatting + budget under the beta ctx and record ONE aggregated
+  // event with the shown-set difference. Compared before graph expansion, session
+  // dedupe and the brain filter, which are the same for both and cost I/O or LLM
+  // calls a logging-only run must not spend. Never affects the output.
+  if (shadowCtx) {
+    try {
+      const shadow = rankAndGate(shadowCtx, false);
+      const shadowFmt = { skipSearchScoreGate: false, confidenceCtx: shadowCtx };
+      const shadowLines = [
+        ..._format.applyBudget(_format.formatPoints(shadow.r0, shadowFmt), budgetFor(0)),
+        ..._format.applyBudget(_format.formatPoints(shadow.r1, shadowFmt), budgetFor(1)),
+        ..._format.applyBudget(_format.formatPoints(shadow.r2, shadowFmt), budgetFor(2)),
+      ];
+      const fullIdByShort = new Map();
+      for (const p of [...r0, ...r1, ...r2, ...shadow.r0, ...shadow.r1, ...shadow.r2]) fullIdByShort.set(_session.shortPointId(p.id), String(p.id));
+      const idsOf = (ls) => [...new Set(ls.map(line => line.match(/\[id:([^\s]+)\s+col:/)?.[1]).filter(Boolean))].map(id => fullIdByShort.get(id) || id);
+      const legacyIds = idsOf(lines);
+      const betaIds = idsOf(shadowLines);
+      const onlyLegacy = legacyIds.filter(id => !betaIds.includes(id));
+      const onlyBeta = betaIds.filter(id => !legacyIds.includes(id));
+      _experiment.appendExperimentEvent({
+        event: 'confidence-shadow', sourceSession: experiment.sessionId, interceptId, tool: toolName,
+        legacyShown: legacyIds.length, betaShown: betaIds.length,
+        onlyLegacyCount: onlyLegacy.length, onlyBetaCount: onlyBeta.length,
+        onlyLegacy: onlyLegacy.slice(0, 5), onlyBeta: onlyBeta.slice(0, 5),
+        runtime: experiment.runtime,
+      });
+    } catch (err) {
+      _logger.log('warn', 'confidence_shadow_failed', { tool: toolName, error: _logger.serializeError(err) });
+    }
   }
 
   // Graph-expanded lines never enter surfacedIds; the exposure event lists them
@@ -503,7 +557,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   const surfaced = allReranked.filter(p => {
     try {
       const exp = JSON.parse(p.payload?.json || '{}');
-      return exp.solution && (p._probationaryT2 || _scoring.computeEffectiveConfidence(exp) >= _config.getMinConfidence());
+      return exp.solution && _scoring.passesConfidenceGate(p, exp, confidenceCtx);
     } catch { return false; }
   });
   if (surfaced.length > 0) Promise.all(surfaced.map(p => _hittrack.recordSurface(p._collection, p.id))).catch(() => {});
@@ -601,20 +655,29 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     suggestions += '\n───\nFeedback reasons: wrong_repo | wrong_language | wrong_task | stale_rule — or verdict:"IGNORED" if you chose to skip.';
   }
 
-  // Treatment exposure: one event per intercept with the FULL ids the agent was
-  // shown (op:'intercept'.surfaced is capped at 8 and truncated to 8 chars).
+  // Exposure: one event per intercept of a session in an experiment (holdout
+  // treatment, or any non-legacy confidence model), with the FULL ids the agent
+  // was shown (op:'intercept'.surfaced is capped at 8 and truncated to 8 chars).
   let experimentMarker = null;
-  if (holdout) {
-    const interceptId = require('crypto').randomUUID();
+  if (experiment && experiment.sessionId) {
     const shown = shownSurfacedMeta.map(s => String(s.id));
     const shownSet = new Set(shown);
     const graphShown = [...new Set(graphLineIds)].filter(id => !shownSet.has(id) && shownIds.has(_session.shortPointId(id)));
     _experiment.logExposure({
       sessionId: experiment.sessionId, interceptId, tool: toolName,
       toolUseId: options && options.toolUseId, hookEvent: options && options.hookEvent,
-      shown, graphShown, runtime: experiment.runtime, arm: holdout.arm,
+      shown, graphShown, runtime: experiment.runtime, arm: holdout ? holdout.arm : null,
+      extra: model && model.mode !== 'legacy' ? { model: model.arm, confidenceMode: model.mode } : undefined,
     });
-    experimentMarker = { arm: holdout.arm, interceptId };
+    // The marker only carries what a caller can act on: the holdout arm (hooks
+    // skip their nudges for control) and an assigned ab model arm.
+    if (holdout || (model && model.assigned)) {
+      experimentMarker = {
+        ...(holdout ? { arm: holdout.arm } : {}),
+        ...(model && model.assigned ? { model: model.arm } : {}),
+        interceptId,
+      };
+    }
   }
   return { suggestions, surfacedIds: shownSurfacedMeta, route: routeResult || null, ...(experimentMarker ? { experiment: experimentMarker } : {}) };
 }

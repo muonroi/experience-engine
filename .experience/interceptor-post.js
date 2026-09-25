@@ -408,6 +408,7 @@ process.stdin.on('end', async () => {
         toolInputObj: toolInput || {},
         toolInput:   JSON.stringify(toolInput || {}).slice(0, 300),
         toolOutcome: classifyOutcome(toolName, toolInput, toolOutput),
+        sourceSession: sourceMeta.sourceSession || null,
       }));
 
       // --- Step 5: Spawn judge-worker detached + unref ---

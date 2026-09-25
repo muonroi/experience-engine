@@ -503,6 +503,88 @@ function getExperimentLogPath() {
   return typeof v === 'string' && v.trim() ? v.trim() : pathMod.join(getHomeExpDir(), 'experiment.jsonl');
 }
 
+// --- Bayesian confidence (spec §3 B1-B4) ---
+// confidenceModel: which confidence the PASSIVE path gates and ranks with.
+//   legacy (default) — computeEffectiveConfidence, exactly as before;
+//   shadow — legacy decides; the beta pipeline also runs and one aggregated
+//            confidence-shadow event per intercept records the shown-set diff;
+//   beta   — betaConfidence decides the passive path;
+//   ab     — per session, legacy or beta (share confidenceAbShare), assigned with
+//            the experiment salt under a separate "|model|" tag, so independent of
+//            the holdout arm.
+// Recall, the brief, evolve and the tools never see a beta ctx: they stay legacy.
+const CONFIDENCE_MODELS = new Set(['legacy', 'shadow', 'beta', 'ab']);
+function getConfidenceModel() {
+  const raw = cfgValue('confidenceModel', 'EXPERIENCE_CONFIDENCE_MODEL', 'legacy');
+  const v = String(raw ?? '').trim().toLowerCase();
+  if (CONFIDENCE_MODELS.has(v)) return v;
+  activityLog({ op: 'config-rejected', key: 'confidenceModel', value: String(raw).slice(0, 40), using: 'legacy' });
+  return 'legacy';
+}
+function getConfidenceAbShare() {
+  return floatCfg('confidenceAbShare', 'EXPERIENCE_CONFIDENCE_AB_SHARE', 0.5, 0, 1);
+}
+// Default = minConfidence so beta starts on the legacy threshold; B0
+// (tools/exp-beta-replay.js) picks the calibrated value before any online use.
+function getBetaMinConfidence() {
+  const legacy = Number(getMinConfidence());
+  return floatCfg('betaMinConfidence', 'EXPERIENCE_BETA_MIN_CONFIDENCE', Number.isFinite(legacy) ? legacy : 0.42, 0, 1);
+}
+// Below this much weighted evidence (pos + neg) the beta model defers to the
+// legacy decision AND value: a new entry must not pass or die on one verdict.
+function getBetaMinEvidence() {
+  return floatCfg('betaMinEvidence', 'EXPERIENCE_BETA_MIN_EVIDENCE', 3, 0, 1000);
+}
+// B1 bookkeeping is the one default-on piece: written by the verdict writers,
+// read by nothing unless confidenceModel is shadow/beta/ab. Off = no field written.
+function getBetaEvidenceEnabled() {
+  const v = cfgValue('betaEvidenceEnabled', 'EXPERIENCE_BETA_EVIDENCE_ENABLED', true);
+  if (v === false) return false;
+  const str = String(v).trim().toLowerCase();
+  return !(str === 'false' || str === '0' || str === 'off' || str === 'no');
+}
+
+// Evidence weight per source (B1). Implicit touch is low because the pre-surface
+// relevance gate runs the SAME assessHintUsage the reconciler later uses, so a
+// shown PreToolUse hint on a path-bearing action is "touched" almost by
+// construction. Session-repeat (trackSuggestions' third-repeat flag) is 0: it
+// counts how often a hint was re-shown, not whether it was wrong.
+const DEFAULT_BETA_EVIDENCE_WEIGHTS = Object.freeze({
+  manual: 1.0, judge: 0.7, implicitTouch: 0.2, implicitNoise: 0.3, organic: 0.3, sessionRepeat: 0,
+});
+function _numberTable(key, envKey, defaults, min, max) {
+  let raw = cfgValue(key, envKey, null);
+  if (raw == null) return { ...defaults };
+  if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { raw = null; } }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    activityLog({ op: 'config-rejected', key, value: String(cfgValue(key, envKey, '')).slice(0, 40), using: 'defaults' });
+    return { ...defaults };
+  }
+  const out = { ...defaults };
+  for (const [k, v] of Object.entries(raw)) {
+    const n = Number(v);
+    if (typeof v !== 'boolean' && v !== '' && Number.isFinite(n) && n >= min && n <= max) out[k] = n;
+    else activityLog({ op: 'config-rejected', key: `${key}.${k}`, value: String(v).slice(0, 40), min, max, using: k in defaults ? defaults[k] : 'ignored' });
+  }
+  return out;
+}
+function getBetaEvidenceWeights() {
+  return _numberTable('betaEvidenceWeights', 'EXPERIENCE_BETA_EVIDENCE_WEIGHTS', DEFAULT_BETA_EVIDENCE_WEIGHTS, 0, 10);
+}
+// Prior mean by createdFrom (B2). 'seed-*' matches any seed-prefixed origin;
+// 'default' is everything else. Strength k: seeds 20 (authoritative docs should
+// not swing on a handful of verdicts), others 4.
+const DEFAULT_BETA_PRIOR_MEANS = Object.freeze({
+  'seed-*': 0.7, 'doc-to-experience': 0.7, 'evolution-abstraction': 0.7, 'bulk-seed': 0.8, imported: 0.6, default: 0.5,
+});
+const DEFAULT_BETA_PRIOR_STRENGTH = Object.freeze({ seed: 20, default: 4 });
+function getBetaPriorMeans() {
+  return _numberTable('betaPriorMeans', 'EXPERIENCE_BETA_PRIOR_MEANS', DEFAULT_BETA_PRIOR_MEANS, 0.01, 0.99);
+}
+function getBetaPriorStrength() {
+  return _numberTable('betaPriorStrength', 'EXPERIENCE_BETA_PRIOR_STRENGTH', DEFAULT_BETA_PRIOR_STRENGTH, 0.1, 1000);
+}
+
 // --- Activity Log ---
 let _activityLog = null;
 
@@ -535,6 +617,9 @@ module.exports = {
   getRiskGateEnabled, getRiskKeywords, DEFAULT_RISK_KEYWORDS,
   getRunbookNudgeEnabled, getRunbookStitchMin,
   getExperimentHoldoutShare, getExperimentSalt, getExperimentLogPath,
+  getConfidenceModel, getConfidenceAbShare, getBetaMinConfidence, getBetaMinEvidence,
+  getBetaEvidenceEnabled, getBetaEvidenceWeights, getBetaPriorMeans, getBetaPriorStrength,
+  DEFAULT_BETA_EVIDENCE_WEIGHTS, DEFAULT_BETA_PRIOR_MEANS, DEFAULT_BETA_PRIOR_STRENGTH,
   COLLECTIONS, SELFQA_COLLECTION, EDGE_COLLECTION, ROUTES_COLLECTION,
   DEDUP_THRESHOLD, QUERY_MAX_CHARS, COMPACT_DIM,
   VALID_FEEDBACK_VERDICTS, VALID_NOISE_REASONS, VALID_NOISE_DISPOSITIONS, VALID_NOISE_SOURCES,

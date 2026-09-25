@@ -28,6 +28,7 @@ const _config = require('./config');
 const { unitHash, fnv1a32 } = require('./bayes');
 
 const HOLDOUT_EXPERIMENT = 'holdout';
+const MODEL_EXPERIMENT = 'confidence-model';
 const MAX_EXPERIMENT_LOG_BYTES = 10 * 1024 * 1024;
 const ARM_MARKER_DIR = 'experiment-arms';
 const ARM_MARKER_KEEP_DAYS = 2;
@@ -58,14 +59,45 @@ function holdoutArm(sessionId, opts = {}) {
   return { experiment: HOLDOUT_EXPERIMENT, arm: u < share ? 'control' : 'treatment', salt, share, u };
 }
 
+/**
+ * confidenceModel 'ab' arm for a session (spec §3 B4): legacy or beta, with the
+ * same experiment salt under a separate "|model|" tag, so the model arm is
+ * independent of the holdout arm. null without a session id.
+ * @returns {{experiment: string, arm: 'beta'|'legacy', salt: string, share: number, u: number}|null}
+ */
+function modelArm(sessionId, opts = {}) {
+  const share = Number.isFinite(opts.share) ? opts.share : _config.getConfidenceAbShare();
+  const salt = typeof opts.salt === 'string' ? opts.salt : _config.getExperimentSalt();
+  const sid = normalizeSessionId(sessionId);
+  if (!sid) return null;
+  const u = unitHash(`${salt}|model|${sid}`);
+  return { experiment: MODEL_EXPERIMENT, arm: u < share ? 'beta' : 'legacy', salt, share, u };
+}
+
 /** Is any experiment flag on? Everything experiment-related is a no-op when not. */
 function isExperimentActive() {
-  return _config.getExperimentHoldoutShare() > 0;
+  return _config.getExperimentHoldoutShare() > 0 || _config.getConfidenceModel() !== 'legacy';
 }
 
 /**
- * Resolve once per intercept. Null (and zero allocation beyond two config reads)
- * when no experiment is active, so the default path does no extra work.
+ * Which confidence model decides this session's passive path.
+ *   mode 'legacy' | 'shadow' → arm 'legacy' (shadow also runs beta, logging only);
+ *   mode 'beta' → arm 'beta';
+ *   mode 'ab' → the session's hashed arm; no session id → 'legacy', unassigned.
+ */
+function resolveModel(sessionId) {
+  const mode = _config.getConfidenceModel();
+  if (mode === 'beta') return { mode, arm: 'beta', assigned: null };
+  if (mode === 'ab') {
+    const assigned = modelArm(sessionId);
+    return { mode, arm: assigned ? assigned.arm : 'legacy', assigned };
+  }
+  return { mode, arm: 'legacy', assigned: null };
+}
+
+/**
+ * Resolve once per intercept. Null (and nothing beyond a few config reads) when
+ * no experiment is active, so the default path does no extra work.
  */
 function resolveInterceptExperiment(sourceMeta) {
   if (!isExperimentActive()) return null;
@@ -75,6 +107,7 @@ function resolveInterceptExperiment(sourceMeta) {
     active: true,
     sessionId,
     holdout,
+    model: resolveModel(sessionId),
     runtime: sourceMeta?.sourceRuntime || null,
   };
 }
@@ -270,6 +303,9 @@ function _resetForTests() {
 
 module.exports = {
   HOLDOUT_EXPERIMENT,
+  MODEL_EXPERIMENT,
+  modelArm,
+  resolveModel,
   MAX_EXPERIMENT_LOG_BYTES,
   normalizeSessionId,
   holdoutArm,

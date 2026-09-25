@@ -1,7 +1,7 @@
 'use strict';
 
 const { getMinConfidence, getHighConfidence, getMinSearchScore } = require('./config');
-const { computeEffectiveConfidence } = require('./scoring');
+const { computeEffectiveConfidence, confidenceGateDecision } = require('./scoring');
 const { detectNaturalLang } = require('./context');
 const { log } = require('./logger');
 
@@ -76,8 +76,12 @@ function sanitizeHorizontalRules(text) {
 // signal for passive hints, not a relevance ceiling for a deliberate query. The
 // min-confidence quality gate (GATE 1) and all HARD integrity gates (superseded,
 // permanent-noise, irrelevant) still apply regardless of this flag.
+// opts.confidenceCtx: the passive path's per-intercept confidence ctx. Absent (or
+// legacy) = the legacy GATE 1, unchanged. GATE 1 is scoring.confidenceGateDecision,
+// the one predicate shared with experience-core's surfaced filter.
 function formatPoints(points, opts = {}) {
   const skipSearchScoreGate = !!(opts && opts.skipSearchScoreGate);
+  const confidenceCtx = (opts && opts.confidenceCtx) || null;
   const lines = [];
   for (const point of points) {
     let exp;
@@ -95,14 +99,15 @@ function formatPoints(points, opts = {}) {
       log('warn', 'security_filter_blocked_point', { id: point.id });
       continue;
     }
-    const effConf = computeEffectiveConfidence(exp);
-    const mc = getMinConfidence();
-    if (effConf < mc && !point._probationaryT2) {
+    const gate = confidenceGateDecision(point, exp, confidenceCtx);
+    if (!gate.pass) {
+      const effConf = computeEffectiveConfidence(exp);
       log('debug', 'format_point_rejected', {
         reason: 'confidence_below_min',
         effectiveConfidence: Number(effConf.toFixed(3)),
-        minConfidence: mc,
+        minConfidence: getMinConfidence(),
         probationary: !!point._probationaryT2,
+        ...(gate.mode !== 'legacy' ? { confidenceMode: gate.mode, ...(gate.theta !== undefined ? { theta: Number(gate.theta.toFixed(3)) } : {}) } : {}),
       });
       continue;
     }

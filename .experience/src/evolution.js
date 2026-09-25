@@ -36,6 +36,7 @@ const { computeEffectiveConfidence } = require('./scoring');
 const { getValidatedHitCount } = require('./utils');
 const { callBrainWithFallback } = require('./brain-llm');
 const { createEdge } = require('./graph');
+const { beginBetaEvidence, recordBetaEvidence } = require('./beta-evidence');
 
 // --- Local constants (not yet in config.js) ---
 
@@ -137,14 +138,18 @@ async function findOrganicSupportCandidate(qa, vector) {
 }
 
 function applyOrganicSupportUpdate(data, qa, supportId, context = {}) {
+  const sourceSession = String(qa?.sourceSession || context.sourceSession || '').trim();
+  const alreadyConfirmedSession = !!sourceSession && Array.isArray(data?.organicSupportSessions)
+    && data.organicSupportSessions.includes(sourceSession);
+  // betaEvidence (spec §3 B1): an independent session re-deriving the same lesson
+  // is positive evidence at the organic weight. Taken before validatedCount moves.
+  const betaHandle = alreadyConfirmedSession ? null : beginBetaEvidence(data, 'organic');
   ensureSignalMetrics(data);
   ensureNovelCaseEvidence(data);
   const now = new Date().toISOString();
-  const sourceSession = String(qa?.sourceSession || context.sourceSession || '').trim();
   if (!Array.isArray(data.organicSupportSessions)) data.organicSupportSessions = [];
   if (!Array.isArray(data.organicSupportIds)) data.organicSupportIds = [];
 
-  const alreadyConfirmedSession = sourceSession && data.organicSupportSessions.includes(sourceSession);
   if (!alreadyConfirmedSession) {
     data.organicSupportCount = (data.organicSupportCount || 0) + 1;
     data.validatedCount = Math.max(data.validatedCount || 0, data.organicSupportCount || 0);
@@ -179,6 +184,7 @@ function applyOrganicSupportUpdate(data, qa, supportId, context = {}) {
   );
   const confidenceFloor = 0.50 + Math.min(0.18, (data.organicSupportCount || 0) * 0.04);
   data.confidence = Math.max(Number(data.confidence || 0), confidenceFloor);
+  recordBetaEvidence(data, betaHandle, { sessionId: sourceSession || null, sign: 1 });
   return data;
 }
 
@@ -303,6 +309,9 @@ async function storeImportedExperience(qa, opts) {
     if (Array.isArray(existing.confirmedAt)) data.confirmedAt = existing.confirmedAt;
     if (existing.createdAt) data.createdAt = existing.createdAt; // keep original creation time
     if (existing.novelCaseEvidence) data.novelCaseEvidence = existing.novelCaseEvidence;
+    // Recorded evidence is earned signal like the counters above — a re-import
+    // refreshes content, it must not reset the posterior to the prior.
+    if (existing.betaEvidence) data.betaEvidence = existing.betaEvidence;
   }
 
   await upsertEntry(collection, id, vector, data);

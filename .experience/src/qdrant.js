@@ -395,7 +395,27 @@ async function setPayloadFields(collection, pointId, fields, signal) {
 //  updatePointPayload — update single point in FileStore
 // ============================================================
 
-async function updatePointPayload(collection, pointId, updateFn) {
+// Per-point serialisation (spec §3 B1). The Qdrant path is a read-modify-write of
+// the WHOLE payload json: GET, mutate, POST. Two writers for the same point in one
+// process (recordSurface racing an implicit touch, a judge verdict racing the
+// session-repeat flag) interleave as GET, GET, POST, POST and the first write is
+// lost — and betaEvidence's one-outcome-per-session replacement is only correct
+// if every update sees the previous one. So updates to one (collection, id) are
+// chained; different points still run concurrently. Cross-process races (the
+// detached judge worker, a second server) are NOT covered — best-effort, as before.
+const _pointUpdateChains = new Map();
+
+function updatePointPayload(collection, pointId, updateFn) {
+  const key = `${collection}:${pointId}`;
+  const previous = _pointUpdateChains.get(key) || Promise.resolve();
+  const run = previous.then(() => updatePointPayloadUnserialised(collection, pointId, updateFn));
+  const tail = run.catch(() => {});
+  _pointUpdateChains.set(key, tail);
+  tail.then(() => { if (_pointUpdateChains.get(key) === tail) _pointUpdateChains.delete(key); });
+  return run;
+}
+
+async function updatePointPayloadUnserialised(collection, pointId, updateFn) {
   if (!(await checkQdrant())) {
     fileStoreUpdate(collection, (entries) => {
       const entry = entries.find(e => e.id === pointId);

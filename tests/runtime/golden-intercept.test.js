@@ -333,3 +333,61 @@ test('holdout: graph-expanded lines are reported as graphShown, not shown', asyn
     _qdrant.fetchPointById = savedFetch;
   }
 });
+
+// --- Phase B: Bayesian confidence ------------------------------------------------
+
+test('golden: identical with betaEvidenceEnabled explicitly on and off', async () => {
+  const expected = JSON.parse(fs.readFileSync(SNAPSHOT_PATH, 'utf8'));
+  assert.deepStrictEqual(await runScenarios({ betaEvidenceEnabled: true }), expected);
+  assert.deepStrictEqual(await runScenarios({ betaEvidenceEnabled: false }), expected);
+});
+
+test('shadow: output identical to legacy, one confidence-shadow event per passive intercept', async () => {
+  fs.rmSync(path.dirname(EXPERIMENT_LOG), { recursive: true, force: true });
+  _experiment._resetForTests();
+  const actual = await runScenarios({ confidenceModel: 'shadow', experimentLog: EXPERIMENT_LOG });
+  const expected = JSON.parse(fs.readFileSync(SNAPSHOT_PATH, 'utf8'));
+  assert.deepStrictEqual(actual, expected, 'legacy decides everything; no marker is returned');
+  const shadow = _experiment.readExperimentLog(EXPERIMENT_LOG).filter((e) => e.event === 'confidence-shadow');
+  // Every scenario that reaches the passive pipeline: all but recall and read-only.
+  assert.equal(shadow.length, SCENARIOS.length - 2);
+  for (const e of shadow) {
+    assert.ok(Number.isInteger(e.legacyShown) && Number.isInteger(e.betaShown));
+    assert.equal(e.onlyLegacy.length, Math.min(5, e.onlyLegacyCount));
+    assert.equal(e.onlyBeta.length, Math.min(5, e.onlyBetaCount));
+    assert.ok([...e.onlyLegacy, ...e.onlyBeta].every((id) => id.length > 8), 'full ids');
+  }
+});
+
+test('beta mode never changes active recall', async () => {
+  const expected = JSON.parse(fs.readFileSync(SNAPSHOT_PATH, 'utf8'));
+  const actual = await runScenarios({ confidenceModel: 'beta', experimentLog: EXPERIMENT_LOG });
+  assert.deepStrictEqual(actual.recall, expected.recall);
+});
+
+test('beta mode: the ctx reaches the format gate, the surfaced predicate and recordSurface', async () => {
+  // Two behavioral entries that legacy and beta judge oppositely.
+  const strongNo = point(ID(501), 0.8, { tier: 1, confidence: 0.85, hitCount: 5, validatedCount: 5, surfaceCount: 12, lastHitAt: iso(3), confirmedAt: [iso(3)], scope: { lang: 'typescript', project_slug: 'golden-app' }, _projectSlug: 'golden-app', betaEvidence: { pos: 1, neg: 40, v: 1, sessions: [] } });
+  const strongYes = point(ID(502), 0.79, { tier: 1, confidence: 0.4, hitCount: 0, surfaceCount: 10, ignoreCount: 2, scope: { lang: 'typescript', project_slug: 'golden-app' }, _projectSlug: 'golden-app', betaEvidence: { pos: 60, neg: 1, v: 1, sessions: [] } });
+  const savedSearch = _qdrant.searchCollection;
+  _qdrant.searchCollection = async (name) => (name === 'experience-behavioral' ? clone([strongNo, strongYes]) : []);
+  const run = async (model) => {
+    resetState({ confidenceModel: model, experimentLog: EXPERIMENT_LOG });
+    calls = { recordSurface: [], incrementIgnoreCount: [], brainFilter: 0 };
+    const sc = SCENARIOS[0];
+    const result = await core.interceptWithMeta(sc.tool, clone(sc.input), undefined, clone(sc.meta));
+    await new Promise((resolve) => setImmediate(resolve));
+    return { ids: result.surfacedIds.map((s) => s.id), surfaced: calls.recordSurface.map((c) => c[1]), text: result.suggestions || '' };
+  };
+  try {
+    const legacy = await run('legacy');
+    const beta = await run('beta');
+    assert.deepEqual(legacy.ids, [ID(501)]);
+    assert.deepEqual(legacy.surfaced, [ID(501)]);
+    assert.deepEqual(beta.ids, [ID(502)]);
+    assert.deepEqual(beta.surfaced, [ID(502)]);
+    assert.ok(beta.text.includes(`[id:${ID(502).slice(0, 8)} `) && !beta.text.includes(`[id:${ID(501).slice(0, 8)} `));
+  } finally {
+    _qdrant.searchCollection = savedSearch;
+  }
+});

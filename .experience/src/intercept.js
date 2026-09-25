@@ -337,7 +337,7 @@ async function reconcilePendingHints(surfacedPoints, toolName, toolInput, meta =
       const deterministicNoise = assessment.reason === 'wrong_repo' || assessment.reason === 'wrong_language' || assessment.reason === 'wrong_task';
       await _qdrant.updatePointPayload(
         pending.collection, pending.id,
-        _hittrack.applyNoiseDispositionData('unused', 'implicit-posttool', assessment.reason, { countIrrelevant: deterministicNoise })
+        _hittrack.applyNoiseDispositionData('unused', 'implicit-posttool', assessment.reason, { countIrrelevant: deterministicNoise, sessionId: meta.sourceSession || null })
       );
       _activity.activityLog({ op: 'noise-disposition', collection: pending.collection, pointId: _session.shortPointId(pending.id), disposition: 'unused', source: 'implicit-posttool', noTouchCount: pending.noTouchCount, reason: assessment.reason, tool: toolName, ..._utils.normalizeSourceMeta(meta) });
       _activity.activityLog({ op: 'implicit-unused', collection: pending.collection, pointId: _session.shortPointId(pending.id), count: pending.noTouchCount, reason: assessment.reason, tool: toolName, ..._utils.normalizeSourceMeta(meta) });
@@ -396,7 +396,7 @@ async function reconcileStalePromptSuggestions(state, nextPromptMeta = {}) {
     try { assessment = assessHintUsage(surface, 'UserPrompt', toolInput, meta); } catch {}
     const normalizedReason = _session.normalizeNoiseReason(assessment?.reason);
     await _qdrant.updatePointPayload(surface.collection, surface.id, (data) => {
-      _hittrack.applyNoiseDispositionData('unused', 'prompt-stale', normalizedReason, { countIrrelevant: !!normalizedReason })(data);
+      _hittrack.applyNoiseDispositionData('unused', 'prompt-stale', normalizedReason, { countIrrelevant: !!normalizedReason, sessionId: meta.sourceSession || null })(data);
       return data;
     });
     result.unused.push({ collection: surface.collection, id: surface.id, reason: assessment?.reason || 'unused' });

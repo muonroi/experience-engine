@@ -98,7 +98,9 @@ async function handleFeedback(req, res) {
   // marked wrong_language 3 times all from TypeScript queries → exclude
   // TypeScript instead of killing the entry (it may still be valid in C#).
   const callerCtx = deriveCallerMeta(body);
-  await recordFeedback(body.collection, pointId, resolvedVerdict, normalizedReason, { callerContext: callerCtx });
+  // sourceSession (optional): one betaEvidence outcome per (session, point).
+  const sessionId = typeof body.sourceSession === 'string' && body.sourceSession ? body.sourceSession : null;
+  await recordFeedback(body.collection, pointId, resolvedVerdict, normalizedReason, { callerContext: callerCtx, ...(sessionId ? { sessionId } : {}) });
   json(res, { ok: true, resolvedId: pointId, verdict: resolvedVerdict, ...(normalizedReason ? { reason: normalizedReason } : {}) });
 }
 

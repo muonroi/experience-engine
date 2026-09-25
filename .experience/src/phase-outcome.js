@@ -91,7 +91,7 @@ async function applyPhaseOutcome(payload, deps) {
   for (const ref of toolEventIds) {
     if (!ref || !ref.collection || !ref.pointId) { skipped++; continue; }
     try {
-      const ok = await deps.recordFeedback(ref.collection, ref.pointId, mapping.verdict, mapping.reason, { source: 'phase-outcome' });
+      const ok = await deps.recordFeedback(ref.collection, ref.pointId, mapping.verdict, mapping.reason, { source: 'phase-outcome', sessionId });
       if (ok) applied++; else skipped++;
     } catch { skipped++; }
   }
