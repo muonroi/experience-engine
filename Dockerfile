@@ -1,9 +1,10 @@
-FROM node:20-slim
+FROM node:22-slim
 
 WORKDIR /app
 
 # Copy engine files only (no npm install needed — zero deps)
 COPY .experience/ .experience/
+COPY lib/ lib/
 COPY server.js .
 COPY tools/ tools/
 

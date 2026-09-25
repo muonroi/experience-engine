@@ -61,3 +61,49 @@ jobs:
         run: |
           pip install -e .
           python test_client.py
+
+  # Smoke-test what users actually install. The test job runs against the repo
+  # checkout, so a file missing from package.json "files" or the Dockerfile
+  # (e.g. lib/) only shows up here.
+  package-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Start server from packed tarball
+        run: |
+          mkdir -p "$RUNNER_TEMP/pkg"
+          npm pack --pack-destination "$RUNNER_TEMP/pkg"
+          cd "$RUNNER_TEMP/pkg" && tar xzf *.tgz
+          EXP_SERVER_PORT=18082 nohup node package/server.js > server.log 2>&1 &
+          for i in $(seq 1 20); do
+            curl -s http://localhost:18082/health | grep -q '"status"' && exit 0
+            sleep 1
+          done
+          cat server.log
+          exit 1
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build and start image
+        run: |
+          docker build -t experience-engine:ci .
+          docker run -d --name ee -p 18082:8082 experience-engine:ci
+          for i in $(seq 1 30); do
+            curl -s http://localhost:18082/health | grep -q '"status"' && exit 0
+            sleep 1
+          done
+          docker logs ee
+          exit 1
