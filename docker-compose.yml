@@ -77,7 +77,7 @@ services:
       - EXPERIENCE_EMBED_MODEL=nomic-embed-text
       - EXPERIENCE_BRAIN_MODEL=qwen2.5:3b
     volumes:
-      - experience_data:/root/.experience
+      - experience_data:/home/node/.experience
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8082/health').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))\""]
