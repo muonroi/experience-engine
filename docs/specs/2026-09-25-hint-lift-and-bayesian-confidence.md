@@ -1,167 +1,221 @@
-# Plan: Measured hint lift (holdout) + Bayesian confidence
+# Plan: Measured engine lift (session holdout) + Bayesian confidence
 
-- **Status:** Draft for review
+- **Status:** Revised after three independent reviews (v2)
 - **Date:** 2026-09-25
-- **Scope:** passive hints only (PreToolUse / UserPromptSubmit / PostToolBatch). Active recall
-  (`recallMode`), `/api/search`, `/api/pil-context`, the Project Brief and evolution thresholds are
-  out of scope unless stated.
-- **Hard constraints:** zero runtime npm dependencies; every new behaviour is behind a config flag
-  whose default reproduces today's output exactly; Node 22.
+- **Hard constraints:** zero runtime npm dependencies; Node 22; with default config every
+  surfaced hint, rank and payload decision is identical to today. The only default-on change is
+  the additive `betaEvidence` bookkeeping (B1), which is written but read by nothing in legacy
+  mode, and can be disabled.
+
+## 0. What changed from v1 (review summary)
+
+| v1 | Problem found in review | v2 |
+|---|---|---|
+| Randomise per (session, point), per-exposure windows | Arms share one outcome window; dilution towards 0; later exposures conditioned on treatment | **Session-level** randomisation; session is the unit of analysis |
+| Control = hint removed | Empty hint set triggers the risk-gate recall nudge and prompt auto-recall, so control got *extra* guidance; recall and graph edges could leak control points | Control session = **no passive engine output at all** (hints, nudges, auto-recall, brief) |
+| Outcome = `toolOutcome` | `PostToolUse` fires only on success in Claude Code, and only `PostToolUse` is registered, so failures never arrive; classifier is a keyword regex | **Phase A0**: register `PostToolUseFailure`, strict failure classifier, validate baseline and power before launch |
+| Events in `activity.jsonl` | 10 MB rotation keeps ~20 MB; 2–4 weeks will be lost | Dedicated experiment log |
+| Decision = beta period vs legacy period | Non-concurrent, ambiguous, circular guardrail | **Concurrent** per-session arms legacy vs beta, pre-registered metric and margin |
+| `computeEffectiveConfidence` made mode-aware | Leaks into evolve demotion (`evolution.js:590`), recall, the brief, copied formulas in tools | New `betaConfidence(data, ctx)`; only the passive path passes a beta ctx |
+| k=2, prior 0.5, Thompson draw vs `minConfidence` 0.42 | New entry passes 58%, one ignore → 34%: recreates "killed-innocent"; seeds lose bypass | Low-evidence pass-through to legacy, provenance priors, explicit-only evidence for seeds, calibrated threshold, monotone deterministic gate |
+| Evidence = all verdicts, `priorMean` = current `confidence` | Implicit touch is near-automatic; judge + implicit double count; `confidence` already contains hits; several writers bypassed | Per-source weights (implicit touch low), one outcome per (session, point), provenance priors, every writer mapped |
+| "All verdict sources funnel through two functions" | False: session repeat flag, organic support, promotion reset, demotion, narrow-scope, reset tool, re-import | Corrected in §2, handled in B1 |
 
 ## 1. Problem
 
-1. **We cannot measure whether hints help.** Every quality signal is self-reported or heuristic:
-   agent verdicts (`/api/feedback`), the LLM judge (`judge-worker.js`), and implicit touch/unused
-   classification (`intercept.js reconcilePendingHints` → `assessHintUsage`, a path/lang/project
-   match). None of them observes whether the agent made *fewer mistakes* because a hint was shown.
-   The offline holdout harness (`tools/exp-holdout-harness.js`) replays fixtures; nothing measures
-   live, causal lift.
-2. **Confidence is a stack of hand-tuned patches.** `scoring.js computeEffectiveConfidence` layers
-   a seed bypass, a "bootstrap grace" (`surfaceCount <= 3`), a "clean-but-unvalidated grace", a
-   graded negative penalty and an `ageFactor = min(1, 0.7 + 0.06·hits)`. Its comments document the
-   failure these patches answer (170/263 selfqa entries "killed-innocent" by a single ignore).
-   Constants (0.7, 0.06, 0.30, 0.50, 0.20, 0.05) have no shared model and interact.
+1. **We cannot tell whether the engine makes agents better.** Quality signals are self-reported
+   (agent verdicts), LLM-judged, or heuristic (`assessHintUsage` path/lang match). None observes
+   whether agents fail less. For Claude Code the engine never even sees a failed tool call.
+2. **Confidence is a stack of hand-tuned patches** (`scoring.js computeEffectiveConfidence`:
+   seed bypass, bootstrap grace, clean-but-unvalidated grace, graded penalty, ageFactor), with
+   counters that reset on every hit (`hittrack.js applyHitUpdate`).
 
-## 2. Verified facts the design depends on
+## 2. Verified facts (corrected)
 
 | Fact | Where |
 |---|---|
-| Passive surfacing pipeline: search → scope filter → `rerankByQuality` → probationary T2 selection → prompt precision gate → action relevance gate → noise suppression → `formatPoints` (confidence gate, min-search-score gate, hard gates) → budget → graph-edge expansion → session dedup (`trackSuggestions`) → brain relevance filter → line dedup | `.experience/experience-core.js interceptWithMeta` (~L85–590) |
-| `recordSurface` is fired for `surfaced` = reranked candidates passing `solution && (probationary \|\| effConf >= minConfidence)`, **before** budget, session dedup and the brain filter remove lines — so `surfaceCount` over-counts what the agent saw | `experience-core.js` "const surfaced = allReranked.filter" |
-| What was actually shown is recoverable: `shownSurfacedMeta` is derived from the final `[id:xxxxxxxx col:…]` markers and logged in the `op:'intercept'` activity event (`surfaced`, up to 8) and returned as `surfacedIds` | same function, end |
-| Returned `surfacedIds` feed `/api/posttool` → judge queue and `reconcilePendingHints` (implicit touch / implicit-unused penalties) | `api/handlers/hooks.js handlePostTool`, `.experience/src/intercept.js` |
-| `op:'posttool'` activity events carry `tool`, `toolOutcome` (`success`/`error`/`null` for non-mutating tools, from `classifyPostToolOutcome`) and `sourceSession`, but no fingerprint of the tool input | `api/handlers/hooks.js` |
-| `applyHitUpdate` **resets** `ignoreCount` and `unusedCount` to 0 and raises `confidence` to a floor `0.50 + min(0.18, 0.04·validatedCount)`. Counters are therefore not cumulative totals, and `confidence` is not the creation-time prior | `.experience/src/hittrack.js` |
-| `applyNoiseDispositionData`: `ignored` → ignoreCount++, `irrelevant` → irrelevantCount++, `unused` → unusedCount++ (+ irrelevantCount++ when `countIrrelevant`); every non-followed disposition also bumps `noiseReasonCounts[reason]` via `recordNoiseMetadataData`. Legacy `negativeSignal` = ignore + irrelevant + Σ noiseReasonCounts therefore double-counts irrelevant verdicts | `hittrack.js`, `noise.js`, `scoring.js` |
-| All verdict sources (manual, judge, implicit) funnel through `applyHitUpdate` / `applyNoiseDispositionData` | `hittrack.js recordFeedback`, `intercept.js reconcilePendingHints` |
-| `computeEffectiveConfidence` callers: `format.js formatPoints` (gate), `experience-core.js` (`surfaced` filter), `scoring.js computeEffectiveScore` (rank weight `0.6 + 0.4·conf`), `scoring.js isProbationaryT2Candidate`, `scoring.js computeBriefScore` | grep |
-| `.experience/src/utils.js` holds an older, unused copy of `computeEffectiveConfidence` / `computeEffectiveScore` / `rerankByQuality` / `formatPoints` (no `_utils.<fn>` call sites) | grep |
-| Config getters follow `cfgValue(key, envKey, fallback)`; bounded integers use `numericCfg` (logs `config-rejected`) | `.experience/src/config.js` |
-| Activity log: `~/.experience/activity.jsonl` (`EXPERIENCE_ACTIVITY_LOG`), written by `activity.activityLog`; in thin-client mode the intercept runs on the server, so exposures and posttool outcomes land in the server's log | `.experience/src/activity.js` |
+| Passive pipeline: search → scope filter → rerank/dedupe → probationary T2 → prompt gate → action relevance gate → noise suppression → `formatPoints` (security, confidence, min-search-score, probationary <0, superseded, permanent noise `ignoreCount>=20&&hitCount===0`, `irrelevantCount>=3`) → per-collection budget → graph expansion → `surfaced` + `recordSurface` → `trackSuggestions` → brain filter → line dedup | `experience-core.js:85-583`, `format.js:79-162` |
+| `recordSurface` fires for `surfaced` (confidence predicate only) before min-search-score, hard gates, budget, dedup and brain filter | `experience-core.js:481-488` |
+| Shown set = `[id: col:]` markers in final lines → `surfacedIds`; `op:'intercept'.surfaced` is capped at 8 and uses 8-char ids; graph-expanded lines never enter `surfacedIds` | `experience-core.js:458-479, 563-582` |
+| Claude Code: `PostToolUse` fires only on success; `PostToolUseFailure` fires on failure with `failure_reason`, `error_details`, `tool_use_id`, `session_id`; Bash success `tool_response` has `stdout`, `stderr`, `exit_code`. `tool_use_id` joins Pre/Post/Failure | Claude Code hooks docs |
+| Only `PostToolUse` (matcher `Edit\|Write\|Bash`) is registered; no failure hook | `.experience/register-hooks.js:86-88,170` |
+| Outcome classifiers read `exit_code/exitCode/error/is_error/output` + keyword regex | `api/handlers/hooks.js:130-143`, `interceptor-post.js:119-137` |
+| When no hint surfaces, PreToolUse appends a risk-gate recall nudge and UserPromptSubmit runs a targeted auto-recall | `interceptor.js:540-546`, `interceptor-prompt.js:344-360` |
+| Local mode logs `{op:'hook', hook:'interceptor-post', stage:'parsed', toolOutcome, …}` (suppressed in remote mode); offline-queued posttools are replayed later | `interceptor-post.js:61, 223-230, 257-260` |
+| `activity.jsonl` rotates at 10 MB into a single `.1` (overwritten) | `activity.js:11-24` |
+| Counter/confidence writers: `applyHitUpdate` (resets ignore/unused, raises confidence floor), `applyNoiseDispositionData`, session-repeat flag → `incrementIgnoreCount`, organic support (`evolution.js:139-183`), `resetPromotionProbation` (zeroes negatives, confidence ≥0.6/0.9, `evolution.js:321-336`), demotions (`evolution.js:568,593`), narrow-scope ×0.3 (`narrow-scope.js:162-164`), `tools/exp-reset-ignore-count.js:122-127`, re-import rebuild that preserves only listed fields (`evolution.js:285-305`) | as listed |
+| `noiseReasonCounts` grows only for a valid reason; IGNORED passes `null`; so legacy double-counts IRRELEVANT-with-reason and implicit deterministic noise | `noise.js:117-131`, `hittrack.js:171` |
+| `assessHintUsage` returns only `wrong_*` when untouched, so implicit-unused is always "deterministic noise"; the pre-surface relevance gate uses the same function, so shown PreToolUse hints on path-bearing actions are near-automatically "touched" | `intercept.js:162-240, 299-341` |
+| `computeEffectiveConfidence` callers: `format.js:98`, `experience-core.js:485`, `scoring.js:181,228,267`, **`evolution.js:590`**; legacy formula copied in `tools/remediate-negsignal.js:52-66`, `tools/exp-dedup-superseded.js:64`, `tools/dashboard/aggregators.js:364`; harness uses `CORE._rerankByQuality` | grep |
+| `numericCfg` truncates to integers; `cfgValue` returns env values as strings; config file wins over env | `config.js:69-106` |
+| `updatePointPayload` is an unlocked read-modify-write of the whole JSON | `qdrant.js:398-427` |
+| `.experience/src/utils.js:397-520` scoring copies are dead | grep |
 
 ## 3. Design
 
-### Phase A — Live holdout: measure causal lift
+### Phase A0 — Make outcomes observable, then check the experiment can work
 
-**A1. Assignment (intent-to-treat).** New config `hintHoldoutRate` (env
-`EXPERIENCE_HINT_HOLDOUT_RATE`, float 0–0.5, default **0** = feature off) and `hintHoldoutSalt`
-(string, default `"v1"`).
+**A0.1 Failure events.** Register `PostToolUseFailure` (same matcher) in `register-hooks.js` for
+Claude Code, routed to `interceptor-post.js` with a flag marking the failure event. Other runtimes:
+register an equivalent failure event only where one exists; otherwise rely on explicit fields.
 
-In `interceptWithMeta`, passive mode only (`!recallMode`), and only when a session id is known
-(`sourceMeta.sourceSession`): after noise suppression and before `formatPoints`, compute the
-*eligible* set = candidates in r0/r1/r2 that pass the same predicate as today's `surfaced` filter.
-For each eligible point:
+**A0.2 Strict classifier.** Add `classifyToolFailure({hookEvent, toolName, toolResponse})` →
+`'fail' | 'ok' | 'unknown'` using explicit signals only: failure hook event; numeric
+`exit_code`/`exitCode` ≠ 0; `is_error === true`; `interrupted === true`; a non-empty `error` field.
+No keyword matching. Logged as a new field `failure` next to the unchanged legacy `toolOutcome`
+(the judge's use of `toolOutcome` must not change).
 
-```
-u   = fnv1a32(`${salt}|${sessionId}|${pointId}`) / 2^32      // src/sparse.js already has fnv1a32
-arm = u < hintHoldoutRate ? 'control' : 'treatment'
-```
+**A0.3 Baseline tool `tools/exp-outcome-baseline.js`.** From existing logs (`activity.jsonl` +
+`.1`, both posttool shapes) and, after A0.1 ships, from the experiment log: mutating calls,
+`failure` rates by `sourceRuntime` × tool, sessions per week, calls per session, and the
+between-session variance of the per-session failure ratio. It prints the minimum detectable
+effect (two-arm, α=0.05, power 0.8) for a given holdout share and duration.
+**Go/no-go:** Phase A only starts if the baseline failure rate is ≥ 2% of mutating calls and the
+MDE for the planned duration is ≤ 25% relative. Otherwise the report says so and Phase A waits.
 
-- Deterministic per (session, point): a hint stays in the same arm for the whole session, so
-  session dedup and repeat-surfacing cannot leak it across arms.
-- `control` points are removed from r0/r1/r2 before formatting. They are **not** passed to
-  `recordSurface`, `trackSuggestions`, `surfacedIds`, the judge or `reconcilePendingHints` — a hint
-  the agent never saw must never collect ignore/unused penalties.
-- Graph-edge expansion must not re-introduce a control point (seed its `seenIds` with them).
-- One activity event per intercept with at least one eligible point:
-  `{op:'hint-assignment', sourceSession, tool, rate, salt, points:[{pointId, collection, arm}]}`.
-  Analysis is by assignment (ITT): a treatment point later dropped by budget or brain filter still
-  counts as treatment. This keeps the comparison unbiased despite the post-assignment filters.
-- Rate 0, or no session id → no assignment, no event, no change.
+### Phase A — Session-level holdout
 
-**A2. Outcome signal.** Add `inputHash` (fnv1a32 of a normalised tool input: tool name + command or
-file path, whitespace-collapsed) to the `op:'posttool'` event. Verify the local-mode post-tool path
-(`.experience/interceptor-post.js` / `posttool-batch-hook.js`) emits an equivalent event with
-`toolOutcome` and `sourceSession`; if not, add it there with the same shape.
+**A1. Experiment log.** New `~/.experience/experiment.jsonl` (`EXPERIENCE_EXPERIMENT_LOG`),
+append-only, rotated to date-stamped files (never overwritten), written only when an experiment
+flag is active. Events:
+- `session-arm` — once per (session, experiment): `{experiment, arm, salt, runtime}`;
+- `exposure` — once per intercept in a treatment session: `{interceptId, tool, toolUseId?, shown:[full ids], graphShown:[full ids], hookEvent}`;
+- `outcome` — per post-tool/failure event: `{toolUseId?, tool, inputHash, failure, toolOutcome, clientTs, runtime}`.
+All carry `sourceSession` and server `ts`. `interceptId` is a random id per intercept.
 
-**A3. Analyzer `tools/exp-hint-lift.js`** (zero-dep CLI, JSON + table output, `--since`, `--json`).
-For each assignment of point *p* in session *s* at time *t*, the exposure window is the next
-`K = 10` mutating `posttool` events in *s* within 30 min. Per exposure:
-- `errorRate` = errors / mutating calls in window (exposures with 0 mutating calls are excluded and
-  counted separately);
-- `retryLoop` = 1 if the window contains ≥ 2 errors with the same `inputHash`.
+**A2. Assignment.** Config `experimentHoldoutShare` (float getter, clamp [0, 0.5], NaN → 0,
+invalid → `config-rejected` log; default **0**) and `experimentSalt` (default `"v1"`).
+`u = fmix32(fnv1a32(salt + "|holdout|" + sessionId)) / 2^32`; `arm = u < share ? 'control' : 'treatment'`.
+No session id → not in the experiment (behaves as today).
 
-Report, by arm: exposures, sessions, mean errorRate, retry-loop rate, and the difference
-(control − treatment, positive = hints help) with a 95% CI from a **session-clustered bootstrap**
-(1,000 resamples, seeded). Per-point lift only when both arms have ≥ 20 exposures; otherwise
-"insufficient". Also print the share of treatment assignments that were actually shown (join with
-`op:'intercept'.surfaced`) so ITT dilution is visible.
+**A3. What "control" means.** For a control session the server returns no passive engine output
+and a machine-readable marker `experiment: {arm:'control'}`:
+- `/api/intercept` (non-recall), `/api/posttool-batch`, `/api/project-brief`: no suggestions,
+  `surfacedIds: []`, no `recordSurface`, no `trackSuggestions`;
+- hooks seeing the marker skip the risk-gate recall nudge (`interceptor.js`) and the prompt
+  auto-recall (`interceptor-prompt.js`), and the SessionStart brief (`interceptor-session.js`);
+- local mode computes the same arm from the same config.
+Agent-initiated active recall (`exp-recall.js`, MCP `ee.query`) is **not** blocked: the CLI sends
+no session id, so it cannot be attributed. The estimand is therefore *the effect of passive engine
+output*, stated as such in the report.
 
-### Phase B — Bayesian confidence (shadow first)
+**A4. Analyzer `tools/exp-engine-lift.js`.** Unit = session (sessions with < 5 mutating calls
+excluded, counted separately). Primary metric: pooled failure ratio = failed mutating calls /
+mutating calls, per arm; difference control − treatment with a 95% session-cluster bootstrap CI
+(2,000 resamples, fixed seed). Secondary: sessions with a retry loop (≥ 2 failures with the same
+`inputHash`), failures per 100 calls by runtime. Guardrails (treatment only): hints shown per
+intercept, share of intercepts with ≥ 1 hint, distinct entries shown. Results are stratified by
+runtime. No per-point lift in v1. Analysis runs once at the pre-registered end date; interim runs
+are labelled "monitoring, not a decision".
 
-**B1. Cumulative evidence.** Add a payload object `evidence: {pos, neg, priorMean, v}`:
-- `applyHitUpdate` → `pos += 1`.
-- `applyNoiseDispositionData`: `ignored` → `neg += wIgnored` (default 1.0); `irrelevant` →
-  `neg += wIrrelevant` (1.0); `unused` → `neg += wUnused` (0.5), and when `countIrrelevant` add
-  `wIrrelevant` instead of `wUnused` (the reconciler already judged it deterministic noise).
-  `noiseReasonCounts` is **not** added again.
-- Lazy initialisation on first update or read when `evidence` is absent:
-  `pos = validatedCount`, `neg = ignoreCount + irrelevantCount + 0.5·unusedCount`,
-  `priorMean = clamp(confidence ?? 0.5, 0.05, 0.95)`. This is approximate (hit updates reset the
-  counters) and is documented as such; `priorMean` is frozen from here on and never touched by
-  `applyHitUpdate`'s confidence floor.
+### Phase B — Bayesian confidence
 
-**B2. Posterior.** Prior strength by provenance: seeds (`seed-*`, `imported`, `bulk-seed`,
-`evolution-abstraction`) `k = 8`; everything else `k = 2`. `a = priorMean·k + pos`,
-`b = (1 − priorMean)·k + neg`, `mean = a / (a + b)`.
-New module `.experience/src/bayes.js`: `posterior(data)`, `posteriorMean(data)`,
-`sampleBeta(a, b, rng)` (Marsaglia–Tsang gamma sampling), `seededRng(seed)` (mulberry32),
-all pure.
+**B0. Offline replay `tools/exp-beta-replay.js`.** Scroll the corpus, compute legacy vs beta gate
+pass rates and posterior means by `createdFrom` and tier, and the expected change in hints per
+intercept on a sample of recent `op:'intercept'` queries. Used to pick `betaMinConfidence`,
+priors and weights before any online use; its output is committed to the ADR.
 
-**B3. Mode switch.** Config `confidenceModel` (env `EXPERIENCE_CONFIDENCE_MODEL`):
-`legacy` (default) | `shadow` | `beta`.
-- `legacy`: today's code path, byte-for-byte.
-- `shadow`: legacy decides. For each eligible candidate also compute the beta gate; when the two
-  decisions differ, log `{op:'confidence-shadow', pointId, collection, legacy:{conf,pass},
-  beta:{mean,sample,pass}}`, capped at 20 events per intercept.
-- `beta`: `computeEffectiveConfidence` returns the posterior mean (used for rank weight, probationary
-  selection and the brief), and the confidence **gate** passes when a Thompson sample
-  `θ ~ Beta(a, b)` with `rng = seededRng(fnv1a32(sessionId|pointId|YYYY-MM-DD))` satisfies
-  `θ ≥ minConfidence`. Stable within a session and day; uncertain entries get explored; a
-  well-evidenced bad entry almost never passes. Without a session id, the gate uses the mean.
+**B1. `betaEvidence` bookkeeping (default on, `betaEvidenceEnabled`).** Payload field
+`betaEvidence: {pos, neg, v:1, sessions:[{s, src, w, sign}] (last 50)}`:
+- Weights by source (config): manual verdict 1.0, judge 0.7, implicit touch 0.2, implicit
+  noise/unused 0.3, organic support 0.3, session-repeat flag **0**.
+- One outcome per (session, point): if an event arrives for a session already in `sessions`, keep
+  only the highest-priority source (manual > judge > implicit) — replace its contribution.
+- Seeds (`createdFrom` starts with `seed-`, `doc-to-experience`, `evolution-abstraction`): only
+  manual and judge evidence counts.
+- Initialisation (inside the update function, **before** any mutation; on read it is computed
+  but not persisted): `pos = 0.5·(validatedCount ?? hitCount ?? 0)`, `neg = 0.5·(ignoreCount + irrelevantCount)`
+  — low weight because historical sources are unknown.
+- Writers: `applyHitUpdate` / `applyNoiseDispositionData` / `recordFeedback` pass their source;
+  organic support adds `pos` with its weight; promotion, demotion and `resetPromotionProbation`
+  do **not** touch `betaEvidence` (tier moves are not evidence); narrow-scope demotion and
+  permanent-noise remain hard gates in both modes (see B3); `exp-reset-ignore-count.js` gains
+  `--beta` to also clear `neg`; re-import preserves `betaEvidence`.
+- In-process per-point serialisation of `updatePointPayload` (promise chain keyed by
+  collection:id) to cut lost updates; cross-process races (judge worker) are documented as
+  best-effort.
 
-**B4. One gate, one definition.** Today the confidence gate is written twice (`formatPoints` and
-the `surfaced` filter). Extract `scoring.passesConfidenceGate(point, data, ctx)` and call it from
-both, so the displayed set and the surface-counted set cannot drift. The hard gates (superseded,
-`irrelevantCount >= 3`, noise suppression, security filter, min-search-score) are unchanged.
+**B2. Posterior.** Prior mean by `createdFrom` (table in config, defaults: `seed-*` 0.7,
+`doc-to-experience` 0.7, `evolution-abstraction` 0.7, `bulk-seed` 0.8, `imported` 0.6, others 0.5)
+and strength k (seeds 20, others 4). `a = μ·k + pos`, `b = (1−μ)·k + neg`. New pure module
+`.experience/src/bayes.js`: `posterior`, `posteriorMean`, `betaQuantile(u, a, b)` (regularised
+incomplete beta via continued fraction + bisection; monotone in a and b), `fmix32`.
 
-### Rollout and decision rule
+**B3. Gate and ranking in beta mode.** `betaConfidence(data, ctx)` is used only when
+`ctx.model === 'beta'` and `!ctx.recallMode`:
+- **Low-evidence pass-through:** if `pos + neg < 3`, use the legacy decision and legacy value.
+- Otherwise gate: `θ = betaQuantile(u, a, b)` with `u = fmix32(fnv1a32(sessionId|pointId|UTC-date))/2^32`;
+  pass iff `θ ≥ betaMinConfidence` (default = `minConfidence`, overridden by B0). Deterministic,
+  monotone in evidence; a session crossing UTC midnight may flip (documented). No session id →
+  use the posterior mean.
+- Rank weight uses the posterior mean. Hard gates (superseded, permanent noise, `irrelevantCount>=3`,
+  noise suppression, security, min-search-score, legacy confidence < 0.2 which catches
+  narrow-scope kills) apply in both modes. Probationary T2 selection keeps the legacy value in v1.
+- `computeEffectiveConfidence` itself is unchanged, so evolve, recall, the brief, tools and the
+  harness stay legacy.
 
-1. Ship A + B with defaults (`hintHoldoutRate: 0`, `confidenceModel: legacy`).
-2. Enable `hintHoldoutRate: 0.1` for 2–4 weeks and run the analyzer weekly.
-3. Enable `confidenceModel: shadow`, keep the holdout; inspect disagreement volume and cases.
-4. Switch to `beta` with the holdout still on. Keep it if, over ≥ 2 weeks, the lift CI does not
-   fall below the legacy period's point estimate and the dashboard precision (Gate 4) does not
-   drop by more than 5 points; otherwise revert the flag.
+**B4. Modes and plumbing.** `confidenceModel`: `legacy` (default) | `shadow` | `beta` | `ab`
+(`ab` assigns legacy/beta per session with a second salt `"|model|"`, share `confidenceAbShare`,
+default 0.5, independent of the holdout). Mode, salts, shares and session id are resolved **once
+per intercept** into `ctx` and passed via `fmtOpts`/rank opts to the passive `formatPoints`,
+`rerankByQuality`, the `surfaced` predicate and graph expansion. A shared
+`scoring.passesConfidenceGate(point, data, ctx)` replaces the two copies of the confidence
+predicate (this unifies only that predicate; the other gates stay where they are).
+`shadow`: legacy decides; the passive ranking + formatting + budget are also run with the beta
+ctx, and **one** aggregated `confidence-shadow` event per intercept records the shown-set
+difference (counts + up to 5 ids each way) to the experiment log.
+
+### Rollout and decision rule (pre-registered)
+
+1. Ship A0 + A + B with defaults. Run A0.3 on the server; stop here if the go/no-go fails.
+2. `experimentHoldoutShare` = value chosen from the MDE (expected 0.1–0.2) for the duration it
+   gives; `confidenceModel: shadow` in parallel.
+3. Run B0; set priors, weights and `betaMinConfidence`.
+4. `confidenceModel: ab` with the holdout still on. Primary comparison: pooled failure ratio,
+   beta vs legacy treatment sessions. Keep beta iff the upper bound of the 95% CI of
+   (beta − legacy) is below a +10% relative non-inferiority margin **and** the guardrails (hints per
+   intercept, share of intercepts with a hint) do not drop by more than 20%. One analysis at the
+   pre-registered end date.
 
 ## 4. Files
 
-- `.experience/experience-core.js` — assignment + removal of control points, deferred
-  `recordSurface` on non-control points, `seenIds` seeding, shadow logging, use of
-  `passesConfidenceGate`.
-- `.experience/src/scoring.js` — `passesConfidenceGate`, mode-aware `computeEffectiveConfidence`.
-- `.experience/src/format.js` — call `passesConfidenceGate`.
-- `.experience/src/hittrack.js` — maintain `evidence`.
-- `.experience/src/bayes.js` (new), `.experience/src/config.js` (getters).
-- `api/handlers/hooks.js` (+ local post-tool hook if needed) — `inputHash`.
-- `tools/exp-hint-lift.js` (new).
-- Tests under `tests/runtime/` and `tests/tools/`; docs: `REPO_DEEP_MAP.md`, `CHANGELOG.md`.
-- Do not modify the dead copies in `.experience/src/utils.js`.
+- Hooks: `.experience/register-hooks.js` (failure hook), `interceptor-post.js` (failure event,
+  `classifyToolFailure`, `inputHash`, `clientTs`, local `outcome`), `interceptor.js`,
+  `interceptor-prompt.js`, `interceptor-session.js` (honour the control marker),
+  `remote-client.js` (pass the marker through).
+- Server: `api/handlers/hooks.js` (outcome event, control handling for posttool-batch),
+  `api/handlers/observability.js` (brief), knowledge unaffected.
+- Core: `.experience/experience-core.js` (arm, ctx, control short-circuit, exposure event,
+  shadow), `.experience/src/scoring.js` (`betaConfidence`, `passesConfidenceGate`),
+  `.experience/src/format.js`, `.experience/src/hittrack.js` + `evolution.js` (organic support,
+  re-import), `.experience/src/qdrant.js` (per-point serialisation), new `bayes.js`,
+  new `experiment.js` (assignment + experiment log), `config.js` (float getter + keys).
+- Tools: `exp-outcome-baseline.js`, `exp-engine-lift.js`, `exp-beta-replay.js`;
+  `exp-reset-ignore-count.js --beta`.
+- Docs: this spec, an ADR for the decision, `REPO_DEEP_MAP.md`, `CHANGELOG.md`, `openapi.yaml`
+  (the `experiment` response field).
+- Untouched: `utils.js` dead copies; evolution thresholds.
 
 ## 5. Tests / acceptance
 
-- Defaults: the whole existing suite passes unchanged (`npm run test:ci`, `check:syntax`,
-  `typecheck`, lint). A golden test runs `interceptWithMeta` on a fixed stubbed search result with
-  default config and asserts identical `suggestions` / `surfacedIds` to the pre-change output.
-- Assignment: deterministic per (salt, session, point); empirical control share within ±2% of the
-  rate over 10k synthetic pairs; control points absent from `suggestions`, `surfacedIds`,
-  `recordSurface` and `trackSuggestions` inputs, and not re-added via graph edges; no assignment
-  without a session id or in recall mode.
-- Evidence: hit/ignore/irrelevant/unused increments with the configured weights, no double count
-  of `noiseReasonCounts`, lazy init from legacy counters, `priorMean` frozen across hits.
-- Bayes: `sampleBeta` mean within 1% of `a/(a+b)` over 20k draws for several (a, b); seeded RNG
-  reproducible; posterior math for seed vs organic priors.
-- Modes: `shadow` returns the same suggestions as `legacy` and logs only on disagreement (capped);
-  `beta` gate is stable for a fixed (session, point, day).
-- Analyzer: synthetic activity logs with a planted effect recover its sign and CI; windows respect
-  session boundaries, K and the 30-minute limit; per-point output gated at n ≥ 20.
+- **Golden:** before changing code, snapshot `interceptWithMeta` output (suggestions, surfacedIds,
+  recordSurface calls) for fixed stubbed search results with `Date.now` pinned and isolated
+  tmpdirs (session dir, activity log). Assert identical output after the change with defaults,
+  and with `betaEvidenceEnabled` on.
+- Full suite, `check:syntax`, `typecheck`, lint pass.
+- Assignment: deterministic; control share within ±0.01 absolute of the configured share over
+  100k synthetic session ids; no session id → no arm; float getter clamps and logs rejections.
+- Control sessions: no suggestions, empty `surfacedIds`, no `recordSurface`/`trackSuggestions`,
+  hooks skip nudge / auto-recall / brief; treatment sessions unchanged vs golden.
+- Classifier: table test over success/failure payload shapes (Claude Code success with
+  `exit_code`, `PostToolUseFailure`, Codex `{output}`, `is_error`, `interrupted`, keyword-only
+  output → `ok`/`unknown`, never `fail`).
+- `betaEvidence`: per-source weights; session dedupe with priority replacement; seed rule; init
+  before mutation (a first manual hit on an entry with 2 ignores and `validatedCount = v` yields `neg = 1.0`, `pos = 0.5·v + 1.0`);
+  re-import preserves it; `--beta` reset.
+- `bayes`: `betaQuantile` against known values (absolute tolerance 1e-6) and monotonicity in a, b;
+  posterior math; low-evidence pass-through equals legacy.
+- Modes: `shadow` output identical to legacy and one event per intercept; `ab` split and
+  independence from the holdout; beta never changes recall, brief or evolve outputs.
+- Analyzers: synthetic experiment logs with a planted effect recover its sign and CI coverage;
+  both posttool shapes parsed; sessions below the call minimum excluded.
