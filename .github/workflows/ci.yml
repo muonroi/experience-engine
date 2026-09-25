@@ -25,7 +25,7 @@ jobs:
         run: npm run test:ci
 
       - name: Lint check
-        run: npx eslint server.js .experience/experience-core.js .experience/src/ --no-error-on-unmatched-pattern
+        run: npx eslint server.js api/ .experience/experience-core.js .experience/src/ --no-error-on-unmatched-pattern
 
       - name: Coverage check
         timeout-minutes: 3

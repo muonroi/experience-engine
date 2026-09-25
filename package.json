@@ -11,6 +11,7 @@
     "qdrant-find": "tools/qdrant-find.js"
   },
   "files": [
+    "api/",
     "bin/",
     "lib/",
     "mcp/",
@@ -79,9 +80,9 @@
     "test:ci": "npm test && npm run test:unit && npm run test:holdout && npm run test:health && npm run test:server",
     "test:coverage": "npx c8 --lines 60 --functions 50 --branches 40 --reporter=text --reporter=html --report-dir=coverage node --test --test-concurrency=1 tests/*.test.js .experience/test-*.js",
     "replay:holdout": "node tools/exp-holdout-harness.js --fixture fixtures/holdout --json",
-    "lint": "npx eslint server.js .experience/experience-core.js .experience/src/",
-    "format": "npx prettier --write server.js .experience/experience-core.js .experience/src/",
-    "format:check": "npx prettier --check server.js .experience/experience-core.js .experience/src/",
+    "lint": "npx eslint server.js api/ .experience/experience-core.js .experience/src/",
+    "format": "npx prettier --write server.js api/ .experience/experience-core.js .experience/src/",
+    "format:check": "npx prettier --check server.js api/ .experience/experience-core.js .experience/src/",
     "changelog": "node scripts/generate-changelog.js",
     "seed:catalog": "node scripts/seed-catalog.js",
     "config:encrypt": "node scripts/config-encrypt.js encrypt",

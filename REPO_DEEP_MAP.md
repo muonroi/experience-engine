@@ -58,7 +58,23 @@ Core operating modes:
 
 ## Runtime API Surface
 
-`server.js` is a single-file HTTP server using Node built-ins only.
+`server.js` is the HTTP entry point (dispatch, startup, shutdown) using Node built-ins only.
+The rest of the server lives under `api/`:
+
+| Path | Purpose |
+|------|---------|
+| `api/routes.js` | Route table: every endpoint with its method and access level (`public` / `read` / `write`). `docs/openapi.yaml` is tested against it |
+| `api/handlers/health.js` | `/health`, `/metrics`, `/api/version`, stale-client logging |
+| `api/handlers/hooks.js` | Hook-path writes: intercept, posttool(-batch), prompt-stale, extract, ingest-point, evolve |
+| `api/handlers/observability.js` | stats, projects, gates, graph, timeline, user, hint-stats, project-brief |
+| `api/handlers/knowledge.js` | feedback, principles share/import, search, recall, import-memory, collection bootstrap |
+| `api/handlers/pil.js` | `/api/pil-context` |
+| `api/handlers/routing.js` | route-task/-model/-feedback, sync-buffers, brain proxy, phase-outcome, workflow-event |
+| `api/auth.js` | Bearer auth (constant-time), rate limiting, protected/read-only path rules |
+| `api/config.js` | Server config (port, host, tokens), runtime dir resolution, `loadExperienceCore`, caller-meta derivation |
+| `api/http.js` | `json` / `error` / `readBody`, CORS headers, structured log helper |
+
+`server.js` re-exports every handler, so callers that `require('./server.js')` keep working.
 
 Important endpoints:
 

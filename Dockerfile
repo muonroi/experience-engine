@@ -4,6 +4,7 @@ WORKDIR /app
 
 # Copy engine files only (no npm install needed — zero deps)
 COPY .experience/ .experience/
+COPY api/ api/
 COPY lib/ lib/
 COPY server.js .
 COPY tools/ tools/
