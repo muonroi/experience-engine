@@ -10,6 +10,7 @@ Usage:
 """
 
 import json
+import os
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -31,11 +32,14 @@ class Client:
     Args:
         base_url: Server URL (default: http://localhost:8082)
         timeout: Request timeout in seconds (default: 30)
+        token: Bearer token for servers with server.authToken set
+            (default: EXPERIENCE_SERVER_TOKEN env var, else none)
     """
 
-    def __init__(self, base_url="http://localhost:8082", timeout=30):
+    def __init__(self, base_url="http://localhost:8082", timeout=30, token=None):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.token = token if token is not None else os.environ.get("EXPERIENCE_SERVER_TOKEN")
 
     def _request(self, method, path, body=None, params=None):
         """Make HTTP request and return parsed JSON response."""
@@ -45,6 +49,8 @@ class Client:
 
         data = None
         headers = {}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
         if body is not None:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json"

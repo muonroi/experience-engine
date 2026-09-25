@@ -35,6 +35,7 @@ def main():
     # 1. Client creation
     assert_test(client.base_url == BASE, "client has correct base_url")
     assert_test(client.timeout == 10, "client has correct timeout")
+    assert_test(Client(BASE, token="t").token == "t", "client accepts a bearer token")
 
     # 2. Health
     print("\n--- health ---")
