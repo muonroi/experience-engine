@@ -268,12 +268,13 @@ Stats and gates are primarily handled by:
 
 | Command | Coverage |
 |---------|----------|
-| `npm run lint` | ESLint over `server.js`, `.experience/experience-core.js`, `.experience/src/` |
+| `npm run lint` | ESLint over `server.js`, `api/`, `.experience/experience-core.js`, `.experience/src/` |
 | `npm test` | Node tests under `tests/*.test.js` |
-| `npm run test:unit` | Internal `.experience/test-*.js` tests |
-| `npm run test:holdout` | Holdout harness and fixtures |
-| `npm run test:health` | Health check and setup tests |
-| `npm run test:server` | End-to-end server checks |
+| `npm run test:unit` | Hook runtime tests, `tests/runtime/*.test.js` |
+| `npm run test:tools` | Operator tool tests, `tests/tools/*.test.js` |
+| `npm run test:holdout` | Holdout harness and fixtures (subset of `test:tools`) |
+| `npm run test:health` | Health check and setup tests (subset of `test:unit`) |
+| `npm run test:server` | End-to-end server checks (subset of `test:tools`) |
 | `npm run test:ci` | Main CI-style sequence |
 | `npm run test:coverage` | Coverage report through `c8` |
 
@@ -281,12 +282,12 @@ High-signal tests by area:
 
 | Area | Tests |
 |------|-------|
-| Qdrant/FileStore/config | `tests/qdrant-io.test.js`, `.experience/test-qdrant-io.js`, `.experience/test-update-point-payload.js` |
-| Server auth/runtime | `tests/server-auth-runtime.test.js`, `tests/server-health-metrics.test.js`, `tools/test-server.js` |
-| Intercept pipeline | `tests/interceptor.test.js`, `.experience/test-intercept-pipeline.js`, `.experience/test-hook-payloads.js` |
-| Evolution/scoring/noise | `tests/experience-core-evolution.test.js`, `.experience/test-scoring.js`, `.experience/test-unused-hints.js` |
-| Routing | `tests/server-route-task.test.js`, `tests/experience-core-task-routing.test.js`, `.experience/test-model-router.js` |
-| Setup/CLI | `tests/npm-cli.test.js`, `.experience/test-setup.js`, `.experience/test-health-check.js` |
+| Qdrant/FileStore/config | `tests/qdrant-io.test.js`, `tests/runtime/update-point-payload.test.js` |
+| Server auth/runtime | `tests/server-auth-runtime.test.js`, `tests/server-health-metrics.test.js`, `tests/tools/server-api.test.js`, `tests/openapi-routes.test.js` |
+| Intercept pipeline | `tests/interceptor.test.js`, `tests/runtime/intercept-pipeline.test.js`, `tests/runtime/hook-payloads.test.js` |
+| Evolution/scoring/noise | `tests/experience-core-evolution.test.js`, `tests/runtime/scoring.test.js`, `tests/runtime/unused-hints.test.js` |
+| Routing | `tests/server-route-task.test.js`, `tests/experience-core-task-routing.test.js`, `tests/runtime/model-router.test.js` |
+| Setup/CLI | `tests/npm-cli.test.js`, `tests/runtime/setup.test.js`, `tests/runtime/health-check.test.js` |
 
 ---
 

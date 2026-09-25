@@ -18,12 +18,15 @@ bash .experience/setup.sh --local   # Docker Qdrant + Ollama
 ## Running Tests
 
 ```bash
-node tools/test-server.js       # REST API tests (49 assertions)
-node tools/test-scoring.js      # Anti-noise scoring tests
-node tools/test-context.js      # Context-aware query tests
-node tools/test-activity-log.js # Activity logging tests
-node tools/test-exp-stats.js    # Observability CLI tests
+npm run test:ci     # everything CI runs
+npm test            # tests/*.test.js         — server, CLI, integration
+npm run test:unit   # tests/runtime/*.test.js — hook runtime (.experience/)
+npm run test:tools  # tests/tools/*.test.js   — operator tools (tools/)
 ```
+
+New tests go under `tests/` (`tests/runtime/` for `.experience/` code, `tests/tools/`
+for `tools/`), named `*.test.js`. `tests/manual/` holds scripts that need real local
+session data and are not run in CI.
 
 All tests must pass with zero dependencies — Node.js 22+ only.
 
