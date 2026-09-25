@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * server.js — Experience Engine REST API
- * Zero npm dependencies. Node.js 20+ built-in http module only.
+ * Zero npm dependencies. Node.js 22+ built-in http module only.
  *
  * Endpoints:
  *   GET  /health                    — Qdrant + FileStore status
@@ -60,13 +60,15 @@ const _cfg = (() => {
 })();
 
 const PORT = _cfg.server?.port || parseInt(process.env.EXP_SERVER_PORT, 10) || 8082;
-// Unset keeps Node's default (all interfaces) so existing deployments that
-// thin clients reach directly keep working; set 127.0.0.1 behind a proxy.
-const HOST = _cfg.server?.host || process.env.EXP_SERVER_HOST || undefined;
 const QDRANT_BASE = runtimeConfig.getQdrantBase();
 const QDRANT_API_KEY = runtimeConfig.getQdrantApiKey();
 const AUTH_TOKEN = _cfg.server?.authToken || _cfg.serverAuthToken || null;
 const READ_AUTH_TOKEN = _cfg.server?.readAuthToken || _cfg.serverReadAuthToken || process.env.EXPERIENCE_SERVER_READ_AUTH_TOKEN || null;
+// Without a token every API (including the /api/brain LLM proxy) is open, so an
+// unconfigured server only listens on loopback. With a token it keeps Node's
+// default (all interfaces) so thin clients that reach it directly still work.
+// An explicit server.host / EXP_SERVER_HOST always wins ("0.0.0.0" in Docker).
+const HOST = _cfg.server?.host || process.env.EXP_SERVER_HOST || (AUTH_TOKEN ? undefined : '127.0.0.1');
 const VALID_FEEDBACK_VERDICTS = new Set(['FOLLOWED', 'IGNORED', 'IRRELEVANT']);
 const VALID_NOISE_REASONS = new Set(['wrong_repo', 'wrong_language', 'wrong_task', 'stale_rule']);
 const TMP_DIR = path.join(os.homedir(), '.experience', 'tmp');
@@ -1924,7 +1926,7 @@ if (require.main === module) {
     slog('info', 'server_started', { port: PORT, host: HOST || '*', health: `http://localhost:${PORT}/health` });
     if (!AUTH_TOKEN && HOST !== 'localhost' && !_isLoopback(HOST)) {
       slog('warn', 'server_unauthenticated', {
-        hint: 'No server.authToken set and the server is not bound to loopback: every API, including /api/brain, is open to anyone who can reach this port. Set server.authToken or server.host=127.0.0.1.',
+        hint: `No server.authToken set and server.host is ${HOST}: every API, including /api/brain, is open to anyone who can reach this port. Set server.authToken, or restrict who can reach it.`,
       });
     }
     // Phase 2: ensure bb-behavioral and bb-recipes collections exist in Qdrant.

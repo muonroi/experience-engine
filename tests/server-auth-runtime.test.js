@@ -158,20 +158,29 @@ test('near-miss bearer tokens are rejected', async () => {
   }
 });
 
-test('warns when unauthenticated on all interfaces, not when bound to loopback', async () => {
-  const open = await startServer({});
+test('binds loopback by default without a token, all interfaces with one', async () => {
+  const unconfigured = await startServer({});
   try {
-    assert.match(open.stdout, /server_unauthenticated/);
+    assert.match(unconfigured.stdout, /"host":"127\.0\.0\.1"/);
+    assert.doesNotMatch(unconfigured.stdout, /server_unauthenticated/);
   } finally {
-    await open.stop();
+    await unconfigured.stop();
   }
 
-  const loopback = await startServer({ server: { host: '127.0.0.1' } });
+  const withToken = await startServer({ server: { authToken: 't' } });
   try {
-    assert.match(loopback.stdout, /"host":"127\.0\.0\.1"/);
-    assert.doesNotMatch(loopback.stdout, /server_unauthenticated/);
+    assert.match(withToken.stdout, /"host":"\*"/);
   } finally {
-    await loopback.stop();
+    await withToken.stop();
+  }
+});
+
+test('warns when explicitly exposed without a token', async () => {
+  const exposed = await startServer({ server: { host: '0.0.0.0' } });
+  try {
+    assert.match(exposed.stdout, /server_unauthenticated/);
+  } finally {
+    await exposed.stop();
   }
 });
 
