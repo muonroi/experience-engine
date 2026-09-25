@@ -60,7 +60,7 @@ describe('enrichSourceMeta reconciles lang vs framework', () => {
     // Framework either dropped (dotnet mismatch) or replaced with a js-side
     // label like "next". Critical assertion: never tagged dotnet-family.
     if (meta.framework) {
-      assert.notMatch(meta.framework, /dotnet|aspnet/i,
+      assert.doesNotMatch(meta.framework, /dotnet|aspnet/i,
         `framework should not be dotnet-family for a .ts file, got ${meta.framework}`);
     }
   });

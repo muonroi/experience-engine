@@ -384,7 +384,7 @@ const _LANG_FAMILY_PHP = new Set(['php']);
 //   3. Unknown → return null (caller treats as "compatible with anything"
 //      and keeps the framework tag, preserving current behavior for labels
 //      we have no data on).
-function _inferFrameworkFamily(framework) {
+function _inferFrameworkFamily(framework, opts) {
   if (!framework) return null;
   const fw = String(framework).toLowerCase().trim();
   if (_FW_DEFAULT_LANG[fw]) {
@@ -398,8 +398,9 @@ function _inferFrameworkFamily(framework) {
     if (_LANG_FAMILY_RUBY.has(lang)) return 'ruby';
     if (_LANG_FAMILY_PHP.has(lang)) return 'php';
   }
-  const cfg = _loadConfig();
-  const packages = _normalizeFrameworkPackages(cfg && cfg.org && cfg.org.frameworkPackages);
+  // Use the same package source as detection; otherwise an opts-injected label
+  // is detected but never reconciled.
+  const packages = _resolvePackages(opts);
   const entry = packages[fw] || packages[framework];
   if (entry) {
     if (Array.isArray(entry.nuget) && entry.nuget.length) return 'dotnet';
@@ -434,9 +435,9 @@ function _langInFamily(lang, family) {
 // the .csproj path first and returns a dotnet-family framework, but the
 // actual code is TypeScript. Without this guard the query-time pre-filter
 // would gate to dotnet-only hints and lose TS-specific guidance.
-function _reconcileLangFramework(out) {
+function _reconcileLangFramework(out, opts) {
   if (!out || !out.lang || !out.framework) return out;
-  const family = _inferFrameworkFamily(out.framework);
+  const family = _inferFrameworkFamily(out.framework, opts);
   if (!family) return out; // unknown framework → trust the original tag
   if (!_langInFamily(out.lang, family)) {
     delete out.framework;
@@ -504,7 +505,7 @@ function enrichSourceMeta(toolInput, opts, cwd) {
       const slug = detectProjectSlug(cwd);
       if (slug) out.project_slug = slug;
     }
-    return _reconcileLangFramework(out);
+    return _reconcileLangFramework(out, opts);
   }
   // CWD fallback: Bash/shell commands and UserPromptSubmit have no file_path.
   // Without scope hints the Qdrant pre-filter and post-filter are both
@@ -518,7 +519,7 @@ function enrichSourceMeta(toolInput, opts, cwd) {
     if (framework) out.framework = framework;
     if (slug) out.project_slug = slug;
   }
-  return _reconcileLangFramework(out);
+  return _reconcileLangFramework(out, opts);
 }
 
 // Exposed for tests so config cache can be cleared between cases.
