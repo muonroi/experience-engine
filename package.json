@@ -62,12 +62,13 @@
     "LICENSE",
     "docker-compose.yml",
     "Dockerfile",
+    "docker-entrypoint.sh",
     "demo.svg",
     "demo.tape",
     "demo.yml"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "test": "node --test --test-concurrency=1 tests/*.test.js",

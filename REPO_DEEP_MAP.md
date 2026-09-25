@@ -304,7 +304,7 @@ The Stop hook (`stop-extractor.js maybeUpdateProfile`, slice 1) WRITES `~/.exper
 
 ## Current Architecture Notes
 
-- Runtime code should remain compatible with Node.js 20 and CommonJS.
+- Runtime code should remain compatible with Node.js 22 and CommonJS.
 - Avoid adding runtime npm dependencies unless the zero-dependency ADR changes.
 - Keep user-facing CLI output separate from runtime structured logs.
 - Preserve thin-client compatibility when changing request/response bodies.

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * test-server.js — Integration tests for Experience Engine REST API
- * Zero dependencies. Node.js 20+ native fetch only.
+ * Zero dependencies. Node.js 22+ native fetch only.
  *
  * Starts the real server on a random port and hits all endpoints. By default it
  * creates a disposable ~/.experience harness so CI does not depend on a real

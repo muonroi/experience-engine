@@ -13,7 +13,7 @@ set +H 2>/dev/null   # disable history expansion — fixes !res.ok in node -e bl
 #   bash .experience/setup-full.sh --help     # all EXP_* non-interactive vars
 #
 # Supported agents: Claude Code, Gemini CLI, Codex CLI, OpenCode
-# Prerequisites: Node.js 20+
+# Prerequisites: Node.js 22+
 
 # ── WSL mismatch detection ─────────────────────────────────────────────────
 # PowerShell's `bash` invokes WSL, not Git Bash. If the user intentionally

@@ -7,7 +7,7 @@
 
 <p align="center">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-yellow">
-  <img alt="Node.js 20+" src="https://img.shields.io/badge/node-20%2B-green">
+  <img alt="Node.js 22+" src="https://img.shields.io/badge/node-22%2B-green">
   <img alt="Zero Dependencies" src="https://img.shields.io/badge/runtime%20deps-zero-brightgreen">
   <img alt="Works Offline" src="https://img.shields.io/badge/works-offline-blue">
   <img alt="Agents" src="https://img.shields.io/badge/agents-Claude%20%7C%20Codex%20%7C%20Gemini%20%7C%20OpenCode%20%7C%20Antigravity-purple">
@@ -99,11 +99,17 @@ curl http://localhost:8082/health
 # {"status":"ok","qdrant":{"status":"ok"},"fileStore":{"status":"ok"}}
 ```
 
-Running `node server.js` directly (outside Docker) listens on all interfaces. Set
-`server.authToken` in `~/.experience/config.json` before exposing it, or bind it to
-loopback with `server.host: "127.0.0.1"` (env `EXP_SERVER_HOST`) when it sits behind a
-reverse proxy. The server logs `server_unauthenticated` at startup if it is reachable
-without a token.
+Running `node server.js` directly: without `server.authToken` in
+`~/.experience/config.json` it listens on `127.0.0.1` only; with a token it listens on
+all interfaces so thin clients can reach it. Override either way with `server.host`
+(env `EXP_SERVER_HOST`). The server logs `server_unauthenticated` at startup if it is
+exposed without a token.
+
+The Docker image runs the server as the unprivileged `node` user with its data at
+`/home/node/.experience`. Upgrading from an image before 0.9 (root, `/root/.experience`)
+needs no manual step with `docker compose`: the `experience_data` volume is remounted at
+the new path and its ownership is fixed on first start. If you mount the volume yourself,
+point it at `/home/node/.experience`.
 
 Then run `npx @muonroi/experience-engine init` (or `bash .experience/setup.sh` for the full local-install wizard) to wire your agent to it.
 
@@ -147,7 +153,7 @@ running setup/upgrade and the injection is skipped.
 
 ## Requirements
 
-- Node.js 20+
+- Node.js 22+
 - One of: Docker · Qdrant Cloud (free tier) · VPS with Qdrant
 - One of: Ollama (free, local) · API key for any supported provider
 

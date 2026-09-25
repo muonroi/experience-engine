@@ -2,7 +2,7 @@
 /**
  * experience-core.js — Thin facade for Experience Engine modules.
  * Used by Claude Code, Gemini CLI, and Codex CLI hooks.
- * Zero npm dependencies. Node.js 20 native fetch only.
+ * Zero npm dependencies. Node.js 22+ native fetch only.
  *
  * API:
  *   intercept(toolName, toolInput, signal) → string | null

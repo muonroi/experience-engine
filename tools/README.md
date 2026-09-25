@@ -54,7 +54,7 @@ Reads `feedback_*.md` files, converts them to behavioral rules (Tier 1) or princ
 ### Prerequisites
 
 - Run `bash .experience/setup.sh` first (configures provider, creates Qdrant collections)
-- Node.js 20+
+- Node.js 22+
 
 ### Usage
 

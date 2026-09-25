@@ -119,7 +119,7 @@ if [ -f "$CONFIG_PATH" ]; then
   # in the case statement with no useful error.
   if ! command -v node >/dev/null 2>&1; then
     echo "[upgrade] Node.js is required to detect install mode but was not found in PATH." >&2
-    echo "[upgrade] Install Node.js 20+ and re-run: bash upgrade.sh" >&2
+    echo "[upgrade] Install Node.js 22+ and re-run: bash upgrade.sh" >&2
     exit 1
   fi
   if ! MODE=$(node -e "

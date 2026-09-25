@@ -25,7 +25,7 @@ node tools/test-activity-log.js # Activity logging tests
 node tools/test-exp-stats.js    # Observability CLI tests
 ```
 
-All tests must pass with zero dependencies — Node.js 20+ only.
+All tests must pass with zero dependencies — Node.js 22+ only.
 
 ## Code Style
 

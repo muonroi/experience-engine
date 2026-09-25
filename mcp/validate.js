@@ -4,7 +4,7 @@
  * mcp/validate.js — tiny JSON-Schema-subset validator.
  *
  * Stands in for zod. experience-engine is zero-runtime-dependency by policy
- * ("Zero npm dependencies. Node.js 20 native fetch only." — experience-core.js),
+ * ("Zero npm dependencies. Node.js 22+ native fetch only." — experience-core.js),
  * and MCP tool inputs are a handful of flat scalars, so a dependency that pulls
  * a whole schema engine to check `typeof x === 'string'` is not a trade worth
  * making.
