@@ -17,7 +17,7 @@
  *   schtasks /create /sc MINUTE /mo 30 /tn "ExperienceExtractor" /tr "node %USERPROFILE%\.experience\tools\background-extractor.js"
  *
  * Setup (cron on Linux/macOS):
- *   */30 * * * * node ~/.experience/tools/background-extractor.js >> ~/.experience/logs/background-extract.log 2>&1
+ *   0,30 * * * * node ~/.experience/tools/background-extractor.js >> ~/.experience/logs/background-extract.log 2>&1
  *
  * Or run continuously with --watch:
  *   node tools/background-extractor.js --watch --interval 1800
