@@ -255,6 +255,7 @@ async function main() {
     process.exit(0);
   }
 
+  /** @type {any[]} */
   const reports = [];
   for (const file of files) {
     if (!args.quiet) process.stderr.write(`Replaying ${path.basename(file)}…\n`);

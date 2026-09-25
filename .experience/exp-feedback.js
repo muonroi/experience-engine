@@ -89,7 +89,7 @@ async function sendFeedback(payload, homeDir = os.homedir()) {
   try { json = JSON.parse(text); } catch {}
   if (!res.ok) {
     const message = json?.error || text || `HTTP ${res.status}`;
-    const error = new Error(message);
+    const error = /** @type {Error & {status?: number}} */ (new Error(message));
     error.status = res.status;
     throw error;
   }

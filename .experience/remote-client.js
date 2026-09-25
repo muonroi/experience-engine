@@ -92,6 +92,7 @@ function getExtractTimeoutMs(config = loadConfig()) {
 }
 
 function buildHeaders(config = loadConfig(), extraHeaders = {}) {
+  /** @type {Record<string, string>} */
   const headers = { ...extraHeaders };
   const token = getServerAuthToken(config);
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -142,7 +143,7 @@ async function requestJson(method, requestPath, body, options = {}) {
   }
 
   if (!res.ok) {
-    const error = new Error(json?.error || text || `${method} ${requestPath} failed`);
+    const error = /** @type {Error & {status?: number, body?: any}} */ (new Error(json?.error || text || `${method} ${requestPath} failed`));
     error.status = res.status;
     error.body = json;
     throw error;

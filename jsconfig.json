@@ -19,6 +19,9 @@
     "lib/**/*.js",
     ".experience/src/**/*.js",
     "mcp/**/*.js",
-    "bin/**/*.js"
+    "bin/**/*.js",
+    "tools/**/*.js",
+    ".experience/*.js",
+    ".experience/tools/*.js"
   ]
 }

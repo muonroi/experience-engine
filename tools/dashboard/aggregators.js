@@ -311,7 +311,8 @@ function computeFunnel(events) {
     '30d': now - 30 * 86_400_000,
   };
 
-  const out = {};
+  /** @type {{ "7d": object, "30d": object }} */
+  const out = /** @type {any} */ ({});
   for (const [label, cutoff] of Object.entries(windows)) {
     let surfaced = 0, followed = 0, ignored = 0, noise = 0;
     for (const ev of events) {
@@ -514,7 +515,7 @@ function fmtDuration(ms) {
  *
  * @param {Array} events — typed events from activity-parser
  * @param {Map} qdrantIdx — output of indexQdrantPoints (dual-keyed)
- * @param {{ limit?: number, minHints?: number }} opts
+ * @param {{ limit?: number, minHints?: number, silentSessionMinIntercepts?: number, windowDays?: number }} [opts]
  */
 function computeSessions(events, qdrantIdx, opts = {}) {
   const limit = opts.limit ?? 50;

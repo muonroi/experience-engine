@@ -66,12 +66,12 @@ function suppressHookOutput() {
     if (text) muted.push({ stream, text });
     return true;
   };
-  process.stdout.write = ((chunk, encoding, callback) => {
+  process.stdout.write = /** @type {any} */ ((chunk, encoding, callback) => {
     if (typeof encoding === 'function') encoding();
     if (typeof callback === 'function') callback();
     return capture('stdout', chunk);
   });
-  process.stderr.write = ((chunk, encoding, callback) => {
+  process.stderr.write = /** @type {any} */ ((chunk, encoding, callback) => {
     if (typeof encoding === 'function') encoding();
     if (typeof callback === 'function') callback();
     return capture('stderr', chunk);

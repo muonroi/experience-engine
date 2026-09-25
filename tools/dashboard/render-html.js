@@ -487,13 +487,6 @@ const CSS = `
   .surface .query { color: #444; flex: 1; }
 `;
 
-/**
- * Render full HTML page from dashboard snapshot.
- *
- * @param {object} snapshot — matches schema.md top-level shape
- * @returns {string} self-contained HTML document
- */
-
 function renderStore(store) {
   if (!store || !store.total) {
     return '<section><h2>D. Store Distribution</h2><p class="muted">No store data available.</p></section>';
@@ -578,6 +571,12 @@ function renderStore(store) {
     + '</section>';
 }
 
+/**
+ * Render full HTML page from dashboard snapshot.
+ *
+ * @param {object} snapshot - matches schema.md top-level shape
+ * @returns {string} self-contained HTML document
+ */
 function renderHtml(snapshot) {
   const generated = snapshot.generatedAt || new Date().toISOString();
   const win = snapshot.dataWindow || {};
