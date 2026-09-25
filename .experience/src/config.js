@@ -102,6 +102,31 @@ function numericCfg(key, envKey, fallback, min, max) {
   return whole;
 }
 
+// Shares and probabilities are fractions, so numericCfg (which truncates to an
+// integer) would turn 0.15 into 0. cfgValue returns env values as strings and the
+// config file wins over env, same as every other key. Contract (spec §3 A2):
+//   - a number or numeric string inside [min, max] is used as is;
+//   - outside the band it is CLAMPED to the nearest bound (a holdout share of 0.8
+//     is a typo for "a lot", and the bound — not the default — is the closest safe
+//     reading), and the rejection is logged;
+//   - anything else (NaN, '', true, [0.1], 'ten percent') falls back and is logged.
+// The log line is what makes a silently-ignored experiment setting visible.
+function floatCfg(key, envKey, fallback, min, max) {
+  const raw = cfgValue(key, envKey, fallback);
+  if (raw === fallback) return fallback;
+  const parsed = (typeof raw === 'number' || (typeof raw === 'string' && raw.trim() !== '')) ? Number(raw) : NaN;
+  if (!Number.isFinite(parsed)) {
+    activityLog({ op: 'config-rejected', key, value: String(raw).slice(0, 40), min, max, using: fallback });
+    return fallback;
+  }
+  if (parsed < min || parsed > max) {
+    const clamped = Math.min(max, Math.max(min, parsed));
+    activityLog({ op: 'config-rejected', key, value: String(raw).slice(0, 40), min, max, using: clamped });
+    return clamped;
+  }
+  return parsed;
+}
+
 function cfgNestedValue(key, nestedPath, envKey, fallback) {
   const cfg = getConfig();
   const nested = nestedPath.reduce((value, part) => (
@@ -457,6 +482,27 @@ function getRunbookStitchMin() {
   return Number.isFinite(n) && n >= 2 ? Math.round(n) : 3;
 }
 
+// --- Measured engine lift: session-level holdout (spec §3 A1-A3) ---
+// experimentHoldoutShare: fraction of sessions assigned to the CONTROL arm, which
+// gets no passive engine output at all. Default 0 = no experiment, no experiment
+// log, every path identical to before. Capped at 0.5: a control arm larger than
+// the treatment arm is never the intent and halves the product for nothing.
+function getExperimentHoldoutShare() {
+  return floatCfg('experimentHoldoutShare', 'EXPERIENCE_EXPERIMENT_HOLDOUT_SHARE', 0, 0, 0.5);
+}
+// Changing the salt re-randomises every session — the way to start a fresh
+// experiment without the previous one's assignment leaking into it.
+function getExperimentSalt() {
+  const v = cfgValue('experimentSalt', 'EXPERIENCE_EXPERIMENT_SALT', 'v1');
+  return (typeof v === 'string' || typeof v === 'number') && String(v).trim() ? String(v).trim() : 'v1';
+}
+// Dedicated append-only log: activity.jsonl rotates at 10 MB into ONE overwritten
+// .1 file (~20 MB retained), which a 2-4 week experiment would outrun.
+function getExperimentLogPath() {
+  const v = cfgValue('experimentLog', 'EXPERIENCE_EXPERIMENT_LOG', '');
+  return typeof v === 'string' && v.trim() ? v.trim() : pathMod.join(getHomeExpDir(), 'experiment.jsonl');
+}
+
 // --- Activity Log ---
 let _activityLog = null;
 
@@ -472,7 +518,7 @@ function activityLog(event) {
 
 module.exports = {
   getConfig, refreshConfig, cfgValue, cfgNestedValue,
-  numericCfg,
+  numericCfg, floatCfg,
   getQdrantBase, getQdrantApiKey,
   getOllamaBase, getOllamaEmbedUrl, getOllamaGenerateUrl,
   getEmbedProvider, getEmbedModel, getOllamaEmbedModel, getEmbedEndpoint, getEmbedKey, getEmbedDim, getEmbedTimeoutMs,
@@ -488,6 +534,7 @@ module.exports = {
   getPrivacyLevel, getProfilePath, getSignalWindowDays,
   getRiskGateEnabled, getRiskKeywords, DEFAULT_RISK_KEYWORDS,
   getRunbookNudgeEnabled, getRunbookStitchMin,
+  getExperimentHoldoutShare, getExperimentSalt, getExperimentLogPath,
   COLLECTIONS, SELFQA_COLLECTION, EDGE_COLLECTION, ROUTES_COLLECTION,
   DEDUP_THRESHOLD, QUERY_MAX_CHARS, COMPACT_DIM,
   VALID_FEEDBACK_VERDICTS, VALID_NOISE_REASONS, VALID_NOISE_DISPOSITIONS, VALID_NOISE_SOURCES,

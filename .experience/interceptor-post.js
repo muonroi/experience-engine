@@ -63,6 +63,17 @@ function loadToolOutcome() {
   return _toolOutcome;
 }
 
+let _experiment = null;
+function loadExperiment() {
+  if (_experiment !== null) return _experiment;
+  try { _experiment = require(path.join(EXP_DIR, 'src', 'experiment.js')); }
+  catch {
+    try { _experiment = require(path.join(__dirname, 'src', 'experiment.js')); }
+    catch { _experiment = false; }
+  }
+  return _experiment;
+}
+
 /**
  * Experiment-grade outcome fields for this call, or null when the classifier is
  * unavailable. Logged NEXT TO the legacy toolOutcome, never instead of it — the
@@ -328,7 +339,24 @@ process.stdin.on('end', async () => {
       }
     }
 
-    // Failure event, local mode: the 'parsed' log above is the outcome record.
+    // Local mode: the experiment outcome event (remote mode: the server writes it).
+    // Only while an experiment is active; both arms.
+    if (outcome) {
+      const experiment = loadExperiment();
+      try {
+        if (experiment && experiment.isExperimentActive()) {
+          experiment.noteHoldoutFor(sourceMeta.sourceSession, outcome.runtime);
+          experiment.logOutcome({
+            sessionId: sourceMeta.sourceSession, toolUseId: outcome.toolUseId, tool: toolName,
+            inputHash: outcome.inputHash, failure: outcome.failure,
+            toolOutcome: classifyOutcome(toolName, toolInput, toolOutput),
+            clientTs: outcome.clientTs, runtime: outcome.runtime, hookEvent: outcome.hookEvent,
+          });
+        }
+      } catch { /* the experiment must never break the hook */ }
+    }
+
+    // Failure event, local mode: the outcome records above are all it does.
     // Leave reconcile, the judge and last-suggestions.json exactly as they were
     // before this event was wired.
     if (isFailureEvent) {

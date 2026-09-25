@@ -9,6 +9,7 @@ const { error, json, readBody, slog } = require('../http');
 const { QDRANT_BASE, RUNTIME_JUDGE_WORKER_PATH, TMP_DIR, deriveCallerMeta, loadExperienceCore, qdrantHeaders } = require('../config');
 const { KNOWN_COLLECTIONS } = require('./knowledge');
 const toolOutcome = require('../../.experience/src/tool-outcome');
+const experimentLog = require('../../.experience/src/experiment');
 
 async function handleIntercept(req, res) {
   const body = await readBody(req);
@@ -43,7 +44,12 @@ async function handleIntercept(req, res) {
 
   // skipRoute=true lets latency-sensitive callers (e.g. CLI hook fast-path)
   // bypass the model-routing side-effect of intercept and only get suggestions.
-  const options = { skipRoute: !!body.skipRoute };
+  // toolUseId / hookEvent only label the experiment's exposure event.
+  const options = {
+    skipRoute: !!body.skipRoute,
+    ...(typeof body.toolUseId === 'string' && body.toolUseId ? { toolUseId: body.toolUseId } : {}),
+    ...(typeof body.hookEvent === 'string' && body.hookEvent ? { hookEvent: body.hookEvent } : {}),
+  };
   const { interceptWithMeta, intercept: interceptFresh } = loadExperienceCore();
   const resultMeta = typeof interceptWithMeta === 'function'
     ? await interceptWithMeta(body.toolName, body.toolInput || {}, undefined, meta, options)
@@ -52,6 +58,12 @@ async function handleIntercept(req, res) {
       surfacedIds: [],
       route: null,
     };
+  // Holdout control session (spec §3 A3): no passive engine output at all — that
+  // includes the deterministic static-rule hints, which are guidance like any other.
+  // The marker tells the hook to skip its own nudges as well.
+  if (resultMeta?.experiment?.arm === 'control') {
+    return json(res, { suggestions: null, hasSuggestions: false, surfacedIds: [], route: null, experiment: resultMeta.experiment });
+  }
   let result = resultMeta?.suggestions ?? null;
   let surfacedIds = resultMeta?.surfacedIds || [];
   if (staticHints.length) {
@@ -75,6 +87,8 @@ async function handleIntercept(req, res) {
     hasSuggestions: result !== null,
     surfacedIds: surfacedIds,
     route: resultMeta?.route || null,
+    // Present only while an experiment is active (treatment sessions).
+    ...(resultMeta?.experiment ? { experiment: resultMeta.experiment } : {}),
   });
 }
 
@@ -120,11 +134,14 @@ async function handlePostToolBatch(req, res) {
   };
   const { interceptWithMeta } = loadExperienceCore();
   if (typeof interceptWithMeta !== 'function') return json(res, { hint: null });
-  const resultMeta = await interceptWithMeta('PostToolBatch', reprToolInput, undefined, meta, { skipRoute: true });
+  const resultMeta = await interceptWithMeta('PostToolBatch', reprToolInput, undefined, meta, { skipRoute: true, hookEvent: 'PostToolBatch' });
+  // A control session's interceptWithMeta already returns no hint; the marker
+  // rides along only while an experiment is active.
   json(res, {
     hint: resultMeta?.suggestions ?? null,
     surfacedIds: resultMeta?.surfacedIds || [],
     batchSize: tools.length,
+    ...(resultMeta?.experiment ? { experiment: resultMeta.experiment } : {}),
   });
 }
 
@@ -208,6 +225,16 @@ async function handlePostTool(req, res) {
       sourceKind: meta.sourceKind,
       sourceRuntime: meta.sourceRuntime,
       sourceSession: meta.sourceSession,
+    });
+  }
+  // Experiment outcome event (both arms; the analyzer needs the control arm's
+  // failures most). Written only while an experiment is active.
+  if (experimentLog.isExperimentActive()) {
+    experimentLog.noteHoldoutFor(meta.sourceSession, outcome.runtime);
+    experimentLog.logOutcome({
+      sessionId: meta.sourceSession, toolUseId: outcome.toolUseId, tool: toolName,
+      inputHash: outcome.inputHash, failure: outcome.failure, toolOutcome: legacyOutcome,
+      clientTs: outcome.clientTs, runtime: outcome.runtime, hookEvent: outcome.hookEvent,
     });
   }
   if (isFailureEvent) {

@@ -35,6 +35,7 @@ const path = require('path');
 const os = require('os');
 
 const { isMutatingTool } = require('../.experience/src/tool-outcome');
+const { readJsonl, listLogFiles } = require('../.experience/src/experiment');
 
 const DAY_MS = 86400000;
 const GO_MIN_BASELINE_RATE = 0.02;
@@ -44,32 +45,8 @@ const GO_MAX_RELATIVE_MDE = 0.25;
 const MIN_STRICT_CALLS = 200;
 
 // --- log reading -----------------------------------------------------------------
-
-function readJsonl(filePath) {
-  const out = [];
-  let text;
-  try { text = fs.readFileSync(filePath, 'utf8'); } catch { return out; }
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    try { out.push(JSON.parse(line)); } catch { /* skip malformed */ }
-  }
-  return out;
-}
-
-/**
- * The live experiment log plus every rotated, date-stamped sibling
- * (`experiment.jsonl.<stamp>`), oldest first. Rotation never overwrites.
- */
-function listLogFiles(basePath) {
-  const dir = path.dirname(basePath);
-  const base = path.basename(basePath);
-  let names = [];
-  try { names = fs.readdirSync(dir); } catch { return []; }
-  const rotated = names.filter((n) => n.startsWith(base + '.')).sort();
-  const files = rotated.map((n) => path.join(dir, n));
-  if (names.includes(base)) files.push(basePath);
-  return files;
-}
+// readJsonl / listLogFiles live with the writer (src/experiment.js), which owns the
+// rotation naming they must match.
 
 function normalizeActivityRecord(rec) {
   const isHookShape = rec.op === 'hook' && rec.hook === 'interceptor-post' && rec.stage === 'parsed';

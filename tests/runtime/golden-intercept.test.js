@@ -231,3 +231,105 @@ test('golden: the fixture exercises the gates it is meant to pin', () => {
   assert.ok(!JSON.stringify(snap).includes(ID(103).slice(0, 8) + ' col'), 'superseded entry never shown');
 });
 
+
+// --- Phase A: session holdout ----------------------------------------------------
+// Treatment sessions must be byte-identical to the golden; control sessions must
+// get no passive output and trigger none of the writers. Salts are searched
+// deterministically so the fixture's session ids land in the arm under test.
+
+const _experiment = require(path.join(SRC, 'experiment.js'));
+const EXPERIMENT_LOG = path.join(TEST_HOME, 'exp', 'experiment.jsonl');
+
+function findSalt(predicate) {
+  for (let i = 0; i < 10000; i++) {
+    const salt = `golden-${i}`;
+    if (predicate((sid) => _experiment.holdoutArm(sid, { share: 0.5, salt })?.arm)) return salt;
+  }
+  throw new Error('no salt found');
+}
+
+const GOLDEN_SESSIONS = [...new Set(SCENARIOS.map((sc) => sc.meta.sourceSession).filter(Boolean))];
+
+function stripExperiment(record) {
+  const copy = clone(record);
+  for (const v of Object.values(copy)) if (v.result) delete v.result.experiment;
+  return copy;
+}
+
+test('holdout: treatment sessions are unchanged vs golden, and each intercept logs one exposure', async () => {
+  const salt = findSalt((arm) => GOLDEN_SESSIONS.every((sid) => arm(sid) === 'treatment'));
+  fs.rmSync(path.dirname(EXPERIMENT_LOG), { recursive: true, force: true });
+  _experiment._resetForTests();
+  const actual = await runScenarios({ experimentHoldoutShare: 0.5, experimentSalt: salt, experimentLog: EXPERIMENT_LOG });
+  const expected = JSON.parse(fs.readFileSync(SNAPSHOT_PATH, 'utf8'));
+  assert.deepStrictEqual(stripExperiment(actual), expected);
+
+  const marked = Object.entries(actual).filter(([, v]) => v.result && v.result.experiment).map(([k]) => k);
+  assert.deepEqual(marked, ['edit-ts-first', 'edit-ts-repeat', 'edit-ts-third', 'bash-npm-test', 'codex-prompt', 'claude-prompt', 'posttool-batch', 'fast']);
+  assert.ok(marked.every((k) => actual[k].result.experiment.arm === 'treatment'));
+
+  const events = _experiment.readExperimentLog(EXPERIMENT_LOG);
+  const exposures = events.filter((e) => e.event === 'exposure');
+  assert.equal(exposures.length, marked.length, 'one exposure per treatment intercept; none for recall / no-session / read-only');
+  const first = exposures[0];
+  assert.deepEqual(first.shown, actual['edit-ts-first'].result.surfacedIds.map((s) => s.id), 'full ids, not 8-char prefixes');
+  assert.equal(first.hookEvent, 'PreToolUse');
+  assert.equal(first.interceptId, actual['edit-ts-first'].result.experiment.interceptId);
+  assert.equal(exposures.find((e) => e.tool === 'UserPrompt').hookEvent, 'UserPromptSubmit');
+  assert.equal(exposures.find((e) => e.tool === 'PostToolBatch').hookEvent, 'PostToolBatch');
+  // The graph-only neighbour is reported separately when its line was shown.
+  const graphSeen = Object.values(actual).some((v) => v.result && typeof v.result.suggestions === 'string' && v.result.suggestions.includes(`[id:${ID(401).slice(0, 8)} `) && v.result.experiment);
+  assert.equal(exposures.some((e) => e.graphShown.includes(ID(401))), graphSeen);
+  const arms = events.filter((e) => e.event === 'session-arm');
+  assert.deepEqual(arms.map((e) => e.sourceSession).sort(), GOLDEN_SESSIONS.filter((s) => s !== 'golden-s5' && s !== 'golden-s7').sort());
+});
+
+test('holdout: a control session gets no suggestions, no surfacedIds and triggers no writers', async () => {
+  const salt = findSalt((arm) => arm('golden-s1') === 'control');
+  fs.rmSync(path.dirname(EXPERIMENT_LOG), { recursive: true, force: true });
+  _experiment._resetForTests();
+  const actual = await runScenarios({ experimentHoldoutShare: 0.5, experimentSalt: salt, experimentLog: EXPERIMENT_LOG });
+  for (const name of ['edit-ts-first', 'edit-ts-repeat', 'edit-ts-third']) {
+    assert.deepStrictEqual(actual[name], {
+      result: { suggestions: null, surfacedIds: [], route: null, experiment: { arm: 'control' } },
+      recordSurface: [],
+      incrementIgnoreCount: [],
+      brainFilterCalls: 0,
+    }, name);
+  }
+  // trackSuggestions never ran for the control session: no session track file.
+  const trackFiles = fs.existsSync(SESSION_DIR) ? fs.readdirSync(SESSION_DIR) : [];
+  assert.ok(!trackFiles.some((f) => f.includes('golden-s1')), 'no session track for the control session');
+  const events = _experiment.readExperimentLog(EXPERIMENT_LOG);
+  assert.ok(!events.some((e) => e.event === 'exposure' && e.sourceSession === 'golden-s1'), 'control intercepts are not exposures');
+  assert.ok(events.some((e) => e.event === 'session-arm' && e.sourceSession === 'golden-s1' && e.arm === 'control'));
+});
+
+test('holdout: active recall is never held out', async () => {
+  const salt = findSalt((arm) => arm('golden-s5') === 'control');
+  fs.rmSync(path.dirname(EXPERIMENT_LOG), { recursive: true, force: true });
+  const actual = await runScenarios({ experimentHoldoutShare: 0.5, experimentSalt: salt, experimentLog: EXPERIMENT_LOG });
+  const expected = JSON.parse(fs.readFileSync(SNAPSHOT_PATH, 'utf8'));
+  assert.deepStrictEqual(actual.recall, expected.recall);
+});
+
+test('holdout: graph-expanded lines are reported as graphShown, not shown', async () => {
+  // The golden graph neighbour scores below the search floor on the passive path;
+  // the real fetchPointById returns score 1.0, which lets the line through.
+  const salt = findSalt((arm) => arm('golden-s1') === 'treatment');
+  const savedFetch = _qdrant.fetchPointById;
+  _qdrant.fetchPointById = async (collection, id) => (collection === 'experience-selfqa' && id === ID(401) ? { ...clone(GRAPH_ONLY), score: 1.0 } : null);
+  try {
+    fs.rmSync(path.dirname(EXPERIMENT_LOG), { recursive: true, force: true });
+    _experiment._resetForTests();
+    const actual = await runScenarios({ experimentHoldoutShare: 0.5, experimentSalt: salt, experimentLog: EXPERIMENT_LOG });
+    const first = actual['edit-ts-first'].result;
+    assert.ok(first.suggestions.includes(`[id:${ID(401).slice(0, 8)} `), 'graph line shown');
+    assert.ok(!first.surfacedIds.some((s) => s.id === ID(401)), 'graph lines never enter surfacedIds');
+    const exposure = _experiment.readExperimentLog(EXPERIMENT_LOG).find((e) => e.event === 'exposure' && e.interceptId === first.experiment.interceptId);
+    assert.deepEqual(exposure.graphShown, [ID(401)]);
+    assert.ok(!exposure.shown.includes(ID(401)));
+  } finally {
+    _qdrant.fetchPointById = savedFetch;
+  }
+});

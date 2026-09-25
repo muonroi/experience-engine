@@ -98,6 +98,25 @@ function _loadInstalled(rel) {
 }
 const _surfaceTrigger = _loadInstalled('src/surface-trigger.js');
 
+// Session-holdout arm (docs/specs/2026-09-25-hint-lift-and-bayesian-confidence.md
+// §3 A3). A control session must get no passive engine output — including the
+// risk-gate nudge this hook appends on its own. The server's `experiment` marker
+// decides (and is remembered for later hooks of the session); local mode computes
+// the same arm from the same config; failing both, an arm remembered from an
+// earlier hook. null = not in an experiment.
+function resolveExperimentArm(sessionId, marker) {
+  const remote = getRemoteClient();
+  if (marker && typeof marker.arm === 'string') {
+    try { if (remote) remote.rememberExperimentArm(sessionId, marker); } catch {}
+    return marker.arm;
+  }
+  if (!isRemoteMode()) {
+    const experiment = _loadInstalled('src/experiment.js');
+    try { return experiment ? (experiment.holdoutArm(sessionId)?.arm || null) : null; } catch { return null; }
+  }
+  try { return remote ? remote.recallExperimentArm(sessionId) : null; } catch { return null; }
+}
+
 // Tool-level risk gate (PreToolUse): a one-line nudge when a command keyword or a
 // cross-repo file path is touched and nothing relevant surfaced. No extra recall
 // here — the intercept already searched; this just flags the risk + points at
@@ -410,13 +429,14 @@ process.stdin.on('end', async () => {
           toolInput,
           cwd: data.cwd || process.cwd(),
           ...sourceMeta,
+          ...(data.tool_use_id ? { toolUseId: data.tool_use_id } : {}),
           }, { config });
         }
       }
 
       const corePath = path.join(os.homedir(), '.experience', 'experience-core.js');
       const { interceptWithMeta: interceptMeta, intercept: localIntercept } = require(corePath);
-      if (interceptMeta) return interceptMeta(tool, toolInput, ctrl.signal, sourceMeta);
+      if (interceptMeta) return interceptMeta(tool, toolInput, ctrl.signal, sourceMeta, data.tool_use_id ? { toolUseId: data.tool_use_id } : undefined);
       return { suggestions: await localIntercept(tool, toolInput, ctrl.signal, sourceMeta), surfacedIds: [], route: null };
     })().catch(error => {
       if (ctrl.signal.aborted) {
@@ -537,7 +557,9 @@ process.stdin.on('end', async () => {
 
     // Risk gate: when nothing relevant surfaced for a risky tool step, append a
     // one-line nudge naming the trigger so the agent can recall or explicitly skip.
-    if (surfacedIds.length === 0) {
+    // Not for a holdout control session: an empty hint set there is the
+    // experiment, not a gap to nudge about.
+    if (surfacedIds.length === 0 && resolveExperimentArm(sourceMeta.sourceSession, resultMeta?.experiment) !== 'control') {
       const gate = buildToolRiskGate(tool, toolInput, data.cwd || process.cwd());
       if (gate && gate.line) {
         activityLog({ stage: 'risk_gate', tool, kind: gate.top.kind, topic: gate.top.topic, ...sourceMeta });

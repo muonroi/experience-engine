@@ -130,6 +130,30 @@ function deriveProjectSlug(cwd) {
   }
 }
 
+function _loadInstalled(rel) {
+  try { return require(path.join(EXP_DIR, rel)); }
+  catch {
+    try { return require(path.join(__dirname, rel)); }
+    catch { return null; }
+  }
+}
+
+function isRemoteMode() {
+  const remote = getRemoteClient();
+  if (!remote) return false;
+  try { return remote.isRemoteEnabled(remote.loadConfig()); } catch { return false; }
+}
+
+// Session holdout (docs/specs/2026-09-25-hint-lift-and-bayesian-confidence.md
+// §3 A3): the brief is passive engine output, so a control session gets none.
+// Local mode knows the arm up front (same hash, same config). Remote mode learns
+// it from the server's `experiment` marker on the brief response.
+function localHoldoutArm(sessionId) {
+  if (isRemoteMode()) return null;
+  const experiment = _loadInstalled('src/experiment.js');
+  try { return experiment ? (experiment.holdoutArm(sessionId)?.arm || null) : null; } catch { return null; }
+}
+
 function clientCachePath(slug) {
   return path.join(EXP_DIR, 'tmp', `brief-${String(slug).replace(/[^a-z0-9._-]/gi, '_')}.json`);
 }
@@ -141,10 +165,13 @@ function readClientCache(slug) {
   } catch { /* miss — fall through to a fresh fetch */ }
   return null;
 }
-function writeClientCache(slug, text) {
+// experimentActive: the server marked this response as part of an experiment. The
+// cache is per project, not per session, so a cached brief must not be replayed
+// into a new session whose arm only the server knows — such entries are refetched.
+function writeClientCache(slug, text, experimentActive = false) {
   try {
     fs.mkdirSync(path.join(EXP_DIR, 'tmp'), { recursive: true });
-    fs.writeFileSync(clientCachePath(slug), JSON.stringify({ ts: new Date().toISOString(), slug, text }), 'utf8');
+    fs.writeFileSync(clientCachePath(slug), JSON.stringify({ ts: new Date().toISOString(), slug, text, ...(experimentActive ? { experimentActive: true } : {}) }), 'utf8');
   } catch (err) {
     debugLog({ stage: 'cache_write_failed', slug, message: err?.message || String(err) });
   }
@@ -156,13 +183,23 @@ function withTimeout(promise, timeoutMs) {
   return Promise.race([promise, timeout]).finally(() => { if (timer) clearTimeout(timer); });
 }
 
-async function fetchBrief(slug, cwd) {
+// Returns the brief text (string|null), or { text, experiment } when the server
+// sent an experiment marker.
+async function fetchBrief(slug, cwd, sessionMeta = {}) {
   const remote = getRemoteClient();
   if (remote) {
     try {
       const config = remote.loadConfig();
       if (remote.isRemoteEnabled(config)) {
-        const res = await remote.postJsonForHook('/api/project-brief', { project: slug, cwd, limit: BRIEF_LIMIT }, { config });
+        const res = await remote.postJsonForHook('/api/project-brief', {
+          project: slug, cwd, limit: BRIEF_LIMIT,
+          ...(sessionMeta.sourceSession ? { sourceSession: sessionMeta.sourceSession } : {}),
+          ...(sessionMeta.sourceRuntime ? { sourceRuntime: sessionMeta.sourceRuntime } : {}),
+        }, { config });
+        if (res && res.experiment && typeof res.experiment.arm === 'string') {
+          try { remote.rememberExperimentArm(sessionMeta.sourceSession, res.experiment); } catch { /* best-effort */ }
+          return { text: res.experiment.arm === 'control' ? null : (res.text || null), experiment: res.experiment };
+        }
         return res?.text || null;
       }
     } catch (err) {
@@ -240,17 +277,24 @@ process.stdin.on('end', async () => {
     // (brief changes slowly); the profile is deliberately NOT cached here.
     let text = null;
     let fromCache = false;
-    if (slug) {
+    const sessionId = data.session_id || null;
+    const holdoutControl = slug && localHoldoutArm(sessionId) === 'control';
+    if (holdoutControl) {
+      debugLog({ stage: 'experiment_control', slug, note: 'no brief' });
+    } else if (slug) {
       const cached = readClientCache(slug);
-      if (cached) { text = cached.text || null; fromCache = true; }
+      if (cached && !cached.experimentActive) { text = cached.text || null; fromCache = true; }
       else {
         const mute = suppressHookOutput();
-        text = await withTimeout(fetchBrief(slug, cwd), INTERCEPT_TIMEOUT_MS);
+        const fetched = await withTimeout(fetchBrief(slug, cwd, { sourceSession: sessionId, sourceRuntime: RUNTIME_OVERRIDE || null }), INTERCEPT_TIMEOUT_MS);
         const muted = mute.restore();
         if (muted.length > 0) {
           debugLog({ stage: 'suppressed_output', count: muted.length, preview: muted.map(m => m.text).join('').slice(0, 240) });
         }
-        if (text) writeClientCache(slug, text);
+        const marked = fetched && typeof fetched === 'object';
+        text = marked ? fetched.text : fetched;
+        if (marked && fetched.experiment.arm === 'control') debugLog({ stage: 'experiment_control', slug, note: 'no brief' });
+        if (text) writeClientCache(slug, text, marked);
       }
     }
 

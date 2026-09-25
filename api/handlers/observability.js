@@ -7,6 +7,7 @@ const { computeStats, filterEvents, loadEvents, loadTop5, parseSince } = require
 const { checkGates } = require('../../tools/exp-gates');
 const { QDRANT_BASE, RUNTIME_DIR, deriveCallerMeta, loadExperienceCore, qdrantHeaders } = require('../config');
 const { error, json, readBody, slog } = require('../http');
+const experimentLog = require('../../.experience/src/experiment');
 
 // ── /api/projects — the slug directory ────────────────────────────────────────
 //
@@ -228,11 +229,15 @@ async function handleProjectBrief(req, res, url) {
   let project = null;
   let cwd = null;
   let limit;
+  let sessionId = null;
+  let runtime = null;
   if (req.method === 'POST') {
     const body = await readBody(req);
     project = typeof body?.project === 'string' ? body.project : null;
     cwd = typeof body?.cwd === 'string' ? body.cwd : null;
     if (Number.isFinite(body?.limit)) limit = body.limit;
+    sessionId = typeof body?.sourceSession === 'string' ? body.sourceSession : null;
+    runtime = typeof body?.sourceRuntime === 'string' ? body.sourceRuntime : null;
   } else {
     project = url.searchParams.get('project');
     cwd = url.searchParams.get('cwd');
@@ -244,9 +249,17 @@ async function handleProjectBrief(req, res, url) {
   if (!project) project = deriveCallerMeta({ project_slug: null, cwd }).project_slug;
   if (!project) return json(res, { text: null, entries: [], projectSlug: null, count: 0 });
 
+  // Holdout (spec §3 A3): the SessionStart brief is passive engine output, so a
+  // control session gets none. Only the hook's POST carries a session id; the
+  // dashboard GET is never in the experiment. null unless an experiment is active.
+  const holdout = experimentLog.noteHoldoutFor(sessionId, runtime);
+  if (holdout && holdout.arm === 'control') {
+    return json(res, { text: null, entries: [], projectSlug: project, count: 0, cached: false, experiment: { arm: 'control' } });
+  }
+
   const { buildProjectBrief } = loadExperienceCore();
   const brief = await buildProjectBrief(project, { limit });
-  return json(res, brief);
+  return json(res, holdout ? { ...brief, experiment: { arm: holdout.arm } } : brief);
 }
 
 function handleUser(req, res) {

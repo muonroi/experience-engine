@@ -302,6 +302,50 @@ function maybeSpawnExtractDrain(options = {}) {
   return true;
 }
 
+// --- Experiment arm memory (session holdout) -------------------------------------
+// The server marks every intercept / brief response of an active experiment with
+// `experiment: {arm}`; a control session must then get no passive engine output,
+// including the nudges the HOOKS add on their own (risk gate, prompt auto-recall).
+// A hook that times out waiting for the server has no marker, so each marker seen
+// is remembered per session here and consulted on the next hook of that session.
+// Best-effort: one small JSON file, pruned after a day.
+const ARM_MEMORY_TTL_MS = 24 * 60 * 60 * 1000;
+
+function armMemoryPath(homeDir = getHomeDir()) {
+  return path.join(getTmpDir(homeDir), 'experiment-arms.json');
+}
+
+function rememberExperimentArm(sessionId, marker, homeDir = getHomeDir()) {
+  const sid = String(sessionId || '').trim();
+  const arm = marker && typeof marker.arm === 'string' ? marker.arm : null;
+  if (!sid || !arm) return false;
+  try {
+    const file = armMemoryPath(homeDir);
+    const state = safeReadJson(file, {}) || {};
+    const cutoff = Date.now() - ARM_MEMORY_TTL_MS;
+    for (const key of Object.keys(state)) {
+      if (!state[key] || typeof state[key].ts !== 'number' || state[key].ts < cutoff) delete state[key];
+    }
+    if (state[sid] && state[sid].arm === arm) return true;
+    state[sid] = { arm, ts: Date.now() };
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(state));
+    fs.renameSync(tmp, file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function recallExperimentArm(sessionId, homeDir = getHomeDir()) {
+  const sid = String(sessionId || '').trim();
+  if (!sid) return null;
+  const entry = (safeReadJson(armMemoryPath(homeDir), {}) || {})[sid];
+  if (!entry || typeof entry.ts !== 'number' || Date.now() - entry.ts > ARM_MEMORY_TTL_MS) return null;
+  return typeof entry.arm === 'string' ? entry.arm : null;
+}
+
 module.exports = {
   DEFAULT_TIMEOUT_MS,
   DEFAULT_HOOK_TIMEOUT_MS,
@@ -327,4 +371,6 @@ module.exports = {
   getQueueDir,
   getQuarantineDir,
   isPermanentHttpError,
+  rememberExperimentArm,
+  recallExperimentArm,
 };

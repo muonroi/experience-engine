@@ -34,6 +34,7 @@ const _stance = require('./src/stance-weights');
 const _brief = require('./src/brief');
 const _fusion = require('./src/fusion');
 const _logger = require('./src/logger');
+const _experiment = require('./src/experiment');
 
 // Wire the config-level activityLog stub to the real file logger. config.js
 // exposes activityLog as a setter-guarded no-op (to avoid a require cycle with
@@ -98,6 +99,22 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   // exclusions / min-confidence) remain in force. See /api/recall (server.js).
   const recallMode = !!(options && options.recallMode);
   if (_intercept.isReadOnlyCommand(toolName, toolInput)) return { suggestions: null, surfacedIds: [] };
+
+  // Session holdout (docs/specs/2026-09-25-hint-lift-and-bayesian-confidence.md §3
+  // A3), resolved ONCE per intercept. null unless an experiment flag is on, so the
+  // default path is untouched. A control session gets no passive engine output:
+  // no search, so no suggestions, no recordSurface, no trackSuggestions — and the
+  // marker lets the hooks drop their own nudges too. Active recall is never held
+  // out (recallMode → no experiment): the CLI sends no session id to attribute it
+  // to, so the estimand is the effect of PASSIVE output only.
+  const experiment = recallMode ? null : _experiment.resolveInterceptExperiment(sourceMeta);
+  const holdout = experiment ? experiment.holdout : null;
+  if (holdout) {
+    _experiment.noteSessionArm({ sessionId: experiment.sessionId, experiment: holdout.experiment, arm: holdout.arm, salt: holdout.salt, runtime: experiment.runtime });
+    if (holdout.arm === 'control') {
+      return { suggestions: null, surfacedIds: [], route: null, experiment: { arm: 'control' } };
+    }
+  }
 
   const query = _utils.buildQuery(toolName, toolInput);
   const filePath = toolInput?.file_path || toolInput?.path || _utils.extractProjectPath(toolInput) || '';
@@ -455,6 +472,9 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     ];
   }
 
+  // Graph-expanded lines never enter surfacedIds; the exposure event lists them
+  // separately so the analyzer can count what the agent actually saw.
+  const graphLineIds = [];
   try {
     const allIds = [...r0, ...r1, ...r2].map(p => p.id).filter(Boolean);
     const seenIds = new Set(allIds);
@@ -471,6 +491,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
             const graphGate = _intercept.filterPromptHookPoints([graphPoint], toolName, sourceMeta);
             promptPrecisionRemoved += graphGate.removed.length;
             lines.push(..._format.applyBudget(_format.formatPoints(graphGate.kept, fmtOpts), 600));
+            for (const gp of graphGate.kept) graphLineIds.push(String(gp.id));
             break;
           }
         }
@@ -579,7 +600,23 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     suggestions = lines.join('\n---\n');
     suggestions += '\n───\nFeedback reasons: wrong_repo | wrong_language | wrong_task | stale_rule — or verdict:"IGNORED" if you chose to skip.';
   }
-  return { suggestions, surfacedIds: shownSurfacedMeta, route: routeResult || null };
+
+  // Treatment exposure: one event per intercept with the FULL ids the agent was
+  // shown (op:'intercept'.surfaced is capped at 8 and truncated to 8 chars).
+  let experimentMarker = null;
+  if (holdout) {
+    const interceptId = require('crypto').randomUUID();
+    const shown = shownSurfacedMeta.map(s => String(s.id));
+    const shownSet = new Set(shown);
+    const graphShown = [...new Set(graphLineIds)].filter(id => !shownSet.has(id) && shownIds.has(_session.shortPointId(id)));
+    _experiment.logExposure({
+      sessionId: experiment.sessionId, interceptId, tool: toolName,
+      toolUseId: options && options.toolUseId, hookEvent: options && options.hookEvent,
+      shown, graphShown, runtime: experiment.runtime, arm: holdout.arm,
+    });
+    experimentMarker = { arm: holdout.arm, interceptId };
+  }
+  return { suggestions, surfacedIds: shownSurfacedMeta, route: routeResult || null, ...(experimentMarker ? { experiment: experimentMarker } : {}) };
 }
 
 async function intercept(toolName, toolInput, signal, meta) {

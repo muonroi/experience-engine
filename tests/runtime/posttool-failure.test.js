@@ -167,3 +167,24 @@ test('server /api/posttool: failure event logs outcome fields and skips reconcil
     try { fs.rmSync(home, { recursive: true, force: true }); } catch { /* temp */ }
   }
 });
+
+test('local hook: with an experiment active, both events write an outcome to the experiment log', async () => {
+  const home = makeHome();
+  const log = path.join(home, 'exp', 'experiment.jsonl');
+  fs.writeFileSync(path.join(home, '.experience', 'config.json'), JSON.stringify({ experimentHoldoutShare: 0.5, experimentLog: log }));
+  await runHook(home, ['--event=failure'], { hook_event_name: 'PostToolUseFailure', session_id: 'sx', tool_use_id: 'u1', tool_name: 'Bash', tool_input: { command: 'make' }, error: 'exit 2' }, { CLAUDE_PROJECT_DIR: home });
+  await runHook(home, [], { hook_event_name: 'PostToolUse', session_id: 'sx', tool_use_id: 'u2', tool_name: 'Bash', tool_input: { command: 'make' }, tool_response: { exit_code: 0 } }, { CLAUDE_PROJECT_DIR: home });
+  const events = fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const outcomes = events.filter((e) => e.event === 'outcome');
+  assert.deepEqual(outcomes.map((e) => [e.toolUseId, e.failure, e.hookEvent]), [['u1', 'fail', 'PostToolUseFailure'], ['u2', 'ok', 'PostToolUse']]);
+  assert.equal(outcomes[0].inputHash, outcomes[1].inputHash, 'same command → same inputHash');
+  assert.equal(events.filter((e) => e.event === 'session-arm').length, 1);
+});
+
+test('local hook: no experiment → no experiment log', async () => {
+  const home = makeHome();
+  const log = path.join(home, 'exp', 'experiment.jsonl');
+  fs.writeFileSync(path.join(home, '.experience', 'config.json'), JSON.stringify({ experimentLog: log }));
+  await runHook(home, ['--event=failure'], { hook_event_name: 'PostToolUseFailure', session_id: 'sx', tool_name: 'Bash', tool_input: { command: 'make' } });
+  assert.equal(fs.existsSync(log), false);
+});

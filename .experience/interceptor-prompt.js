@@ -322,6 +322,24 @@ function _loadInstalled(rel) {
   }
 }
 const _surfaceTrigger = _loadInstalled('src/surface-trigger.js');
+
+// Session-holdout arm (docs/specs/2026-09-25-hint-lift-and-bayesian-confidence.md
+// §3 A3): a control session gets no passive engine output, so neither the risk
+// gate (with its targeted auto-recall) nor the legacy recall nudge. The server's
+// `experiment` marker decides and is remembered; local mode computes the same arm
+// from the same config; on a timed-out passive search, the remembered arm.
+function resolveExperimentArm(sessionId, marker) {
+  const remote = getRemoteClient();
+  if (marker && typeof marker.arm === 'string') {
+    try { if (remote) remote.rememberExperimentArm(sessionId, marker); } catch {}
+    return marker.arm;
+  }
+  if (!isRemoteMode()) {
+    const experiment = _loadInstalled('src/experiment.js');
+    try { return experiment ? (experiment.holdoutArm(sessionId)?.arm || null) : null; } catch { return null; }
+  }
+  try { return remote ? remote.recallExperimentArm(sessionId) : null; } catch { return null; }
+}
 // Default 2500ms: a fast recall (options.fast → no brain LLM rerank) returns in
 // ~1.5-2s, so this delivers the [id col] payload while keeping the synchronous
 // UserPromptSubmit hook responsive. The old 1500ms could not fit even a fast
@@ -502,6 +520,7 @@ process.stdin.on('end', async () => {
           toolInput,
           cwd: data.cwd || process.cwd(),
           ...sourceMeta,
+          hookEvent: 'UserPromptSubmit',
           }, { config });
         }
       }
@@ -519,7 +538,7 @@ process.stdin.on('end', async () => {
         activityLog({ stage: 'skip', reason: 'interceptWithMeta not exported', ...sourceMeta });
         return null;
       }
-      return interceptWithMeta('UserPrompt', toolInput, ctrl.signal, sourceMeta);
+      return interceptWithMeta('UserPrompt', toolInput, ctrl.signal, sourceMeta, { hookEvent: 'UserPromptSubmit' });
     })().catch(error => {
       if (ctrl.signal.aborted) {
         debugLog({ stage: 'aborted', message: error?.message || String(error) });
@@ -603,6 +622,13 @@ process.stdin.on('end', async () => {
     } else {
       debugLog({ stage: 'passive_timeout', note: 'continuing to risk gate' });
       activityLog({ stage: 'passive_timeout', ...sourceMeta });
+    }
+
+    // Holdout control session: stop here — no risk gate, no auto-recall, no nudge.
+    if (resolveExperimentArm(sourceMeta.sourceSession, passiveTimedOut ? null : resultMeta?.experiment) === 'control') {
+      debugLog({ stage: 'experiment_control', note: 'no passive output' });
+      activityLog({ stage: 'experiment_control', ...sourceMeta });
+      process.exitCode = 0; return;
     }
 
     // Conditional risk gate — fires only on a deterministic trigger (keyword/cross-repo).
