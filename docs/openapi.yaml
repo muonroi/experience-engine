@@ -92,6 +92,32 @@ components:
           type: string
         cwd:
           type: string
+        toolUseId:
+          type: string
+          description: Runtime tool-call id (Claude Code tool_use_id); labels the experiment exposure event only.
+        hookEvent:
+          type: string
+          description: Hook event that triggered the call (PreToolUse, UserPromptSubmit, PostToolBatch); labels the exposure event only.
+
+    ExperimentMarker:
+      type: object
+      description: >
+        Present only while an experiment is active (experimentHoldoutShare > 0 or
+        confidenceModel ab). `arm: control` means a session-level holdout control
+        session: the response carries no passive engine output, and hooks must add
+        none of their own (risk-gate nudge, prompt auto-recall, SessionStart brief).
+        See docs/specs/2026-09-25-hint-lift-and-bayesian-confidence.md.
+      properties:
+        arm:
+          type: string
+          enum: [control, treatment]
+        model:
+          type: string
+          enum: [legacy, beta]
+          description: confidenceModel ab arm, when assigned.
+        interceptId:
+          type: string
+          description: Joins this response to its experiment-log exposure event.
 
     InterceptResponse:
       type: object
@@ -126,6 +152,8 @@ components:
               type: number
             source:
               type: string
+        experiment:
+          $ref: '#/components/schemas/ExperimentMarker'
 
     PostToolRequest:
       type: object
@@ -146,6 +174,20 @@ components:
           type: string
         sourceSession:
           type: string
+        hookEvent:
+          type: string
+          description: >
+            PostToolUse (default) or PostToolUseFailure. A failure event records the
+            outcome only: no reconciliation, no judge.
+        toolUseId:
+          type: string
+        clientTs:
+          type: string
+          format: date-time
+          description: Client time of the tool call (offline-queued posttools are replayed later).
+        runtime:
+          type: string
+          description: Experiment runtime label (e.g. claude-code); falls back to sourceRuntime.
 
     ExtractRequest:
       type: object
@@ -178,6 +220,9 @@ components:
           type: boolean
           description: "Legacy: true=FOLLOWED, false=IGNORED"
           deprecated: true
+        sourceSession:
+          type: string
+          description: Optional. Lets the verdict replace a weaker verdict from the same session in betaEvidence.
 
     FeedbackResponse:
       type: object
@@ -670,6 +715,8 @@ paths:
                     nullable: true
                   count:
                     type: integer
+                  experiment:
+                    $ref: '#/components/schemas/ExperimentMarker'
     post:
       summary: Project Brief (hook transport)
       description: >
@@ -684,9 +731,13 @@ paths:
                 project: { type: string }
                 cwd: { type: string }
                 limit: { type: integer }
+                sourceSession:
+                  type: string
+                  description: Hook session id; a holdout control session gets no brief (text null, experiment.arm control).
+                sourceRuntime: { type: string }
       responses:
         '200':
-          description: Project brief
+          description: Project brief (same shape as GET, plus `experiment` while an experiment is active)
           content:
             application/json:
               schema:
@@ -937,6 +988,8 @@ paths:
                       type: object
                   batchSize:
                     type: integer
+                  experiment:
+                    $ref: '#/components/schemas/ExperimentMarker'
         '400':
           description: tools missing or not an array
           content:

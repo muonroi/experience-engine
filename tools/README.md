@@ -46,6 +46,26 @@ node tools/exp-holdout-harness.js --fixture ./fixtures/holdout.json --apply --js
 node tools/exp-holdout-harness.js --fixture ./fixtures/holdout --json
 ```
 
+## Engine lift and Bayesian confidence
+
+The experiment tools behind ADR-004 (`docs/adrs/004-measured-lift-and-bayesian-confidence.md`).
+All read-only.
+
+```bash
+# Phase A0: can a holdout detect anything? Prints GO / NO-GO with the reasons.
+node tools/exp-outcome-baseline.js --holdout-share 0.15 --weeks 3
+
+# Phase A: analyse the holdout (control − treatment); a decision only on/after --end-date.
+node tools/exp-engine-lift.js --end-date 2026-11-01
+# Phase B ab: beta − legacy with the pre-registered keep/kill rule.
+node tools/exp-engine-lift.js --compare model --end-date 2026-12-01
+
+# B0: legacy vs beta gate on the corpus (Qdrant by default, or --store / --from-file).
+node tools/exp-beta-replay.js --json
+```
+
+`exp-reset-ignore-count.js --beta` also clears the negative side of `betaEvidence`.
+
 ## experience-bulk-seed.js
 
 Bootstrap your experience brain from existing memory/feedback files.

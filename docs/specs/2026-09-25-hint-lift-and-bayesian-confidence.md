@@ -1,6 +1,7 @@
 # Plan: Measured engine lift (session holdout) + Bayesian confidence
 
-- **Status:** Revised after three independent reviews (v2)
+- **Status:** Implemented (2026-09-25), shipped dark — deviations in §6; decision record in
+  [ADR-004](../adrs/004-measured-lift-and-bayesian-confidence.md)
 - **Date:** 2026-09-25
 - **Hard constraints:** zero runtime npm dependencies; Node 22; with default config every
   surfaced hint, rank and payload decision is identical to today. The only default-on change is
@@ -219,3 +220,74 @@ difference (counts + up to 5 ids each way) to the experiment log.
   independence from the holdout; beta never changes recall, brief or evolve outputs.
 - Analyzers: synthetic experiment logs with a planted effect recover its sign and CI coverage;
   both posttool shapes parsed; sessions below the call minimum excluded.
+
+## 6. Implementation notes and deviations
+
+Implemented as planned unless listed. Where the plan was ambiguous, the choice that keeps
+default behaviour identical was taken.
+
+**A0**
+- `classifyToolFailure`, `inputHash` and a `detectHookRuntime` label live in
+  `.experience/src/tool-outcome.js`, shared by `interceptor-post.js`, `/api/posttool` and
+  the tools (one definition of "failed"). It takes an optional `runtime` so a Claude Code
+  `PostToolUse` counts as `ok` by contract; it also reads Codex's nested
+  `metadata.exit_code` and a JSON-string response (explicit fields, still no keywords), and
+  treats `exit_code 0`, `is_error: false`, `success: true` as `ok`.
+- The experiment runtime is a separate field: Claude hooks log `sourceRuntime`
+  `codex-windows`/`codex-wsl`, and `sourceKind` feeds payload fields, so neither was renamed.
+- The failure event records the outcome only: no reconcile, no judge, no
+  `last-suggestions.json` cleanup (the plan did not say; anything else changes hint evidence).
+- `exp-outcome-baseline.js` uses the strict `failure` field when >= 200 mutating calls carry
+  it, else the legacy `toolOutcome`, labelled as an upper bound (it always says NO-GO then).
+
+**A**
+- Once-per-session `session-arm` uses an in-process set plus exclusive-create marker files
+  in per-UTC-day directories; a session spanning midnight can log its arm twice (the arm is
+  deterministic, the analyzer dedupes).
+- A control intercept returns before the search, so it also has no model route; `/api/intercept`
+  drops static-rule hints too. The on-device "Who Am I" profile block (off by default) is
+  not engine knowledge and is still injected; only the brief is suppressed.
+- Hooks remember each marker per session (`~/.experience/tmp/experiment-arms.json`,
+  `remote-client.js`) so a timed-out search still honours a known control arm, and a brief
+  cached from a marked response is refetched rather than replayed into another session.
+  A remote hook with no marker yet (e.g. no brief because no project slug) cannot know the
+  arm, so a nudge can leak on a control session's first prompt.
+- The hook now sends `sourceSession` to `/api/project-brief`; hooks forward `toolUseId`
+  and `hookEvent` for the exposure event.
+- Exposure events are logged for any session in an active experiment (holdout treatment,
+  or any non-legacy confidence model) and carry the model arm; the response marker is
+  returned only for a holdout arm or an assigned `ab` arm.
+- `exp-engine-lift.js` excludes (and counts) calls whose `failure` is `unknown`, dedupes
+  outcomes by `toolUseId`, analyses the latest salt unless `--salt` is given, and applies
+  the §3 decision rule for `--compare model`.
+
+**B**
+- The bookkeeping is in a new `.experience/src/beta-evidence.js`; `bayes.js` stays pure
+  math (it also exports `fnv1a32`, `unitHash`, `lgamma`, `regularizedIncompleteBeta`). The
+  hash primitives landed with Phase A because assignment needs them.
+- `betaConfidence(data, ctx, pointId)`: the point id is a third argument (the draw needs
+  it). Evidence threshold `betaMinEvidence` (default 3), priors `betaPriorMeans` /
+  `betaPriorStrength` and `betaEvidenceWeights` are config tables.
+- Hard gate: legacy confidence < 0.2 does NOT catch every narrow-scope kill (`demote`
+  multiplies by 0.3, so a 0.7 seed lands at 0.21); an entry whose `demoteReason` starts
+  with `narrow-scope` is also a hard fail in beta mode.
+- Same-session replacement: an event of higher OR EQUAL priority replaces the earlier one
+  (latest verdict of the same authority wins); lower priority is dropped.
+- Writer mapping beyond the table: `phase-outcome` verdicts weigh as judge (automated
+  outcome mapping, not an explicit verdict); `recordHit` (no in-tree caller) is manual;
+  `bulk-seed` is not seed provenance, so it gets k = 4 and implicit evidence. The judge
+  queue now carries `sourceSession`; `/api/feedback` accepts an optional `sourceSession`.
+  `exp-feedback.js` sends none, so manual verdicts dedupe per session only for clients
+  that send it.
+- `exp-reset-ignore-count.js --beta` clears `neg` and drops negative session records (so a
+  later same-session replacement cannot subtract from a cleared `neg`).
+- `passesConfidenceGate` uses the `formatPoints` form `!(value < minConfidence)`. For any
+  numeric `minConfidence` this equals the surfaced filter's old `>=`; for a non-numeric
+  one the two copies used to disagree and now both follow `formatPoints`.
+- Shadow compares the budgeted lines before graph expansion, session dedupe and the brain
+  filter (identical for both models, and I/O or LLM cost a logging run must not spend).
+- `ab` without a session id decides legacy and is not assigned.
+- `updatePointPayload` returns the chained promise rather than being an `async function`;
+  the contract is unchanged.
+- B0 output is not committed to the ADR: this repository has no production corpus. The
+  ADR holds the placeholder, to be filled before `confidenceModel` leaves `legacy`.

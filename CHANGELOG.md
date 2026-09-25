@@ -13,7 +13,34 @@
   new path.
 - Node.js 22+ is required (`engines.node >=22`); Node 20 is end-of-life.
 
+### Added
+- **Measured engine lift** (docs/specs/2026-09-25-hint-lift-and-bayesian-confidence.md,
+  ADR-004), off by default:
+  - Claude Code's `PostToolUseFailure` is registered; failed tool calls are recorded
+    with a strict `failure` field (fail/ok/unknown from explicit signals only),
+    `inputHash` and `toolUseId`, next to the unchanged legacy `toolOutcome`. The
+    failure event runs no reconcile and no judge.
+  - `tools/exp-outcome-baseline.js`: baseline failure rate, sessions/week,
+    between-session variance and the MDE go/no-go for a holdout.
+  - Session-level holdout (`experimentHoldoutShare`, `experimentSalt`,
+    `experimentLog`): control sessions get no passive engine output (hints,
+    static-rule hints, risk-gate nudge, prompt auto-recall, SessionStart brief);
+    `/api/intercept`, `/api/posttool-batch` and `/api/project-brief` return an
+    `experiment` marker while an experiment is active. Events go to a dedicated
+    `experiment.jsonl` rotated into date-stamped files.
+  - `tools/exp-engine-lift.js`: session-cluster bootstrap analysis of the arms.
+- **Bayesian confidence**, `confidenceModel: legacy` by default:
+  - `betaEvidence` payload bookkeeping at every verdict writer (default on,
+    `betaEvidenceEnabled: false` to stop writing it; read by nothing in legacy mode).
+  - `confidenceModel: shadow | beta | ab` gates and ranks passive hints with a Beta
+    posterior (`betaMinConfidence`, `betaMinEvidence`, `betaPriorMeans`,
+    `betaPriorStrength`, `betaEvidenceWeights`, `confidenceAbShare`). Recall, the
+    brief, evolve and the tools stay on the legacy confidence.
+  - `tools/exp-beta-replay.js` (offline replay), `exp-reset-ignore-count.js --beta`.
+
 ### Fixed
+- Concurrent in-process updates to one point (`updatePointPayload`) could lose writes;
+  they are now serialised per point.
 - The npm package and Docker image did not ship `lib/`, so the server died with
   `MODULE_NOT_FOUND` on start. CI now boots the packed tarball and the image.
 - Lang/framework reconciliation ignored `opts.frameworkPackages`, so a `.ts` file in a

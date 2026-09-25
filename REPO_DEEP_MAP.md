@@ -116,7 +116,7 @@ Qdrant config is resolved through `.experience/src/config.js`, so both flat keys
 | `.experience/interceptor.js` | Agent hook entry; calls local core or remote client |
 | `.experience/interceptor-prompt.js` | UserPromptSubmit hook: similarity-gated experience hints + **active-recall nudge** (one-line reminder to PULL via `exp-recall` injected per prompt, but ONLY when no hint surfaced that turn — survives context compaction that buries SessionStart/CLAUDE.md). Disable with `EXPERIENCE_RECALL_NUDGE=0`. **Trivial-prompt gate is config-driven** (no longer hardcoded): `getMinPromptLength` (`minPromptLength` / `EXPERIENCE_MIN_PROMPT_LENGTH`, default 10) + `getPromptSkipRegex` (`promptSkipWords[]` or `EXPERIENCE_PROMPT_SKIP_WORDS`, multilingual default incl. vi greetings; full override via `promptSkipPattern` / `EXPERIENCE_PROMPT_SKIP_PATTERN`). Fails open to hardcoded defaults if config.js can't load |
 | `.experience/interceptor-session.js` | SessionStart hook; injects the breadth-first Project Brief once per session. Wired for Claude/Codex/Gemini/Antigravity (all expose a native SessionStart + `hookSpecificOutput.additionalContext`; Antigravity tagged `--runtime=antigravity`). **Also injects the "Who Am I" live profile block** (slice 2): composed FRESH on-device via `_loadProfileDeps()` → `getPrivacyLevel()` → `loadProfile()` → `renderProfileBlock()`, gated by privacy level (off ⇒ nothing), prepended to the brief in `additionalContext`. Independent of the slug (fires even with no project), never written to the brief cache. |
-| `.experience/interceptor-post.js` | Post-tool reconciliation hook |
+| `.experience/interceptor-post.js` | Post-tool reconciliation hook. Also Claude Code's `PostToolUseFailure` (registered with `--event=failure`): records the strict `failure` outcome, `inputHash`, `toolUseId` next to the legacy `toolOutcome` and does nothing else (no reconcile, no judge). Local mode writes the experiment `outcome` event while an experiment is active |
 | `.experience/posttool-batch-hook.js` | Batched post-tool hook path |
 | `.experience/experience-core.js` | Shared hook runtime facade and compatibility surface |
 | `.experience/judge-worker.js` | Background judge/evolution worker |
@@ -144,14 +144,18 @@ modules instead of reimplementing cross-cutting behavior.
 | `.experience/src/signal-detector.js` | "Who Am I" v4.0 slice 1 — **pure**, rule-based (NO-LLM) signal extraction from the compacted transcript + `activity.jsonl`. Emits weighted `{dimension,value,weight,evidence}` votes for the v4.0 dims: `communication.{question_style,feedback_style,brevity}`, `personality.{conflict_style,risk_tolerance,decision_speed}`, `work_patterns.{energy,multitasking,session_length,delegation_style}`. **`session_length` segments the prompt stream by `SESSION_GAP_MS` (same boundary as `decision_speed`) and emits ONE vote per multi-prompt session** (the window spans ~30 days, so never a naive last−first). **`delegation_style` (autonomous/collaborative) is transcript-derived** (via `classifyResponse`) so it can only commit at `standard`+ (the writer skips the transcript at `minimal`) → Tang 2 despite the `work_patterns.*` name. Also `detectRunbookCandidates`. Tested in `tests/signal-detector.test.js` |
 | `.experience/src/profile-render.js` | "Who Am I" v4.0 slice 2 — **pure** profile→directive renderer (no fs/wall-clock/`getPrivacyLevel` inside; caller passes `level` + `now`). `selectInjectableDims` (positive per-dim-NAME allowlist by tier + `ELIGIBLE_NAMESPACES` Tang-3 guard + per-tier confidence floor on top of the `value!=null` commit gate) and `renderProfileBlock` (marker-delimited `experience-profile:*` block, supersedes the static GSD profile by precedence). Tang-1 (`TIER_MINIMAL`) allowlist: `energy`, `multitasking`, `session_length`, `decision_speed`. Golden-tested in `tests/profile-render.test.js` |
 | `.experience/src/logger.js` | Structured JSON logger; `EXPERIENCE_LOG_LEVEL=debug` enables debug entries |
-| `.experience/src/qdrant.js` | Qdrant I/O, Qdrant health cache, FileStore fallback, FileStore locks |
+| `.experience/src/qdrant.js` | Qdrant I/O, Qdrant health cache, FileStore fallback, FileStore locks. `updatePointPayload` is chained per (collection, id) in-process so read-modify-writes do not lose updates |
 | `.experience/src/embedding.js` | Embedding provider + vector generation. Providers return `{vector, err}` (No-Silent-Catch: HTTP status/body + timeout/network classified, recorded as `errKind`/`status` on the embed cost-call). Per-request timeout configurable (`getEmbedTimeoutMs`, default 10s — provider tail-latency spikes >5s were being turned into hard failures by a fixed 5s abort) |
 | `.experience/src/sparse.js` | Zero-dep BM25 sparse-vector builder (`buildSparseVector`, `fnv1a32`): term-freq values + FNV-1a-hashed indices for Qdrant native idf-scored lexical retrieval. `SPARSE_VECTOR_NAME='text_bm25'` |
 | `.experience/src/brain-llm.js` | Brain LLM provider calls and fallback behavior |
 | `.experience/src/intercept.js` | Intercept pipeline and extraction orchestration |
 | `.experience/src/brief.js` | Project Brief builder: scroll project-scoped entries, rank by confidence×hits×recency, format 1-line index, per-project TTL cache |
 | `.experience/src/context.js` | Context retrieval and PIL context helpers |
-| `.experience/src/scoring.js` | Ranking, score gates, effective-score logic |
+| `.experience/src/scoring.js` | Ranking, score gates, effective-score logic. `computeEffectiveConfidence` (legacy, used by evolve/recall/brief/tools) is untouched; `betaConfidence(data, ctx)` and `passesConfidenceGate(point, data, ctx)` (the ONE confidence predicate shared by `formatPoints` and the surfaced filter) apply the Beta model only when the passive path passes a beta ctx (`buildConfidenceCtx`, resolved once per intercept) |
+| `.experience/src/experiment.js` | Session-level holdout (spec 2026-09-25): hash assignment `fmix32(fnv1a32(salt\|holdout\|session))`, `confidenceModel` ab arm (`\|model\|` tag), and the append-only `experiment.jsonl` (`EXPERIENCE_EXPERIMENT_LOG`) with `session-arm` / `exposure` / `outcome` / `confidence-shadow` events, rotated into date-stamped files. Everything is a no-op while `experimentHoldoutShare` is 0 and `confidenceModel` is legacy |
+| `.experience/src/bayes.js` | Pure math: `fnv1a32`/`fmix32`/`unitHash`, `lgamma`, regularised incomplete beta, `betaQuantile` (bisection, monotone), `posterior`, `posteriorMean` |
+| `.experience/src/beta-evidence.js` | `betaEvidence` payload bookkeeping: per-source weights, one outcome per (session, point) with manual > judge > implicit replacement, seed rule, initialisation before mutation, provenance priors (`priorFor`). Default on (`betaEvidenceEnabled`), read by nothing in legacy mode |
+| `.experience/src/tool-outcome.js` | Strict `classifyToolFailure` → fail/ok/unknown from explicit signals only (never output keywords), `inputHash`, `detectHookRuntime`. Shared by the post hook, `/api/posttool` and the analyzers |
 | `.experience/src/format.js` | Suggestion formatting and output filtering |
 | `.experience/src/evolution.js` | Lesson evolution and principle formation |
 | `.experience/src/noise.js` | Noise verdicts, suppression, ignored/irrelevant handling |
@@ -176,6 +180,9 @@ Agent hook
   -> local .experience/experience-core.js
      or remote .experience/remote-client.js -> server.js
   -> source metadata enrichment
+  -> experiment arm + confidence ctx, resolved once per intercept
+       (holdout control session → return now: no output, no writers;
+        default config → no experiment, legacy ctx)
   -> embedding
   -> qdrant.searchCollection(...)
        -> Qdrant when healthy
@@ -221,6 +228,9 @@ Stats and gates are primarily handled by:
 | `tools/exp-hint-stats.js` | Hint stats |
 | `tools/deep-health.js` | Deeper health checks |
 | `tools/dashboard/` | Static dashboard rendering support |
+| `tools/exp-outcome-baseline.js` | Phase A0 go/no-go: strict failure rates by runtime × tool, sessions/week, between-session variance, two-arm MDE for a holdout share and duration |
+| `tools/exp-engine-lift.js` | Session-holdout analyzer: pooled failure ratio per arm, session-cluster bootstrap CI, retry loops, guardrails, runtime strata; `--compare model` applies the pre-registered beta-vs-legacy rule |
+| `tools/exp-beta-replay.js` | B0 offline replay: legacy vs beta gate pass rates and posterior means by createdFrom/tier, threshold sweep, removal-side hints-per-intercept change |
 
 ---
 
@@ -238,6 +248,7 @@ Stats and gates are primarily handled by:
 | `tools/exp-server-maintain.js` | Server maintenance flow |
 | `tools/experience-bulk-seed.js` | Bulk seeding utility |
 | `tools/qdrant-find.js` | Qdrant search/debug utility |
+| `tools/exp-reset-ignore-count.js` | Reset pre-fix `ignoreCount` / `noiseReasonCounts`; `--beta` also clears `betaEvidence.neg` |
 | `scripts/config-encrypt.js` | Config encryption helper |
 | `scripts/split-bb-behavioral.mjs` | Behavioral seed split helper |
 | `scripts/generate-changelog.js` | Changelog generator |
@@ -258,6 +269,8 @@ Stats and gates are primarily handled by:
 | `docs/adrs/001-zero-npm-dependencies.md` | Zero dependency ADR |
 | `docs/adrs/002-model-router-design.md` | Model router ADR |
 | `docs/adrs/003-experience-formation-vnext.md` | Formation vNext ADR |
+| `docs/specs/2026-09-25-hint-lift-and-bayesian-confidence.md` | Measured engine lift (session holdout) + Bayesian confidence plan |
+| `docs/adrs/004-measured-lift-and-bayesian-confidence.md` | Holdout + Beta confidence ADR, with the pre-registered rollout and decision rule |
 | `fixtures/holdout/` | Curated holdout fixtures for replay harness |
 | `examples/seeds/` | Example seed data and docs |
 | `demo.svg`, `demo.tape`, `demo.yml`, `demo.gif` | Demo assets |
@@ -284,7 +297,8 @@ High-signal tests by area:
 |------|-------|
 | Qdrant/FileStore/config | `tests/qdrant-io.test.js`, `tests/runtime/update-point-payload.test.js` |
 | Server auth/runtime | `tests/server-auth-runtime.test.js`, `tests/server-health-metrics.test.js`, `tests/tools/server-api.test.js`, `tests/openapi-routes.test.js` |
-| Intercept pipeline | `tests/interceptor.test.js`, `tests/runtime/intercept-pipeline.test.js`, `tests/runtime/hook-payloads.test.js` |
+| Intercept pipeline | `tests/interceptor.test.js`, `tests/runtime/intercept-pipeline.test.js`, `tests/runtime/hook-payloads.test.js`, `tests/runtime/golden-intercept.test.js` (byte-for-byte snapshot of `interceptWithMeta`; regenerate only for an intended change with `UPDATE_GOLDEN=1`) |
+| Holdout / Beta confidence | `tests/runtime/experiment.test.js`, `tests/runtime/holdout-server.test.js`, `tests/runtime/holdout-hooks.test.js`, `tests/runtime/tool-outcome.test.js`, `tests/runtime/posttool-failure.test.js`, `tests/runtime/bayes.test.js`, `tests/runtime/beta-evidence.test.js`, `tests/runtime/confidence-model.test.js`, `tests/tools/exp-engine-lift.test.js`, `tests/tools/exp-outcome-baseline.test.js`, `tests/tools/exp-beta-replay.test.js` |
 | Evolution/scoring/noise | `tests/experience-core-evolution.test.js`, `tests/runtime/scoring.test.js`, `tests/runtime/unused-hints.test.js` |
 | Routing | `tests/server-route-task.test.js`, `tests/experience-core-task-routing.test.js`, `tests/runtime/model-router.test.js` |
 | Setup/CLI | `tests/npm-cli.test.js`, `tests/runtime/setup.test.js`, `tests/runtime/health-check.test.js` |
@@ -310,7 +324,8 @@ The Stop hook (`stop-extractor.js maybeUpdateProfile`, slice 1) WRITES `~/.exper
 | Modify server behavior | `server.js`, `.experience/src/config.js`, `.experience/src/qdrant.js`, `.experience/remote-client.js` |
 | Modify Qdrant/FileStore behavior | `.experience/src/qdrant.js`, `.experience/src/config.js`, `tests/qdrant-io.test.js` |
 | Modify logging | `.experience/src/logger.js`, `server.js`, `.experience/src/brain-llm.js`, `.experience/src/intercept.js` |
-| Modify retrieval/scoring output | `.experience/src/context.js`, `.experience/src/scoring.js`, `.experience/src/format.js` |
+| Modify retrieval/scoring output | `.experience/src/context.js`, `.experience/src/scoring.js`, `.experience/src/format.js`; run `tests/runtime/golden-intercept.test.js` |
+| Run or analyse the lift experiment / Beta model | `docs/adrs/004-measured-lift-and-bayesian-confidence.md`, `.experience/src/experiment.js`, `tools/exp-outcome-baseline.js`, `tools/exp-engine-lift.js`, `tools/exp-beta-replay.js` |
 | Modify learning semantics/gates | `docs/specs/2026-04-22-experience-formation-vnext.md`, `.experience/src/evolution.js`, `tools/exp-gates.js` |
 | Modify noise or feedback handling | `.experience/src/noise.js`, `.experience/src/hittrack.js`, `server.js` feedback endpoints |
 | Modify task/model routing | `.experience/src/router.js`, `docs/specs/2026-04-10-model-router-design.md`, routing tests |
