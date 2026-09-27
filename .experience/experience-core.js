@@ -771,6 +771,7 @@ module.exports = {
   routeTask: _router.routeTask,
   routeModel: _router.routeModel,
   routeFeedback: _router.routeFeedback,
+  routeHistory: _router.routeHistory,
   _updatePointPayload: _qdrant.updatePointPayload,
   _applyHitUpdate: _hittrack.applyHitUpdate,
   _applySurfaceUpdate: _hittrack.applySurfaceUpdate,

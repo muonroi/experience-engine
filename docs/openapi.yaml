@@ -282,6 +282,13 @@ components:
           type: integer
         duration:
           type: number
+        task:
+          type: string
+          maxLength: 2000
+          description: >
+            The routed task text. Lets EE record a decision the client made
+            locally, so it can be learned from; without it only a decision EE
+            stored itself is updated.
 
     EvolveResponse:
       type: object
@@ -559,6 +566,46 @@ paths:
                 properties:
                   ok:
                     type: boolean
+
+  /api/route-history:
+    post:
+      summary: History-only routing advice
+      description: >
+        Outcomes of past similar tasks, from one vector search and no LLM call.
+        floorTier is one tier above the highest tier a similar task failed on;
+        suggestedTier is the lowest tier a similar task succeeded on with no
+        failure at or above it. Both are null when nothing similar has an outcome.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [task]
+              properties:
+                task:
+                  type: string
+                  maxLength: 2000
+      responses:
+        '200':
+          description: Routing advice
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  floorTier:
+                    type: string
+                    nullable: true
+                    enum: [fast, balanced, premium]
+                  suggestedTier:
+                    type: string
+                    nullable: true
+                    enum: [fast, balanced, premium]
+                  matches:
+                    type: integer
+                  reason:
+                    type: string
 
   /api/principles/share:
     post:

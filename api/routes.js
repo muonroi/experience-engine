@@ -23,7 +23,7 @@ const {
 } = require('./handlers/knowledge');
 const { handlePilContext } = require('./handlers/pil');
 const {
-  handleRouteTask, handleRouteModel, handleRouteFeedback, handleSyncBuffers,
+  handleRouteTask, handleRouteModel, handleRouteFeedback, handleRouteHistory, handleSyncBuffers,
   handleBrainProxy, handlePhaseOutcome, handleWorkflowEvent,
 } = require('./handlers/routing');
 
@@ -54,6 +54,7 @@ const ROUTES = [
   { method: 'POST', path: '/api/route-task', access: 'write', handler: handleRouteTask },
   { method: 'POST', path: '/api/route-model', access: 'write', handler: handleRouteModel },
   { method: 'POST', path: '/api/route-feedback', access: 'write', handler: handleRouteFeedback },
+  { method: 'POST', path: '/api/route-history', access: 'write', handler: handleRouteHistory },
   { method: 'POST', path: '/api/sync-buffers', access: 'write', handler: handleSyncBuffers },
   { method: 'POST', path: '/api/brain', access: 'write', handler: handleBrainProxy },
   { method: 'POST', path: '/api/search', access: 'write', handler: handleSearch },

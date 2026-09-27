@@ -44,9 +44,22 @@ async function handleRouteFeedback(req, res) {
   });
   if (!v.ok) return error(res, v.error);
   const { routeFeedback } = loadExperienceCore();
-  const ok = await routeFeedback(body.taskHash, body.tier || null, body.model || null, body.outcome, body.retryCount || 0, body.duration || null);
+  // `task` lets EE record a decision the client made locally; without it only a
+  // decision EE itself stored can be updated.
+  const task = typeof body.task === 'string' ? body.task.slice(0, 2000) : null;
+  const ok = await routeFeedback(body.taskHash, body.tier || null, body.model || null, body.outcome, body.retryCount || 0, body.duration || null, task);
   res.writeHead(200, { 'Content-Type': 'application/json', 'X-Route-Source': 'feedback', ...CORS });
   res.end(JSON.stringify({ ok }));
+}
+
+async function handleRouteHistory(req, res) {
+  const body = await readBody(req);
+  const v = validateBody(body, { task: { type: 'string', required: true, maxLength: 2000 } });
+  if (!v.ok) return error(res, v.error);
+  const { routeHistory } = loadExperienceCore();
+  const result = await routeHistory(body.task);
+  res.writeHead(200, { 'Content-Type': 'application/json', 'X-Route-Source': 'history', ...CORS });
+  res.end(JSON.stringify(result));
 }
 
 async function handleSyncBuffers(req, res) {
@@ -217,6 +230,7 @@ module.exports = {
   handleRouteModel,
   handleRouteTask,
   handleRouteFeedback,
+  handleRouteHistory,
   handleSyncBuffers,
   handleBrainProxy,
   handlePhaseOutcome,

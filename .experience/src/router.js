@@ -510,7 +510,7 @@ function buildModelRoutePrompt(taskText, context) {
 function shouldSkipKeywordModelPrefilter(runtime) {
   return runtime === 'codex';
 }
-async function storeRouteDecision(taskText, taskHash, tier, model, runtime, context, vector) {
+async function storeRouteDecision(taskText, taskHash, tier, model, runtime, context, vector, recorded = null) {
   const id = require('crypto').randomUUID();
   const projectSlug = context?.projectSlug || extractProjectSlug(context?.files?.[0] || '') || null;
   const routeData = {
@@ -518,6 +518,7 @@ async function storeRouteDecision(taskText, taskHash, tier, model, runtime, cont
     source: 'brain', outcome: null, retryCount: 0, duration: null,
     domain: context?.domain || null, projectSlug,
     createdAt: new Date().toISOString(), feedbackAt: null,
+    ...(recorded || {}),
   };
 
   // Qdrant is the primary store; FileStore is the OFFLINE FALLBACK, matching
@@ -761,7 +762,7 @@ async function routeTask(task, context, _runtime) { // runtime reserved for futu
   });
   return fallback;
 }
-async function routeFeedback(taskHash, tier, model, outcome, retryCount, duration) {
+async function routeFeedback(taskHash, tier, model, outcome, retryCount, duration, task = null) {
   if (!taskHash || !outcome) return false;
 
   const validOutcomes = ['success', 'fail', 'retry', 'cancelled'];
@@ -840,8 +841,73 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
     }
   }
 
-  activityLog({ op: 'route-feedback', taskHash, tier, outcome: normalizedOutcome, retryCount: retryCount || 0, duration: duration || null });
-  return found;
+  // A client that routes locally never asked EE, so there is no decision to update.
+  // Measured 2026-09-27: 263 stored decisions, 0 with an outcome, because every
+  // feedback carried a hash EE had never stored. Record the decision with its outcome
+  // instead, so routeHistory has something to learn from.
+  let recorded = false;
+  const taskText = typeof task === 'string' ? task.slice(0, 500) : '';
+  if (!found && taskText && tier) {
+    try {
+      const vector = await getEmbedding(taskText);
+      if (vector) {
+        await storeRouteDecision(taskText, taskHash, tier, model || null, null, null, vector, {
+          source: 'client',
+          outcome: normalizedOutcome,
+          retryCount: retryCount || 0,
+          duration: duration || null,
+          feedbackAt: new Date().toISOString(),
+        });
+        recorded = true;
+      }
+    } catch (err) {
+      log('warn', 'route_feedback_record_failed', { taskHash, error: serializeError(err) });
+    }
+  }
+
+  activityLog({ op: 'route-feedback', taskHash, tier, outcome: normalizedOutcome, retryCount: retryCount || 0, duration: duration || null, recorded });
+  return found || recorded;
+}
+
+const ROUTE_TIERS = ['fast', 'balanced', 'premium'];
+const ROUTE_HISTORY_TOP_K = 10;
+
+// History-only routing advice: one embedding plus one vector search over past decisions
+// that carry an OUTCOME — no LLM. The client decides the tier inside its own turn; this
+// only tells it what happened to similar tasks before.
+//   floorTier:     one above the highest tier a similar task failed on (never go below it)
+//   suggestedTier: the lowest tier a similar task succeeded on with no failure at or
+//                  above it (safe to go down to)
+async function routeHistory(task) {
+  const taskText = String(task || '').slice(0, 500);
+  const empty = (reason) => ({ floorTier: null, suggestedTier: null, matches: 0, reason });
+  if (!taskText) return empty('empty task');
+  const vector = await getEmbedding(taskText);
+  if (!vector) return empty('embedding unavailable');
+  const hits = await searchCollection(ROUTES_COLLECTION, vector, ROUTE_HISTORY_TOP_K);
+  const threshold = getRouterHistoryThreshold();
+  const failed = new Set();
+  const succeeded = new Set();
+  let matches = 0;
+  for (const hit of hits) {
+    if ((hit.score || 0) < threshold) continue;
+    const data = (() => { try { return JSON.parse(hit.payload?.json || '{}'); } catch { return {}; } })();
+    if (!data.outcome || !ROUTE_TIERS.includes(data.tier)) continue;
+    matches++;
+    const negative = data.outcome === 'fail' || data.outcome === 'cancelled' || (data.retryCount || 0) >= 2;
+    (negative ? failed : succeeded).add(ROUTE_TIERS.indexOf(data.tier));
+  }
+  if (matches === 0) return empty('no similar task with a recorded outcome');
+  const highestFailed = failed.size ? Math.max(...failed) : -1;
+  const floorIdx = highestFailed >= 0 ? Math.min(highestFailed + 1, ROUTE_TIERS.length - 1) : -1;
+  const safe = [...succeeded].filter((i) => i > highestFailed);
+  const suggestedIdx = safe.length ? Math.min(...safe) : -1;
+  return {
+    floorTier: floorIdx >= 0 ? ROUTE_TIERS[floorIdx] : null,
+    suggestedTier: suggestedIdx >= 0 ? ROUTE_TIERS[suggestedIdx] : null,
+    matches,
+    reason: `${matches} similar task(s): succeeded on [${[...succeeded].sort().map((i) => ROUTE_TIERS[i])}], failed on [${[...failed].sort().map((i) => ROUTE_TIERS[i])}]`,
+  };
 }
 
 // ============================================================
@@ -859,6 +925,6 @@ module.exports = {
   normalizeTaskRoutePayload, buildTaskRoutePrompt, resolveTierModel,
   resolveTierReasoningEffort, buildModelRoutePrompt,
   shouldSkipKeywordModelPrefilter, storeRouteDecision,
-  routeModel, routeTask, routeFeedback,
+  routeModel, routeTask, routeFeedback, routeHistory,
   detectRuntime, resolveRuntimeFromSourceMeta,
 };

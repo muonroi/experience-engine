@@ -9,9 +9,24 @@ const PIL_CONTEXT_CACHE = new Map(); // key → { value, expiresAt }
 const PIL_CONTEXT_CACHE_TTL_MS = 5 * 60 * 1000;
 const PIL_CONTEXT_CACHE_MAX = 200;
 
-function pilCacheKey(prompt, locale) {
+function pilCacheKey(prompt, locale, callerIntent) {
   const crypto = require('node:crypto');
-  return crypto.createHash('sha256').update(`${locale || ''}\0${prompt}`).digest('hex');
+  const intent = callerIntent ? `${callerIntent.taskType}/${callerIntent.intentKind}` : '';
+  return crypto.createHash('sha256').update(`${locale || ''}\0${intent}\0${prompt}`).digest('hex');
+}
+
+const PIL_TASK_TYPES = ['refactor', 'debug', 'plan', 'analyze', 'documentation', 'generate', 'build'];
+
+// The caller's own classification, when it sent one. muonroi-cli classifies each turn with
+// its chat model AND the recent turns; this endpoint only ever sees the one prompt, so it
+// read "làm full 2 việc" as chitchat and skipped retrieval for a real task. A caller
+// verdict therefore wins, and saves the classifier call.
+function readCallerIntent(body) {
+  const intentKind = body.intent_kind === 'task' || body.intent_kind === 'chitchat' ? body.intent_kind : null;
+  if (!intentKind) return null;
+  if (intentKind === 'chitchat') return { taskType: 'general', intentKind };
+  const taskType = typeof body.task_type === 'string' ? body.task_type.toLowerCase().trim() : '';
+  return { taskType: PIL_TASK_TYPES.includes(taskType) ? taskType : 'generate', intentKind };
 }
 
 function pilCacheGet(key) {
@@ -42,7 +57,8 @@ async function handlePilContext(req, res) {
     return error(res, 'prompt exceeds 10KB');
   }
 
-  const cacheKey = pilCacheKey(body.prompt, body.locale_hint);
+  const callerIntent = readCallerIntent(body);
+  const cacheKey = pilCacheKey(body.prompt, body.locale_hint, callerIntent);
   const cached = pilCacheGet(cacheKey);
   if (cached) {
     return json(res, { ...cached, cache_hit: true, inference_ms: 0 });
@@ -98,7 +114,7 @@ async function handlePilContext(req, res) {
   // Kick off both in parallel. Use allSettled so a failed embedding does not
   // abort the classifier and vice versa.
   const [classifyResult, embedResult] = await Promise.allSettled([
-    core.classifyViaBrain(body.prompt, 3500, {
+    callerIntent ? Promise.resolve(null) : core.classifyViaBrain(body.prompt, 3500, {
       model: classifierTarget.model,
       provider: classifierTarget.provider,
       endpoint: classifierTarget.endpoint,
@@ -110,8 +126,13 @@ async function handlePilContext(req, res) {
     core.getEmbeddingRaw(body.prompt, AbortSignal.timeout(2000)),
   ]);
 
-  // Parse classifier result.
-  if (classifyResult.status === 'fulfilled' && classifyResult.value) {
+  if (callerIntent) {
+    taskType = callerIntent.taskType;
+    intentKind = callerIntent.intentKind;
+    confidence = 1;
+    if (intentKind === 'chitchat') outputStyle = 'concise';
+  } else if (classifyResult.status === 'fulfilled' && classifyResult.value) {
+    // Parse classifier result.
     const raw = classifyResult.value;
     const jsonMatch = raw.match(/\{[\s\S]*?\}/);
     let parsed = null;

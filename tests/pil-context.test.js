@@ -66,6 +66,7 @@ async function startStub(overrides = {}) {
   const behavioralPoints = overrides.behavioralPoints || [samplePattern, samplePattern2];
   const embedding = overrides.embedding || new Array(8).fill(0).map((_, i) => i / 8);
 
+  const counters = { llmCalls: 0 };
   const server = http.createServer((req, res) => {
     let raw = '';
     req.on('data', (chunk) => { raw += chunk; });
@@ -87,6 +88,7 @@ async function startStub(overrides = {}) {
       }
       // LLM classify
       if (req.method === 'POST' && req.url === '/v1/chat/completions') {
+        counters.llmCalls++;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({
           choices: [{ message: { content: classifierContent } }],
@@ -108,6 +110,7 @@ async function startStub(overrides = {}) {
   return {
     port,
     server,
+    counters,
     async stop() {
       await new Promise((resolve) => server.close(resolve));
     },
@@ -425,6 +428,32 @@ test('POST /api/pil-context rejects unauthenticated request', async () => {
     });
 
     assert.ok(res.status === 401 || res.status === 403, `expected 401/403, got ${res.status}`);
+  } finally {
+    await runtime.stop();
+    await stub.stop();
+  }
+});
+
+test('POST /api/pil-context uses the caller intent and skips its own classifier', async () => {
+  const token = 'test-server-token';
+  // The one-prompt classifier would call this chitchat and skip retrieval.
+  const stub = await startStub({ classifierContent: '{"category":"none","style":"concise"}' });
+  const runtime = await startServer(buildConfig(stub.port, token));
+
+  try {
+    const res = await fetch(`${runtime.baseUrl}/api/pil-context`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ prompt: 'làm full 2 việc', intent_kind: 'task', task_type: 'debug' }),
+    });
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.taskType, 'debug');
+    assert.equal(body.intentKind, 'task');
+    assert.equal(body.retrieval_skipped_reason, null);
+    assert.ok(body.t2_patterns.length > 0, 'retrieval must run for a caller-declared task');
+    assert.equal(stub.counters.llmCalls, 0, 'the classifier must not be called when the caller classified the turn');
   } finally {
     await runtime.stop();
     await stub.stop();
