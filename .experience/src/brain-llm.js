@@ -16,6 +16,7 @@ const getBrainModelForSource = _config.getBrainModelForSource;
 const getBrainEndpoint = _config.getBrainEndpoint;
 const getBrainKey = _config.getBrainKey;
 const resolveBrainTarget = _config.resolveBrainTarget;
+const resolveBrainFallbackTarget = _config.resolveBrainFallbackTarget;
 const defaultBrainEndpoint = _config.defaultBrainEndpoint;
 const getOllamaGenerateUrl = _config.getOllamaGenerateUrl;
 const activityLog = _config.activityLog;
@@ -65,7 +66,7 @@ function getRelevanceMaxTokens(fallback = 120) {
 
 // Fallback config: primary provider → fallback provider
 function getBrainFallback() {
-  return cfgValue('brainFallback', 'EXPERIENCE_BRAIN_FALLBACK', getBrainProvider() === 'ollama' ? '' : 'ollama');
+  return _config.getBrainFallbackProvider();
 }
 
 async function callBrainWithFallback(prompt, meta = {}) {
@@ -100,11 +101,12 @@ async function callBrainWithFallback(prompt, meta = {}) {
     });
   }
   // The fallback is the DEGRADED path, so for extraction it is the hot-path brain itself
-  // whenever extraction was routed elsewhere; only a same-provider setup falls through to
-  // the configured brainFallback. It always runs on hot-path model + credentials.
-  const fallbackProvider = isExtractSource && target.provider !== hotProvider
-    ? hotProvider
-    : getBrainFallback();
+  // whenever extraction was routed elsewhere (hot model + hot credentials); otherwise it is
+  // the configured fallback target, resolved with its own endpoint, key and model.
+  const fallback = isExtractSource && target.provider !== hotProvider
+    ? { provider: hotProvider, model: getBrainModel() }
+    : resolveBrainFallbackTarget();
+  const fallbackProvider = fallback ? fallback.provider : '';
 
   // Allow callers (e.g. route-task) to enforce tighter time budgets than the default 15s.
   // Extraction has no caller-supplied budget, so without an explicit one it would inherit
@@ -129,13 +131,23 @@ async function callBrainWithFallback(prompt, meta = {}) {
   activityLog({ op: 'brain-failure', provider: target.provider, phase: 'primary', model });
   if (fallbackProvider && BRAIN_FNS[String(fallbackProvider).toLowerCase()]) {
     startedAt = Date.now();
-    // The fallback provider is the HOT-PATH brain's fallback, configured by the hot-path
-    // keys — so it gets the hot-path model and hot-path credentials, never the extract
-    // ones. Sending the extract model here is what produced the original
-    // 400 "Model does not exist"; sending the extract KEY here would hand one provider's
-    // secret to another. A degraded fallback is the point of a fallback.
-    const fallbackModel = isExtractSource ? getBrainModel() : model;
-    result = await BRAIN_FNS[String(fallbackProvider).toLowerCase()](prompt, { signal, model: fallbackModel });
+    // Never the extract model or extract KEY: sending the extract model here is what
+    // produced the original 400 "Model does not exist", and the extract key would hand
+    // one provider's secret to another. A degraded fallback is the point of a fallback.
+    const fallbackModel = fallback.model;
+    const fallbackOpts = { signal, model: fallbackModel };
+    if (fallback.endpoint !== undefined) {
+      fallbackOpts.endpoint = fallback.endpoint;
+      fallbackOpts.key = fallback.key;
+    }
+    if (fallback.keySuppressed) {
+      log('warn', 'brain_fallback_key_suppressed', {
+        provider: fallbackProvider,
+        hotProvider,
+        reason: 'brainFallbackKey unset while the fallback targets another provider/origin — refusing to send the hot-path key',
+      });
+    }
+    result = await BRAIN_FNS[String(fallbackProvider).toLowerCase()](prompt, fallbackOpts);
     logCostCall('brain', fallbackProvider, source, units, {
       ok: !!result,
       phase: 'fallback',

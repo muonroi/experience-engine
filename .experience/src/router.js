@@ -14,6 +14,7 @@ const {
   defaultBrainEndpoint,
   getOllamaGenerateUrl,
   activityLog,
+  resolveBrainFallbackTarget,
 } = require("./config");
 const { estimateTextUnits, logCostCall, getEmbedding } = require("./embedding");
 const { checkQdrant, fileStoreRead, fileStoreWrite, fileStoreUpsert, searchCollection, buildQdrantUserFilter } = require("./qdrant");
@@ -216,9 +217,34 @@ const OPENAI_SHAPED_PROVIDERS = new Set(['siliconflow', 'openai', 'custom', 'dee
 // An endpoint with no recognised provider keeps the legacy meaning: OpenAI-shaped.
 const KNOWN_BRAIN_PROVIDERS = new Set([...OPENAI_SHAPED_PROVIDERS, 'ollama', 'gemini', 'claude']);
 
+// Below this much budget left, a fallback call cannot answer and would only add a request.
+const MIN_FALLBACK_BUDGET_MS = 500;
+
 async function classifyViaBrain(prompt, timeoutMs, options = {}) {
   // A caller-supplied budget wins; otherwise the configurable default applies.
   const budgetMs = Number(timeoutMs) > 0 ? Number(timeoutMs) : classifyTimeoutMs(10000);
+  const startedAt = Date.now();
+  const result = await classifyOnce(prompt, budgetMs, options);
+  if (result !== null) return result;
+  // A caller that pinned its own target (judge consensus, the PIL classifier, the extract
+  // route of /api/brain) asked THAT model; another one answering would be a silent swap.
+  if (['provider', 'endpoint', 'key', 'model'].some((k) => options[k] !== undefined)) return null;
+  const fallback = resolveBrainFallbackTarget();
+  if (!fallback) return null;
+  const remainingMs = budgetMs - (Date.now() - startedAt);
+  if (remainingMs < MIN_FALLBACK_BUDGET_MS) return null;
+  const fallbackResult = await classifyOnce(prompt, remainingMs, {
+    ...options,
+    provider: fallback.provider,
+    endpoint: fallback.endpoint,
+    key: fallback.key,
+    model: fallback.model,
+  });
+  if (fallbackResult !== null) activityLog({ op: 'brain-fallback', provider: fallback.provider, model: fallback.model, source: 'classify' });
+  return fallbackResult;
+}
+
+async function classifyOnce(prompt, budgetMs, options) {
   // P1 Item 2: optional per-call overrides for cross-model judge consensus.
   // When omitted, falls back to env-driven brain config (existing behavior).
   // Normalised once: the config resolver, the default-host table and the BRAIN_FNS lookup

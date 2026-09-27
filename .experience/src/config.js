@@ -301,6 +301,34 @@ function resolveBrainTarget(source) {
     keySuppressed: !ownKey && !sameTarget && !!hotKey,
   };
 }
+// The degraded target a failed hot-path call (429, 5xx, timeout) is retried on. Resolved as
+// one unit like resolveBrainTarget: the old fallback carried only a provider NAME, so the
+// client re-read the hot endpoint, key and model and re-sent the same request to the same
+// vendor — useless against the 5-concurrent-request cap StepFun enforces (429 measured on
+// the VPS 2026-09-27). Null when no fallback is configured.
+function getBrainFallbackProvider() {
+  return cfgValue('brainFallback', 'EXPERIENCE_BRAIN_FALLBACK', getBrainProvider() === 'ollama' ? '' : 'ollama');
+}
+function resolveBrainFallbackTarget() {
+  const provider = String(getBrainFallbackProvider() || '').toLowerCase();
+  if (!provider) return null;
+  const hotProvider = getBrainProvider();
+  const hotEndpoint = _acceptsChatEndpoint(hotProvider) ? getBrainEndpoint() : '';
+  const hotKey = getBrainKey();
+  const hotResolved = _effectiveEndpoint(hotProvider, hotEndpoint, hotProvider, hotEndpoint);
+  const ownEndpoint = cfgValue('brainFallbackEndpoint', 'EXPERIENCE_BRAIN_FALLBACK_ENDPOINT', '');
+  const ownKey = cfgValue('brainFallbackKey', 'EXPERIENCE_BRAIN_FALLBACK_KEY', '');
+  const endpoint = _effectiveEndpoint(provider, ownEndpoint, hotProvider, hotEndpoint);
+  const sameTarget = _sameOrigin(endpoint, hotResolved);
+  return {
+    provider,
+    endpoint,
+    key: ownKey || (sameTarget ? hotKey : ''),
+    model: cfgValue('brainFallbackModel', 'EXPERIENCE_BRAIN_FALLBACK_MODEL', null) || getBrainModel(),
+    // Ollama takes no credential, so an empty key there is not a suppressed one.
+    keySuppressed: provider !== 'ollama' && !ownKey && !sameTarget && !!hotKey,
+  };
+}
 // Source-aware model picker. Sources are set by callers via meta.source in callBrainWithFallback.
 function getBrainModelForSource(source) {
   if (source === 'extract' || source === 'evolve') return getBrainExtractModel();
@@ -630,7 +658,7 @@ module.exports = {
   getEmbedProvider, getEmbedModel, getOllamaEmbedModel, getEmbedEndpoint, getEmbedKey, getEmbedDim, getEmbedTimeoutMs,
   getBrainProvider, getBrainModel, getBrainExtractModel, getBrainModelForSource, getBrainEndpoint, getBrainKey,
   getBrainExtractProvider, getBrainExtractEndpoint, getBrainExtractKey, resolveBrainTarget,
-  getPilClassifierModel,
+  getPilClassifierModel, getBrainFallbackProvider, resolveBrainFallbackTarget,
   BRAIN_DEFAULT_ENDPOINTS, defaultBrainEndpoint,
   getMinConfidence, getHighConfidence, getMinSearchScore,
   getPassiveHybrid, getPassiveLexicalMaxAdds, getPassiveLexicalDisplayScore,
