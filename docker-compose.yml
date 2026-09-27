@@ -21,6 +21,10 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 262144
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333' 2>/dev/null || exit 1"]
       interval: 5s
