@@ -222,15 +222,36 @@ function _effectiveEndpoint(provider, ownEndpoint, hotProvider, hotEndpoint) {
 function _inheritsEndpoint(provider, hotProvider) {
   return _providerFamily(provider) === _providerFamily(hotProvider) && _acceptsChatEndpoint(provider);
 }
-function getBrainExtractProvider() {
-  const own = cfgValue('brainExtractProvider', 'EXPERIENCE_BRAIN_EXTRACT_PROVIDER', '');
+// Per-source overrides of the hot-path target. Every field falls back to the hot path
+// when unset, so a box that configures none of them keeps single-provider behaviour.
+const _SOURCE_TARGET_KEYS = {
+  extract: {
+    provider: ['brainExtractProvider', 'EXPERIENCE_BRAIN_EXTRACT_PROVIDER'],
+    endpoint: ['brainExtractEndpoint', 'EXPERIENCE_BRAIN_EXTRACT_ENDPOINT'],
+    key: ['brainExtractKey', 'EXPERIENCE_BRAIN_EXTRACT_KEY'],
+  },
+  // The PIL intent classifier must answer a JSON object inside a 3.5s budget. A reasoning
+  // hot-path model spends that budget thinking (measured 2026-09-27 on step-5-preview:
+  // 4.7s and an off-schema object), so the classifier can be pinned to a fast model.
+  pil: {
+    provider: ['pilClassifierProvider', 'EE_PIL_CLASSIFIER_PROVIDER'],
+    endpoint: ['pilClassifierEndpoint', 'EE_PIL_CLASSIFIER_ENDPOINT'],
+    key: ['pilClassifierKey', 'EE_PIL_CLASSIFIER_KEY'],
+  },
+};
+function _sourceProvider(keys) {
+  const own = cfgValue(keys.provider[0], keys.provider[1], '');
   if (own) return own;
   // Ollama speaks its own protocol on a fixed local URL and ignores an HTTP chat
-  // endpoint, so an operator who configured an extract ENDPOINT while the hot path runs
+  // endpoint, so an operator who configured a source ENDPOINT while the hot path runs
   // on Ollama means "call this remote", not "post the remote model id to localhost".
-  const ownEndpoint = cfgValue('brainExtractEndpoint', 'EXPERIENCE_BRAIN_EXTRACT_ENDPOINT', '');
+  const ownEndpoint = cfgValue(keys.endpoint[0], keys.endpoint[1], '');
   if (ownEndpoint && _providerFamily(getBrainProvider()) === 'ollama') return 'custom';
   return getBrainProvider();
+}
+function getBrainExtractProvider() { return _sourceProvider(_SOURCE_TARGET_KEYS.extract); }
+function getPilClassifierModel() {
+  return cfgValue('pilClassifierModel', 'EE_PIL_CLASSIFIER_MODEL', null) || getBrainModel();
 }
 function getBrainExtractEndpoint() { return cfgValue('brainExtractEndpoint', 'EXPERIENCE_BRAIN_EXTRACT_ENDPOINT', '') || getBrainEndpoint(); }
 function getBrainExtractKey() { return resolveBrainTarget('extract').key; }
@@ -249,7 +270,10 @@ function resolveBrainTarget(source) {
   const hotEndpoint = _acceptsChatEndpoint(hotProvider) ? getBrainEndpoint() : '';
   const hotKey = getBrainKey();
   const hotResolved = _effectiveEndpoint(hotProvider, hotEndpoint, hotProvider, hotEndpoint);
-  if (source !== 'extract' && source !== 'evolve') {
+  const keys = source === 'pil' ? _SOURCE_TARGET_KEYS.pil
+    : (source === 'extract' || source === 'evolve') ? _SOURCE_TARGET_KEYS.extract
+      : null;
+  if (!keys) {
     return {
       provider: hotProvider,
       endpoint: hotResolved,
@@ -258,9 +282,9 @@ function resolveBrainTarget(source) {
       keySuppressed: false,
     };
   }
-  const ownEndpoint = cfgValue('brainExtractEndpoint', 'EXPERIENCE_BRAIN_EXTRACT_ENDPOINT', '');
-  const ownKey = cfgValue('brainExtractKey', 'EXPERIENCE_BRAIN_EXTRACT_KEY', '');
-  const provider = getBrainExtractProvider();
+  const ownEndpoint = cfgValue(keys.endpoint[0], keys.endpoint[1], '');
+  const ownKey = cfgValue(keys.key[0], keys.key[1], '');
+  const provider = _sourceProvider(keys);
   const endpoint = _effectiveEndpoint(provider, ownEndpoint, hotProvider, hotEndpoint);
   // Inherit the hot-path credential only when the request reaches the SAME origin the hot
   // path already authenticates against. Both sides are fully resolved hosts, so a provider
@@ -273,7 +297,7 @@ function resolveBrainTarget(source) {
     provider,
     endpoint,
     key,
-    model: getBrainExtractModel(),
+    model: source === 'pil' ? getPilClassifierModel() : getBrainExtractModel(),
     keySuppressed: !ownKey && !sameTarget && !!hotKey,
   };
 }
@@ -606,6 +630,7 @@ module.exports = {
   getEmbedProvider, getEmbedModel, getOllamaEmbedModel, getEmbedEndpoint, getEmbedKey, getEmbedDim, getEmbedTimeoutMs,
   getBrainProvider, getBrainModel, getBrainExtractModel, getBrainModelForSource, getBrainEndpoint, getBrainKey,
   getBrainExtractProvider, getBrainExtractEndpoint, getBrainExtractKey, resolveBrainTarget,
+  getPilClassifierModel,
   BRAIN_DEFAULT_ENDPOINTS, defaultBrainEndpoint,
   getMinConfidence, getHighConfidence, getMinSearchScore,
   getPassiveHybrid, getPassiveLexicalMaxAdds, getPassiveLexicalDisplayScore,

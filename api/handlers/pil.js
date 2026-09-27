@@ -1,8 +1,9 @@
 'use strict';
 
 const { requireAuth } = require('../auth');
-const { error, json, readBody } = require('../http');
+const { error, json, readBody, slog } = require('../http');
 const { loadExperienceCore } = require('../config');
+const runtimeConfig = require('../../.experience/src/config');
 
 const PIL_CONTEXT_CACHE = new Map(); // key → { value, expiresAt }
 const PIL_CONTEXT_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -84,13 +85,24 @@ async function handlePilContext(req, res) {
     { role: 'assistant', content: '{"category":"none","style":"concise"}' },
     { role: 'user', content: body.prompt.slice(0, 500) },
   ];
-  const classifierModel = process.env.EE_PIL_CLASSIFIER_MODEL || 'Qwen/Qwen2.5-7B-Instruct';
+  // Provider, endpoint, key and model resolved together: a hardcoded Qwen id sent to a
+  // hot path that had moved to StepFun came back `model_invalid` on every call.
+  const classifierTarget = runtimeConfig.resolveBrainTarget('pil');
+  if (classifierTarget.keySuppressed) {
+    slog('warn', 'pil_classifier_key_suppressed', {
+      provider: classifierTarget.provider,
+      reason: 'pilClassifierKey unset while the classifier targets another provider/origin — refusing to send the hot-path key',
+    });
+  }
 
   // Kick off both in parallel. Use allSettled so a failed embedding does not
   // abort the classifier and vice versa.
   const [classifyResult, embedResult] = await Promise.allSettled([
     core.classifyViaBrain(body.prompt, 3500, {
-      model: classifierModel,
+      model: classifierTarget.model,
+      provider: classifierTarget.provider,
+      endpoint: classifierTarget.endpoint,
+      key: classifierTarget.key,
       messages: fewShot,
       maxTokens: 40,
       responseFormat: { type: 'json_object' },

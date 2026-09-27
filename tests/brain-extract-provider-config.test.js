@@ -73,3 +73,45 @@ test('extract getters win when configured, without disturbing the hot-path gette
     assert.equal(cfg.getBrainKey(), 'sk-hotpath');
   });
 });
+
+test('pil classifier target follows the hot path when unconfigured', () => {
+  withEnv({
+    EXPERIENCE_BRAIN_PROVIDER: 'custom',
+    EXPERIENCE_BRAIN_ENDPOINT: 'https://api.stepfun.ai/v1/chat/completions',
+    EXPERIENCE_BRAIN_KEY: 'sk-stepfun',
+    EXPERIENCE_BRAIN_MODEL: 'step-5-preview',
+  }, () => {
+    for (const k of ['EE_PIL_CLASSIFIER_PROVIDER', 'EE_PIL_CLASSIFIER_ENDPOINT', 'EE_PIL_CLASSIFIER_KEY', 'EE_PIL_CLASSIFIER_MODEL']) delete process.env[k];
+    const t = cfg.resolveBrainTarget('pil');
+    assert.equal(t.provider, 'custom');
+    assert.equal(t.endpoint, 'https://api.stepfun.ai/v1/chat/completions');
+    assert.equal(t.key, 'sk-stepfun');
+    // The hot model, never a hardcoded id the hot provider may not serve.
+    assert.equal(t.model, 'step-5-preview');
+  });
+});
+
+test('pil classifier target can live on another provider, and never borrows the hot key there', () => {
+  withEnv({
+    EXPERIENCE_BRAIN_PROVIDER: 'custom',
+    EXPERIENCE_BRAIN_ENDPOINT: 'https://api.stepfun.ai/v1/chat/completions',
+    EXPERIENCE_BRAIN_KEY: 'sk-stepfun',
+    EXPERIENCE_BRAIN_MODEL: 'step-5-preview',
+    EE_PIL_CLASSIFIER_PROVIDER: 'siliconflow',
+    EE_PIL_CLASSIFIER_ENDPOINT: 'https://api.siliconflow.com/v1/chat/completions',
+    EE_PIL_CLASSIFIER_MODEL: 'Qwen/Qwen2.5-7B-Instruct',
+    EE_PIL_CLASSIFIER_KEY: 'sk-silicon',
+  }, () => {
+    const t = cfg.resolveBrainTarget('pil');
+    assert.deepEqual(
+      { provider: t.provider, endpoint: t.endpoint, key: t.key, model: t.model, keySuppressed: t.keySuppressed },
+      { provider: 'siliconflow', endpoint: 'https://api.siliconflow.com/v1/chat/completions', key: 'sk-silicon', model: 'Qwen/Qwen2.5-7B-Instruct', keySuppressed: false },
+    );
+    // The hot path is untouched.
+    assert.equal(cfg.resolveBrainTarget('judge').model, 'step-5-preview');
+    delete process.env.EE_PIL_CLASSIFIER_KEY;
+    const noKey = cfg.resolveBrainTarget('pil');
+    assert.equal(noKey.key, '');
+    assert.equal(noKey.keySuppressed, true);
+  });
+});
