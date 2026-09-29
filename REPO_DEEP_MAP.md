@@ -295,7 +295,7 @@ Stats and gates are primarily handled by:
 | `npm run test:health` | Health check and setup tests (subset of `test:unit`) |
 | `npm run test:server` | End-to-end server checks (subset of `test:tools`) |
 | `npm run test:ci` | Main CI-style sequence |
-| `npm run test:coverage` | `test:ci` under `c8` with `--check-coverage` (lines 75 / branches 69 / functions 77); what CI runs |
+| `npm run test:coverage` | `test:ci` under `c8` with `--check-coverage` (lines 73 / branches 70 / functions 76, set from a `CI=true` run: loopback hook tests skip on CI); what CI runs |
 
 High-signal tests by area:
 

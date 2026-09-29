@@ -83,7 +83,7 @@
     "test:health": "node --test tests/runtime/health-check.test.js tests/runtime/setup.test.js",
     "test:server": "node tests/tools/server-api.test.js",
     "test:ci": "npm test && npm run test:unit && npm run test:tools",
-    "test:coverage": "npx --yes c8@8 --check-coverage --lines 75 --branches 69 --functions 77 --reporter=text-summary --reporter=html --report-dir=coverage npm run test:ci",
+    "test:coverage": "npx --yes c8@8 --check-coverage --lines 73 --branches 70 --functions 76 --reporter=text-summary --reporter=html --report-dir=coverage npm run test:ci",
     "replay:holdout": "node tools/exp-holdout-harness.js --fixture fixtures/holdout --json",
     "typecheck": "npm i --no-save --no-package-lock --no-audit --no-fund typescript@5 @types/node@22 && tsc -p jsconfig.json",
     "check:syntax": "node scripts/check-syntax.js",

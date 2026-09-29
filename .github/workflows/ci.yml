@@ -22,8 +22,9 @@ jobs:
           node-version: 22
 
       # The full suite under c8, gated. Hooks run as child processes and are
-      # counted too. Thresholds sit just under the measured coverage; raise them
-      # as it grows, never lower them to get green.
+      # counted too. Thresholds sit just under coverage measured with CI=true
+      # (the loopback hook tests skip on shared runners, so a local run reads
+      # higher); raise them as it grows, never lower them to get green.
       - name: CI test suite with coverage gate
         timeout-minutes: 10
         run: npm run test:coverage
