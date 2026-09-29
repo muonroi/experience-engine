@@ -4,7 +4,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { buildPrompt, parseLlmJson, validateAndNormalize } = require('../../.experience/doc-to-experience');
+const { buildPrompt, parseLlmJson, validateAndNormalize } = require('../../scripts/maintenance/doc-to-experience');
 
 const seedDoc = {
   principle: 'Use the LoggingHook<TContext> instead of raw logging calls.',

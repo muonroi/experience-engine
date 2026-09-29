@@ -23,13 +23,13 @@
  *  - Idempotent: re-running after a successful migration is a no-op top-up.
  *
  * Usage:
- *   node tools/migrate-sparse-bm25.js                       # dry run, all collections
- *   node tools/migrate-sparse-bm25.js --apply               # migrate all
- *   node tools/migrate-sparse-bm25.js --apply --collection experience-behavioral
+ *   node tools/migrations/migrate-sparse-bm25.js                       # dry run, all collections
+ *   node tools/migrations/migrate-sparse-bm25.js --apply               # migrate all
+ *   node tools/migrations/migrate-sparse-bm25.js --apply --collection experience-behavioral
  */
 
 const path = require('path');
-const EXP = path.join(__dirname, '..', '.experience', 'src');
+const EXP = path.join(__dirname, '..', '..', '.experience', 'src');
 const { getQdrantBase, getQdrantApiKey } = require(path.join(EXP, 'config'));
 const { checkQdrant, ensureTextIndex, invalidateSparseSupport } = require(path.join(EXP, 'qdrant'));
 const { buildSparseVector, SPARSE_VECTOR_NAME } = require(path.join(EXP, 'sparse'));

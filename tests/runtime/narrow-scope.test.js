@@ -4,7 +4,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { buildPrompt, parseLlmJson, validateVerdict, applyVerdict } = require('../../.experience/narrow-scope');
+const { buildPrompt, parseLlmJson, validateVerdict, applyVerdict } = require('../../scripts/maintenance/narrow-scope');
 
 const sample = {
   trigger: 'agent runs grep in a loop without checking previous results',

@@ -15,9 +15,9 @@
  * Heuristic: same regex set used by brain-llm.js _inferCrossStackCategory.
  *
  * Usage:
- *   node tools/exp-backfill-cross-stack-scope.js
- *   node tools/exp-backfill-cross-stack-scope.js --apply
- *   node tools/exp-backfill-cross-stack-scope.js --collection experience-behavioral --apply
+ *   node tools/migrations/exp-backfill-cross-stack-scope.js
+ *   node tools/migrations/exp-backfill-cross-stack-scope.js --apply
+ *   node tools/migrations/exp-backfill-cross-stack-scope.js --collection experience-behavioral --apply
  */
 
 const fs = require('fs');

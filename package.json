@@ -67,9 +67,9 @@
     "docker-compose.yml",
     "Dockerfile",
     "docker-entrypoint.sh",
-    "demo.svg",
-    "demo.tape",
-    "demo.yml"
+    "assets/demo/demo.svg",
+    "assets/demo/demo.tape",
+    "assets/demo/demo.yml"
   ],
   "engines": {
     "node": ">=22"

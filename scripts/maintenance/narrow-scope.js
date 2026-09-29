@@ -24,19 +24,19 @@
  *                         to T2 and lower confidence so it stops firing
  *
  * Usage:
- *   node narrow-scope.js --dry-run --limit=5
- *   node narrow-scope.js --batch-id=2026-05-21-narrow --concurrency=8
- *   node narrow-scope.js --rollback 2026-05-21-narrow
+ *   node scripts/maintenance/narrow-scope.js --dry-run --limit=5
+ *   node scripts/maintenance/narrow-scope.js --batch-id=2026-05-21-narrow --concurrency=8
+ *   node scripts/maintenance/narrow-scope.js --rollback 2026-05-21-narrow
  */
 
 const fs = require('fs');
 const path = require('path');
 
-const { callBrainWithFallback } = require('./src/brain-llm');
-const { getQdrantBase, getQdrantApiKey } = require('./src/config');
+const { callBrainWithFallback } = require('../../.experience/src/brain-llm');
+const { getQdrantBase, getQdrantApiKey } = require('../../.experience/src/config');
 
 const COLLECTIONS = ['experience-principles', 'experience-behavioral', 'experience-selfqa'];
-const BATCH_DIR = path.join(__dirname, 'narrow-scope-batches');
+const BATCH_DIR = path.join(__dirname, '..', '..', 'data', 'batches', 'narrow-scope');
 const DEFAULT_CONCURRENCY = 8;
 const RETRY_PER_ENTRY = 1;
 

@@ -11,8 +11,8 @@
  * pass-through when project_slug is null).
  *
  * Usage:
- *   node tools/exp-backfill-project-slug.js
- *   node tools/exp-backfill-project-slug.js --apply
+ *   node tools/migrations/exp-backfill-project-slug.js
+ *   node tools/migrations/exp-backfill-project-slug.js --apply
  */
 
 const fs = require('fs');

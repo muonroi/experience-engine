@@ -11,12 +11,12 @@
  * re-run. Paginates the Qdrant scroll API. Server-side only (needs Qdrant).
  *
  * Usage:
- *   node tools/backfill-text-search.js            # apply
- *   node tools/backfill-text-search.js --dry-run  # report only, write nothing
+ *   node tools/migrations/backfill-text-search.js            # apply
+ *   node tools/migrations/backfill-text-search.js --dry-run  # report only, write nothing
  */
 
 const path = require('path');
-const EXP = path.join(__dirname, '..', '.experience', 'src');
+const EXP = path.join(__dirname, '..', '..', '.experience', 'src');
 const { getQdrantBase, getQdrantApiKey } = require(path.join(EXP, 'config'));
 const { setPayloadFields, checkQdrant } = require(path.join(EXP, 'qdrant'));
 const { buildTextSearch } = require(path.join(EXP, 'format'));

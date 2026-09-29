@@ -30,9 +30,9 @@
  *   5. Batch ID + manifest for rollback
  *
  * Usage:
- *   node doc-to-experience.js --dry-run --limit=5
- *   node doc-to-experience.js --batch-id=2026-05-21-doc-exp --limit=50
- *   node doc-to-experience.js --rollback 2026-05-21-doc-exp
+ *   node scripts/maintenance/doc-to-experience.js --dry-run --limit=5
+ *   node scripts/maintenance/doc-to-experience.js --batch-id=2026-05-21-doc-exp --limit=50
+ *   node scripts/maintenance/doc-to-experience.js --rollback 2026-05-21-doc-exp
  *
  * Original seed-org-doc entries are NOT deleted by this script. After a
  * derivation pass the engine has BOTH: the doc-form snippet (still useful
@@ -45,13 +45,13 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const { callBrainWithFallback } = require('./src/brain-llm');
-const { getEmbedding } = require('./src/embedding');
-const { upsertEntry } = require('./src/evolution');
-const { deleteEntry } = require('./src/qdrant');
+const { callBrainWithFallback } = require('../../.experience/src/brain-llm');
+const { getEmbedding } = require('../../.experience/src/embedding');
+const { upsertEntry } = require('../../.experience/src/evolution');
+const { deleteEntry } = require('../../.experience/src/qdrant');
 
 const BEHAVIORAL = 'experience-behavioral';
-const BATCH_DIR = path.join(__dirname, 'doc-to-exp-batches');
+const BATCH_DIR = path.join(__dirname, '..', '..', 'data', 'batches', 'doc-to-exp');
 const SOURCE_FROM = 'seed-org-doc';
 const TARGET_FROM = 'doc-to-experience';
 
@@ -83,7 +83,7 @@ function parseArgs(argv) {
 
 // ---------- Qdrant scroll ----------
 
-const { getQdrantBase, getQdrantApiKey } = require('./src/config');
+const { getQdrantBase, getQdrantApiKey } = require('../../.experience/src/config');
 
 async function scrollAllSeedDocs() {
   const out = [];

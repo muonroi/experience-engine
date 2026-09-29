@@ -13,9 +13,9 @@
  * LoggingHook variant-expansion artifacts).
  *
  * Usage:
- *   node tools/exp-dedup-superseded.js
- *   node tools/exp-dedup-superseded.js --apply
- *   node tools/exp-dedup-superseded.js --collection experience-behavioral --apply
+ *   node tools/migrations/exp-dedup-superseded.js
+ *   node tools/migrations/exp-dedup-superseded.js --apply
+ *   node tools/migrations/exp-dedup-superseded.js --collection experience-behavioral --apply
  */
 
 const fs = require('fs');

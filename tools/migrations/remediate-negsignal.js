@@ -17,9 +17,9 @@
  * (runtime-validated) are left untouched. Seeds bypass confidence so are skipped.
  *
  * Usage:
- *   node tools/remediate-negsignal.js                 # dry-run (default)
- *   node tools/remediate-negsignal.js --apply         # write to Qdrant
- *   node tools/remediate-negsignal.js --collection experience-selfqa --apply
+ *   node tools/migrations/remediate-negsignal.js                 # dry-run (default)
+ *   node tools/migrations/remediate-negsignal.js --apply         # write to Qdrant
+ *   node tools/migrations/remediate-negsignal.js --collection experience-selfqa --apply
  *
  * Reads Qdrant URL/key from ~/.experience/config.json (qdrantUrl/qdrantKey).
  * Effective-confidence math mirrors .experience/src/scoring.js exactly.

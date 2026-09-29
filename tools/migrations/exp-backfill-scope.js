@@ -18,7 +18,7 @@
  *   - Audit log written to ~/.experience/backfill-scope-<ts>.jsonl
  *
  * Usage:
- *   node tools/exp-backfill-scope.js \
+ *   node tools/migrations/exp-backfill-scope.js \
  *     --known-frameworks "<labelA>,<labelB>" \
  *     [--collection experience-behavioral] \
  *     [--limit 100] [--rate-ms 250] \
@@ -79,10 +79,10 @@ Optional:
 
 Examples:
   # Dry-run on local Qdrant, classify against two framework labels:
-  node tools/exp-backfill-scope.js --known-frameworks "framework-a,framework-b"
+  node tools/migrations/exp-backfill-scope.js --known-frameworks "framework-a,framework-b"
 
   # Actual apply, capped at 200 points in one collection:
-  node tools/exp-backfill-scope.js --known-frameworks "framework-a" \\
+  node tools/migrations/exp-backfill-scope.js --known-frameworks "framework-a" \\
     --collection experience-behavioral --limit 200 --apply
 `);
 }

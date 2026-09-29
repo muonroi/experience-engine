@@ -7,7 +7,7 @@
  *   - why: extracted from "**Why:**" line in the memory file
  *   - scope: derived from context (language, repos, filePattern)
  *
- * Run once: node experience-engine/.experience/backfill-why-scope.js
+ * Run once: node scripts/maintenance/backfill-why-scope.js
  */
 
 'use strict';

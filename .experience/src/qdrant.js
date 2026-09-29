@@ -479,7 +479,7 @@ async function deleteEntry(collection, id) {
  * the native BM25 / MatchText leg. That dense-only write was the root cause of
  * sparse-coverage DRIFT: points added after a migration top-up lacked sparse
  * and silently degraded `/api/recall` + `/api/search` hybrid retrieval (see
- * tools/migrate-sparse-bm25.js). Mirrors the migration's re-upload vector shape.
+ * tools/migrations/migrate-sparse-bm25.js). Mirrors the migration's re-upload vector shape.
  * Defensive: any failure building the sparse vector falls back to dense-only so
  * a write is never blocked (logged at warn). Exported for testing.
  */
@@ -536,7 +536,7 @@ async function syncToQdrant() {
 //  Qdrant scores these with idf weighting server-side (sparse vector configured
 //  with modifier:"idf"). Replaces the boolean MatchText leg with real scored
 //  retrieval. A collection only supports this once it was (re)created with the
-//  sparse vector config — see tools/migrate-sparse-bm25.js. The write path
+//  sparse vector config — see tools/migrations/migrate-sparse-bm25.js. The write path
 //  probes support and falls back to dense-only, so deploy is non-breaking before
 //  migration; the recall path falls back to searchCollectionLexical.
 // ============================================================
@@ -620,7 +620,7 @@ async function searchCollectionSparse(name, queryText, limit, signal, extraFilte
  * ensureSparseCollection: create the collection WITH the text_bm25 sparse vector
  * if it does not exist. Qdrant cannot ADD a sparse vector to an existing
  * dense-only collection (PATCH update_collection only edits existing sparse
- * params) — migrating an existing collection is tools/migrate-sparse-bm25.js's
+ * params) — migrating an existing collection is tools/migrations/migrate-sparse-bm25.js's
  * job. This only covers the fresh-install case. Idempotent; non-fatal.
  */
 async function ensureSparseCollection(collection, dim, signal) {

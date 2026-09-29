@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Quick test for experience interceptor — used by setup.sh
 'use strict';
-const { intercept } = require('./experience-core.js');
+const { intercept } = require('../../.experience/experience-core.js');
 
 let input = '';
 process.stdin.setEncoding('utf8');

@@ -15,9 +15,9 @@
  *   - Audit log to ~/.experience/backfill-framework-flat-<ts>.jsonl
  *
  * Usage:
- *   node tools/exp-backfill-framework-from-flat.js
- *   node tools/exp-backfill-framework-from-flat.js --apply
- *   node tools/exp-backfill-framework-from-flat.js --collection experience-behavioral --apply
+ *   node tools/migrations/exp-backfill-framework-from-flat.js
+ *   node tools/migrations/exp-backfill-framework-from-flat.js --apply
+ *   node tools/migrations/exp-backfill-framework-from-flat.js --collection experience-behavioral --apply
  */
 
 const fs = require('fs');

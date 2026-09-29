@@ -17,7 +17,7 @@
  *   - For each entry: embed trigger_main + every trigger_variant separately,
  *     upsert one Qdrant point per trigger pointing to the same canonical payload.
  *     This is route amplification — diverse phrasings all retrieve the same lesson.
- *   - Writes a batch manifest to .experience/seed-batches/<batchId>.json so
+ *   - Writes a batch manifest to data/batches/seed/<batchId>.json so
  *     --rollback can delete every point this batch created.
  *   - Skips assessExtractedQaQuality entirely: seed entries have a different
  *     schema (trigger_main/guidance/why) than runtime-extracted Q/A
@@ -25,18 +25,18 @@
  *     the Colab extraction prompt.
  *
  * Usage:
- *   node seed-ingest.js seed-entries.jsonl --dry-run
- *   node seed-ingest.js seed-entries.jsonl --batch-id=2026-05-09-bb-v1
- *   node seed-ingest.js seed-entries.jsonl --limit=20            # ingest only first 20
- *   node seed-ingest.js --rollback 2026-05-09-bb-v1
+ *   node scripts/maintenance/seed-ingest.js seed-entries.jsonl --dry-run
+ *   node scripts/maintenance/seed-ingest.js seed-entries.jsonl --batch-id=2026-05-09-bb-v1
+ *   node scripts/maintenance/seed-ingest.js seed-entries.jsonl --limit=20            # ingest only first 20
+ *   node scripts/maintenance/seed-ingest.js --rollback 2026-05-09-bb-v1
  */
 
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { getEmbedding } = require('./src/embedding');
-const { upsertEntry } = require('./src/evolution');
-const { deleteEntry } = require('./src/qdrant');
+const { getEmbedding } = require('../../.experience/src/embedding');
+const { upsertEntry } = require('../../.experience/src/evolution');
+const { deleteEntry } = require('../../.experience/src/qdrant');
 
 const TIER_COLLECTION = {
   T0: 'experience-principles',
@@ -46,7 +46,7 @@ const TIER_COLLECTION = {
 
 const TIER_NUM = { T0: 0, T1: 1, T2: 2 };
 
-const BATCH_DIR = path.join(__dirname, 'seed-batches');
+const BATCH_DIR = path.join(__dirname, '..', '..', 'data', 'batches', 'seed');
 
 // ---------- arg parsing ----------
 
@@ -227,7 +227,7 @@ async function runIngest(args) {
   console.log('━'.repeat(60));
   console.log(`DONE. entries-ok=${ingestedEntries}/${limited.length} points=${ingestedPoints} failed=${failedEntries}`);
   console.log(`Manifest: ${manifestPath}`);
-  console.log(`Rollback: node seed-ingest.js --rollback ${batchId}`);
+  console.log(`Rollback: node scripts/maintenance/seed-ingest.js --rollback ${batchId}`);
 }
 
 // ---------- rollback ----------
@@ -271,8 +271,8 @@ async function runRollback(batchId) {
   }
   if (!args.jsonl) {
     console.error('Usage:');
-    console.error('  node seed-ingest.js <file.jsonl> [--dry-run] [--batch-id=ID] [--limit=N]');
-    console.error('  node seed-ingest.js --rollback <batchId>');
+    console.error('  node scripts/maintenance/seed-ingest.js <file.jsonl> [--dry-run] [--batch-id=ID] [--limit=N]');
+    console.error('  node scripts/maintenance/seed-ingest.js --rollback <batchId>');
     process.exit(1);
   }
   await runIngest(args);

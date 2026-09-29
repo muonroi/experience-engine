@@ -19,7 +19,7 @@
 > Instead of accumulating facts linearly, knowledge evolves: incidents are captured, promoted to behavioral rules when confirmed, and generalized into principles that fire on novel cases never seen before. Memory shrinks as capability grows.
 
 <p align="center">
-  <img src="demo.gif" alt="Experience Engine intercepting a mistake in real time" width="820">
+  <img src="assets/demo/demo.gif" alt="Experience Engine intercepting a mistake in real time" width="820">
 </p>
 
 ## Quick Start
