@@ -587,7 +587,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
           try {
             const exp = JSON.parse(surfaced.find(s => s.id === fp.id)?.payload?.json || '{}');
             if (exp.solution && lines[i]?.includes(exp.solution)) { lines.splice(i, 1); break; }
-          } catch {}
+          } catch { /* malformed payload — keep the line */ }
         }
       }
     }

@@ -39,6 +39,13 @@
   - `tools/exp-beta-replay.js` (offline replay), `exp-reset-ignore-count.js --beta`.
 
 ### Fixed
+- `register-hooks.js` overwrote an agent settings file it could not parse (e.g. JSON
+  with comments) with just the Experience Engine hooks, wiping the user's settings.
+  It now leaves such a file unchanged and reports it; an empty file is still wired.
+- Errors the hooks, the offline queue and the judge worker dropped silently (queue
+  flush, extract drain spawn, experiment-arm memory, state writes, payload reads) are
+  now recorded in `activity.jsonl` as `{op:'swallowed', where}` and counted by
+  `/metrics` as `experience_swallowed_errors_24h{where}`. Hook stdout is unchanged.
 - Concurrent in-process updates to one point (`updatePointPayload`) could lose writes;
   they are now serialised per point.
 - The npm package and Docker image did not ship `lib/`, so the server died with

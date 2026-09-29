@@ -160,6 +160,7 @@ function handleMetrics(req, res) {
 
   // Activity-based counters from JSONL
   let intercepts = 0, suggestions = 0, feedbacks = 0, evolves = 0, embedOk = 0, embedFail = 0;
+  const swallowed = new Map(); // where -> count of errors dropped on purpose (src/swallow.js)
   try {
     const activityPath = path.join(os.homedir(), '.experience', 'activity.jsonl');
     const lines24h = fs.readFileSync(activityPath, 'utf8').trim().split('\n').slice(-500);
@@ -175,9 +176,10 @@ function handleMetrics(req, res) {
         if (e.op === 'evolve') evolves++;
         if (e.op === 'cost-call' && e.kind === 'embed' && e.ok) embedOk++;
         if (e.op === 'cost-call' && e.kind === 'embed' && !e.ok) embedFail++;
-      } catch {}
+        if (e.op === 'swallowed') swallowed.set(String(e.where), (swallowed.get(String(e.where)) || 0) + 1);
+      } catch { /* skip a torn line */ }
     }
-  } catch {}
+  } catch { /* no activity log yet — counters stay 0 */ }
   lines.push(`# HELP experience_intercepts_24h Intercepts in last 24h`);
   lines.push(`# TYPE experience_intercepts_24h gauge`);
   lines.push(`experience_intercepts_24h ${intercepts}`);
@@ -196,6 +198,11 @@ function handleMetrics(req, res) {
   lines.push(`# HELP experience_embed_fail_24h Failed embed calls in last 24h`);
   lines.push(`# TYPE experience_embed_fail_24h gauge`);
   lines.push(`experience_embed_fail_24h ${embedFail}`);
+  lines.push(`# HELP experience_swallowed_errors_24h Errors caught and dropped on purpose in last 24h, by call site`);
+  lines.push(`# TYPE experience_swallowed_errors_24h gauge`);
+  for (const [where, count] of swallowed) {
+    lines.push(`experience_swallowed_errors_24h{where="${where.replace(/[\\"\n]/g, '_')}"} ${count}`);
+  }
 
   res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4', ...CORS });
   res.end(lines.join('\n') + '\n');

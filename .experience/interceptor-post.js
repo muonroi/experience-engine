@@ -31,6 +31,19 @@ const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
 
+// src/swallow.js records errors this file drops on purpose. An install that
+// predates it gets silent no-ops, so a missing module never breaks the hook.
+const { swallow, safeUnlink, isMissing } = (() => {
+  try { return require('./src/swallow'); }
+  catch {
+    return {
+      swallow() {},
+      safeUnlink(file) { try { fs.unlinkSync(file); } catch { /* best-effort */ } },
+      isMissing: () => true,
+    };
+  }
+})();
+
 const EXP_DIR    = path.join(os.homedir(), '.experience');
 const TMP_DIR    = path.join(EXP_DIR, 'tmp');
 const STATE_FILE = path.join(TMP_DIR, 'last-suggestions.json');
@@ -112,7 +125,7 @@ function debugLog(event) {
   try {
     fs.mkdirSync(path.dirname(DEBUG_LOG), { recursive: true });
     fs.appendFileSync(DEBUG_LOG, JSON.stringify({ ts: new Date().toISOString(), hook: 'interceptor-post', ...event }) + '\n');
-  } catch {}
+  } catch { /* debug log unwritable — nothing left to report to */ }
 }
 
 function activityLog(event) {
@@ -122,7 +135,7 @@ function activityLog(event) {
     if (typeof core._activityLog === 'function') {
       core._activityLog({ op: 'hook', hook: 'interceptor-post', ...event });
     }
-  } catch {}
+  } catch { /* no local core on a thin client — the server keeps the activity log */ }
 }
 
 function getRemoteClient() {
@@ -238,7 +251,7 @@ process.stdin.on('end', async () => {
     try {
       const raw = fs.readFileSync(STATE_FILE, 'utf8');
       state = JSON.parse(raw);
-    } catch {}
+    } catch (err) { if (!isMissing(err)) swallow('interceptor-post.readState', err); }
 
     // Parse PostToolUse input
     let data;
@@ -282,7 +295,7 @@ process.stdin.on('end', async () => {
       if (ageMs > STALE_MS) {
         debugLog({ stage: 'stale_state', ageMs });
         activityLog({ stage: 'stale_state', ageMs, tool: state.tool || null });
-        try { fs.unlinkSync(STATE_FILE); } catch {}
+        safeUnlink(STATE_FILE, 'interceptor-post.unlinkState');
         state = null;
       }
     }
@@ -303,7 +316,7 @@ process.stdin.on('end', async () => {
     if (remote) {
       const config = remote.loadConfig();
       if (remote.isRemoteEnabled(config)) {
-        try { await remote.flushQueueForHook({ config }); } catch {}
+        try { await remote.flushQueueForHook({ config }); } catch (err) { swallow('interceptor-post.flushQueue', err); }
         // A PostToolUse event with no tool name is meaningless to the server —
         // /api/posttool rejects it with 400 "toolName is required". Posting it
         // anyway lands a permanent-poison record in the offline queue (some
@@ -311,8 +324,8 @@ process.stdin.on('end', async () => {
         // round-trip entirely; still drain the queue and clean up local state.
         if (!String(toolName || '').trim()) {
           debugLog({ stage: 'remote_posttool_skipped_no_tool', surfacedCount: surfacedIds.length });
-          try { remote.maybeSpawnExtractDrain({ config }); } catch {}
-          try { if (state && !isFailureEvent) fs.unlinkSync(STATE_FILE); } catch {}
+          try { remote.maybeSpawnExtractDrain({ config }); } catch (err) { swallow('interceptor-post.spawnExtractDrain', err); }
+          if (state && !isFailureEvent) safeUnlink(STATE_FILE, 'interceptor-post.unlinkState');
           process.exitCode = 0; return;
         }
         const body = {
@@ -333,8 +346,8 @@ process.stdin.on('end', async () => {
           remote.queueRequest('POST', '/api/posttool', body);
           debugLog({ stage: 'remote_posttool_queued', tool: toolName, surfacedCount: surfacedIds.length, message: sendErr?.message || String(sendErr) });
         }
-        try { remote.maybeSpawnExtractDrain({ config }); } catch {}
-        try { if (state && !isFailureEvent) fs.unlinkSync(STATE_FILE); } catch {}
+        try { remote.maybeSpawnExtractDrain({ config }); } catch (err) { swallow('interceptor-post.spawnExtractDrain', err); }
+        if (state && !isFailureEvent) safeUnlink(STATE_FILE, 'interceptor-post.unlinkState');
         process.exitCode = 0; return;
       }
     }
@@ -393,7 +406,7 @@ process.stdin.on('end', async () => {
     if (surfacedIds.length === 0) {
       debugLog({ stage: 'no_surfaced_ids' });
       activityLog({ stage: 'no_surfaced_ids', tool: toolName || null, ...sourceMeta });
-      try { if (state) fs.unlinkSync(STATE_FILE); } catch {}
+      if (state) safeUnlink(STATE_FILE, 'interceptor-post.unlinkState');
       process.exitCode = 0; return;
     }
 
@@ -437,7 +450,7 @@ process.stdin.on('end', async () => {
     }
 
     // --- Step 6: Delete last-suggestions.json ---
-    try { fs.unlinkSync(STATE_FILE); } catch {}
+    safeUnlink(STATE_FILE, 'interceptor-post.unlinkState');
     debugLog({ stage: 'done', processed: surfacedIds.length });
     activityLog({
       stage: 'done',

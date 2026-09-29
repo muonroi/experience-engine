@@ -24,6 +24,18 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+// src/swallow.js records errors this file drops on purpose. An install that
+// predates it gets silent no-ops, so a missing module never breaks the hook.
+const { swallow, safeUnlink } = (() => {
+  try { return require('./src/swallow'); }
+  catch {
+    return {
+      swallow() {},
+      safeUnlink(file) { try { fs.unlinkSync(file); } catch { /* best-effort */ } },
+    };
+  }
+})();
+
 const EXP_DIR = path.join(os.homedir(), '.experience');
 const DEBUG_LOG = process.env.EXPERIENCE_HOOK_DEBUG_LOG || path.join(os.homedir(), '.codex', 'log', 'experience-hook-debug.jsonl');
 
@@ -74,7 +86,7 @@ function debugLog(event) {
   try {
     fs.mkdirSync(path.dirname(DEBUG_LOG), { recursive: true });
     fs.appendFileSync(DEBUG_LOG, JSON.stringify({ ts: new Date().toISOString(), hook: 'interceptor-prompt', ...event }) + '\n');
-  } catch {}
+  } catch { /* debug log unwritable — nothing left to report to */ }
 }
 
 function activityLog(event) {
@@ -84,7 +96,7 @@ function activityLog(event) {
     if (typeof core._activityLog === 'function') {
       core._activityLog({ op: 'hook', hook: 'interceptor-prompt', ...event });
     }
-  } catch {}
+  } catch { /* no local core on a thin client — the server keeps the activity log */ }
 }
 
 function writeLastSuggestionsState(tool, surfacedIds, sourceMeta, promptMeta = {}) {
@@ -113,7 +125,7 @@ function writeLastSuggestionsState(tool, surfacedIds, sourceMeta, promptMeta = {
       surfaced: surfacedIds.slice(0, 8).map(s => ({ collection: s.collection, pointId: String(s.id || '').slice(0, 8) })),
       ...sourceMeta
     });
-  } catch {}
+  } catch (err) { swallow('interceptor-prompt.writeSuggestionsState', err); }
 }
 
 function statePath() {
@@ -129,7 +141,7 @@ function readLastSuggestionsState() {
 }
 
 function deleteLastSuggestionsState() {
-  try { fs.unlinkSync(statePath()); } catch {}
+  safeUnlink(statePath(), 'interceptor-prompt.unlinkState');
 }
 
 function isPromptOnlyState(state) {
@@ -331,7 +343,7 @@ const _surfaceTrigger = _loadInstalled('src/surface-trigger.js');
 function resolveExperimentArm(sessionId, marker) {
   const remote = getRemoteClient();
   if (marker && typeof marker.arm === 'string') {
-    try { if (remote) remote.rememberExperimentArm(sessionId, marker); } catch {}
+    try { if (remote) remote.rememberExperimentArm(sessionId, marker); } catch (err) { swallow('interceptor-prompt.rememberExperimentArm', err); }
     return marker.arm;
   }
   if (!isRemoteMode()) {
@@ -514,7 +526,7 @@ process.stdin.on('end', async () => {
       if (remote) {
         const config = remote.loadConfig();
         if (remote.isRemoteEnabled(config)) {
-          try { await remote.flushQueueForHook({ config }); } catch {}
+          try { await remote.flushQueueForHook({ config }); } catch (err) { swallow('interceptor-prompt.flushQueue', err); }
           return remote.postJsonForHook('/api/intercept', {
           toolName: 'UserPrompt',
           toolInput,
@@ -592,7 +604,7 @@ process.stdin.on('end', async () => {
       try {
         const remote = getRemoteClient();
         if (remote) remote.maybeSpawnExtractDrain();
-      } catch {}
+      } catch (err) { swallow('interceptor-prompt.spawnExtractDrain', err); }
       debugLog({ stage: 'done', hasSuggestions: !!suggestions, hasRoute: !!routeInfo });
       activityLog({
         stage: 'done',

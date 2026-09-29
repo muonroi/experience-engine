@@ -15,6 +15,7 @@ const _evolution = require('./evolution');
 const _activity = require('./activity');
 const _hittrack = require('./hittrack');
 const _logger = require('./logger');
+const { swallow } = require('./swallow');
 
 // --- Constants ---
 // This is the COLLECTIONS array experience-core.js actually destructures
@@ -393,7 +394,7 @@ async function reconcileStalePromptSuggestions(state, nextPromptMeta = {}) {
 
   for (const surface of surfacedIds) {
     let assessment = { touched: false, reason: 'unused' };
-    try { assessment = assessHintUsage(surface, 'UserPrompt', toolInput, meta); } catch {}
+    try { assessment = assessHintUsage(surface, 'UserPrompt', toolInput, meta); } catch (err) { swallow('intercept.assessHintUsage', err); }
     const normalizedReason = _session.normalizeNoiseReason(assessment?.reason);
     await _qdrant.updatePointPayload(surface.collection, surface.id, (data) => {
       _hittrack.applyNoiseDispositionData('unused', 'prompt-stale', normalizedReason, { countIrrelevant: !!normalizedReason, sessionId: meta.sourceSession || null })(data);

@@ -638,7 +638,7 @@ function filterNoiseSuppressedPoints(points, context = {}) {
   const suppressed = [];
   for (const point of points || []) {
     let data = {};
-    try { data = JSON.parse(point.payload?.json || '{}'); } catch {}
+    try { data = JSON.parse(point.payload?.json || '{}'); } catch { /* malformed payload — treat as empty */ }
     const decision = shouldSuppressForNoise(data, context);
     if (decision.suppress) suppressed.push({ point, reason: decision.reason });
     else kept.push(point);

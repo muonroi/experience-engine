@@ -42,6 +42,17 @@ const {
   writeMarker,
 } = require(path.join(expDir, 'stop-extractor.js'));
 
+// src/swallow.js records errors this file drops on purpose. An install that
+// predates it gets silent no-ops, so a missing module never breaks the hook.
+const { swallow } = (() => {
+  try { return require(path.join(expDir, 'src', 'swallow.js')); }
+  catch {
+    return {
+      swallow() {},
+    };
+  }
+})();
+
 let _remote = null;
 function getRemote() {
   if (_remote !== null) return _remote;
@@ -93,7 +104,7 @@ function log(msg) {
   try {
     fs.mkdirSync(path.dirname(LOG_PATH), { recursive: true });
     fs.appendFileSync(LOG_PATH, line + '\n');
-  } catch {}
+  } catch { /* extractor log unwritable — nothing left to report to */ }
 }
 
 async function extractAndStore(transcript, projectPath, meta) {
@@ -128,7 +139,7 @@ function enrichMeta(projectPath) {
     if (fs.existsSync(enrichPath) && projectPath) {
       return require(enrichPath).enrichSourceMeta(null, undefined, projectPath) || {};
     }
-  } catch {}
+  } catch (err) { swallow('background-extractor.enrichSourceMeta', err); }
   return {};
 }
 

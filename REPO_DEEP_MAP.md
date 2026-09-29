@@ -162,6 +162,7 @@ modules instead of reimplementing cross-cutting behavior.
 | `.experience/src/query-builder.js` | Query construction helpers |
 | `.experience/src/session.js` | Session/transcript helpers |
 | `.experience/src/activity.js` | Activity log helper |
+| `.experience/src/swallow.js` | Records deliberately dropped errors to `activity.jsonl` (`swallow`, `safeUnlink`, `isMissing`); thin-client safe |
 | `.experience/src/validate.js` | Request body validation |
 | `.experience/src/utils.js` | Small shared utilities |
 | `.experience/src/agent-md.js` | Managed agent-instruction block + injector (Node port of `inject-agent-instructions.sh`); used by `bin/init.js`. Keep `INSTRUCTION_BLOCK` in sync with the bash heredoc |
@@ -214,6 +215,11 @@ Logging conventions:
 - `error` writes to stderr; `warn`, `info`, and `debug` write to stdout.
 - Default level is `info`; set `EXPERIENCE_LOG_LEVEL=debug` for verbose traces.
 - CLI/tools may still write user-facing terminal output directly.
+- Hooks never log to stdout (it is the hook protocol). An error caught and dropped on
+  purpose goes through `.experience/src/swallow.js` `swallow(where, err)` (or
+  `safeUnlink`), which appends `{op:'swallowed'}` to `activity.jsonl`; `/metrics`
+  exposes it as `experience_swallowed_errors_24h{where}`. An empty `catch` is only for
+  an expected case, with a comment saying why.
 
 Stats and gates are primarily handled by:
 

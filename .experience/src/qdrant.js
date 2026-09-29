@@ -14,6 +14,7 @@ const {
 const { log } = require('./logger');
 const { buildSparseVector, SPARSE_VECTOR_NAME } = require('./sparse');
 const { buildTextSearch } = require('./format');
+const { safeUnlink } = require('./swallow');
 
 // ============================================================
 //  Qdrant connection state
@@ -81,7 +82,7 @@ function acquireLock(collection) {
         try {
           const stat = fs.statSync(lockPath);
           if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
-            try { fs.unlinkSync(lockPath); } catch {}
+            safeUnlink(lockPath, 'qdrant.breakStaleLock');
             continue;
           }
           const start = Date.now();
@@ -96,7 +97,7 @@ function acquireLock(collection) {
 }
 
 function releaseLock(collection) {
-  try { fs.unlinkSync(fileStorePath(collection) + '.lock'); } catch {}
+  safeUnlink(fileStorePath(collection) + '.lock', 'qdrant.releaseLock');
 }
 
 function withFileStoreLock(collection, fn) {

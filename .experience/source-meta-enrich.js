@@ -186,7 +186,7 @@ function _scanDirRecursiveForFramework(dir, packages, depth) {
       const sub = _scanDirRecursiveForFramework(`${dir}/${e.name}`, packages, depth - 1);
       if (sub && sub !== 'dotnet') return sub;
     }
-  } catch {}
+  } catch { /* unreadable dir — no framework here */ }
   return fw; // return generic 'dotnet' if nothing more specific found
 }
 
@@ -467,7 +467,7 @@ function detectProjectSlug(cwd) {
         // Match `url = git@github.com:org/repo.git` or `url = https://github.com/org/repo`.
         const m = text.match(/url\s*=\s*[^\n]*?[\/:]([\w.-]+?)(\.git)?\s*$/mi);
         if (m && m[1]) return m[1].toLowerCase();
-      } catch {}
+      } catch { /* unreadable git config — fall back to the dir name */ }
       return path.basename(dir).toLowerCase();
     }
     const parent = path.dirname(dir);

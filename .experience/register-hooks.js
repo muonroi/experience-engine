@@ -200,12 +200,12 @@ const AGENTS = [
       const tomlPath = path.join(home, '.codex', 'config.toml');
       try {
         let toml = '';
-        try { toml = fs.readFileSync(tomlPath, 'utf8'); } catch {}
+        try { toml = fs.readFileSync(tomlPath, 'utf8'); } catch { /* no config.toml yet — start empty */ }
         if (!toml.includes('codex_hooks')) {
           toml += (toml && !toml.endsWith('\n') ? '\n' : '') + '[features]\ncodex_hooks = true\n';
           fs.writeFileSync(tomlPath, toml);
         }
-      } catch {}
+      } catch (err) { console.log('  Codex: could not enable codex_hooks in ' + tomlPath + ': ' + err.message); }
     }
   },
   {
@@ -309,9 +309,17 @@ for (const agent of AGENTS) {
     let cfg = {};
     let exists = false;
     try {
-      cfg = JSON.parse(fs.readFileSync(agent.file, 'utf8'));
-      exists = true;
-    } catch {}
+      const raw = fs.readFileSync(agent.file, 'utf8');
+      if (raw.trim()) {
+        cfg = JSON.parse(raw);
+        exists = true;
+      }
+    } catch (err) {
+      // Missing or empty file = an agent not wired yet. Anything else (unreadable,
+      // or not strict JSON) must skip the agent: patching {} and writing it back
+      // would wipe the user's settings.
+      if (err.code !== 'ENOENT') throw new Error('cannot read ' + agent.file + ' (' + err.message + ') — left unchanged');
+    }
 
     if (mode === 'existing-only') {
       // Upgrade mode: only re-patch if the agent's config file already exists

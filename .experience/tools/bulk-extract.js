@@ -29,6 +29,17 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+// src/swallow.js records errors this file drops on purpose. An install that
+// predates it gets silent no-ops, so a missing module never breaks the hook.
+const { swallow } = (() => {
+  try { return require('../src/swallow'); }
+  catch {
+    return {
+      swallow() {},
+    };
+  }
+})();
+
 const homeDir = os.homedir();
 const expDir = fs.existsSync(path.join(__dirname, '..', 'src', 'context.js'))
   ? path.resolve(__dirname, '..')
@@ -127,7 +138,7 @@ function resolveProjectPath(rawPath) {
   // Already a real path (Codex/Gemini style)?
   if (rawPath.includes('/') || rawPath.includes('\\')) {
     const normalized = path.resolve(rawPath);
-    try { if (fs.statSync(normalized).isDirectory()) result = normalized; } catch {}
+    try { if (fs.statSync(normalized).isDirectory()) result = normalized; } catch { /* not a directory */ }
     _slugCache.set(rawPath, result);
     return result;
   }
@@ -151,7 +162,7 @@ function resolveProjectPath(rawPath) {
     if (idx >= parts.length) {
       // All parts consumed — commit pending as final segment
       const full = path.join(parentDir, pending);
-      try { if (fs.statSync(full).isDirectory()) return full; } catch {}
+      try { if (fs.statSync(full).isDirectory()) return full; } catch { /* not a directory */ }
       return null;
     }
 
@@ -164,7 +175,7 @@ function resolveProjectPath(rawPath) {
         const deeper = tryResolve(idx + 1, committedDir, part);
         if (deeper) return deeper;
       }
-    } catch {}
+    } catch { /* unreadable dir — no match here */ }
 
     // Option B: dash was literal hyphen — extend pending
     const deeper2 = tryResolve(idx + 1, parentDir, pending + '-' + part);
@@ -336,7 +347,7 @@ function enrichMeta(projectPath, transcript) {
         if (fsMeta.framework) out.framework = fsMeta.framework;
         if (fsMeta.project_slug) out.project_slug = fsMeta.project_slug;
       }
-    } catch {}
+    } catch (err) { swallow('bulk-extract.enrichSourceMeta', err); }
   }
 
   // Step 2: Fill gaps from transcript analysis
@@ -352,7 +363,7 @@ function enrichMeta(projectPath, transcript) {
       const enrich = require(path.join(expDir, 'source-meta-enrich.js'));
       const slug = enrich.detectProjectSlug(realPath || projectPath);
       if (slug) out.project_slug = slug;
-    } catch {}
+    } catch (err) { swallow('bulk-extract.detectProjectSlug', err); }
   }
 
   return out;

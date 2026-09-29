@@ -7,6 +7,18 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 
+// src/swallow.js records errors this file drops on purpose. An install that
+// predates it gets silent no-ops, so a missing module never breaks the hook.
+const { swallow, safeUnlink } = (() => {
+  try { return require('./src/swallow'); }
+  catch {
+    return {
+      swallow() {},
+      safeUnlink(file) { try { fs.unlinkSync(file); } catch { /* best-effort */ } },
+    };
+  }
+})();
+
 const DEFAULT_TIMEOUT_MS = 5000;
 const DEFAULT_HOOK_TIMEOUT_MS = 1200;
 const DEFAULT_HOOK_FLUSH_TIMEOUT_MS = 150;
@@ -193,7 +205,7 @@ async function flushQueue(options = {}) {
     if (processed >= (options.limit || DEFAULT_FLUSH_LIMIT)) break;
     const record = safeReadJson(filePath, null);
     if (!record || !record.method || !record.path) {
-      try { fs.unlinkSync(filePath); } catch {}
+      safeUnlink(filePath, 'remote-client.dropInvalidRecord');
       continue;
     }
     if (allowedPaths && !allowedPaths.has(record.path)) {
@@ -201,7 +213,7 @@ async function flushQueue(options = {}) {
     }
     try {
       await requestJson(record.method, record.path, record.body, options);
-      try { fs.unlinkSync(filePath); } catch {}
+      safeUnlink(filePath, 'remote-client.dequeue');
       results.sent++;
       processed++;
     } catch (error) {
@@ -218,12 +230,12 @@ async function flushQueue(options = {}) {
           fs.mkdirSync(qDir, { recursive: true });
           fs.renameSync(filePath, path.join(qDir, path.basename(filePath)));
         } catch {
-          try { fs.unlinkSync(filePath); } catch {}
+          safeUnlink(filePath, 'remote-client.dropPoisonRecord');
         }
         results.quarantined++;
         continue;
       }
-      try { fs.writeFileSync(filePath, JSON.stringify(record, null, 2)); } catch {}
+      try { fs.writeFileSync(filePath, JSON.stringify(record, null, 2)); } catch (err) { swallow('remote-client.persistAttempts', err); }
       results.failed.push({ file: path.basename(filePath), error: record.lastError });
       break;
     }
@@ -282,7 +294,7 @@ function maybeSpawnExtractDrain(options = {}) {
   try {
     const stat = fs.statSync(lockPath);
     if ((Date.now() - stat.mtimeMs) < 60_000) return false;
-  } catch {}
+  } catch { /* no lock file — free to take */ }
 
   const scriptPath = path.join(getExperienceDir(homeDir), 'exp-client-drain.js');
   const compactPath = path.join(getExperienceDir(homeDir), 'extract-compact.js');

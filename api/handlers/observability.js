@@ -121,7 +121,7 @@ async function handleHintStats(req, res, url) {
       for (const p of pts) {
         total++;
         let exp = {};
-        try { exp = JSON.parse(p.payload?.json || '{}'); } catch {}
+        try { exp = JSON.parse(p.payload?.json || '{}'); } catch { /* malformed payload — treat as empty */ }
         const lang = exp.scope?.lang ? String(exp.scope.lang).toLowerCase() : null;
         const fw = exp.scope?.framework ? String(exp.scope.framework).toLowerCase() : null;
         if (!lang) byLang.unscoped++;

@@ -73,7 +73,7 @@ const server = http.createServer(async (req, res) => {
 // Log unhandled rejections instead of crashing — but never swallow silently
 process.on('unhandledRejection', (reason) => {
   const msg = reason instanceof Error ? reason.stack || reason.message : String(reason);
-  try { fs.appendFileSync(path.join(os.homedir(), '.experience', 'server-errors.log'), `[${new Date().toISOString()}] UnhandledRejection: ${msg}\n`); } catch {}
+  try { fs.appendFileSync(path.join(os.homedir(), '.experience', 'server-errors.log'), `[${new Date().toISOString()}] UnhandledRejection: ${msg}\n`); } catch { /* error log unwritable — nothing left to report to */ }
   slog('error', 'UnhandledRejection', { detail: msg });
 });
 

@@ -16,6 +16,18 @@ const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
 
+// src/swallow.js records errors this file drops on purpose. An install that
+// predates it gets silent no-ops, so a missing module never breaks the hook.
+const { swallow, safeUnlink } = (() => {
+  try { return require('./src/swallow'); }
+  catch {
+    return {
+      swallow() {},
+      safeUnlink(file) { try { fs.unlinkSync(file); } catch { /* best-effort */ } },
+    };
+  }
+})();
+
 const EXP_DIR   = path.join(os.homedir(), '.experience');
 const queueFile = process.argv[2];
 const VALID_NOISE_REASONS = new Set(['wrong_repo', 'wrong_language', 'wrong_task', 'stale_rule']);
@@ -209,8 +221,9 @@ async function main() {
   let data;
   try {
     data = JSON.parse(fs.readFileSync(normalised, 'utf8'));
-  } catch {
-    try { fs.unlinkSync(normalised); } catch {}
+  } catch (err) {
+    swallow('judge-worker.readPayload', err);
+    safeUnlink(normalised, 'judge-worker.unlinkPayload');
     process.exit(0);
   }
 
@@ -227,13 +240,14 @@ async function main() {
     extractProjectSlug  = core._extractProjectSlug;
     detectContext       = core._detectContext;
     assessHintUsage     = core._assessHintUsage;
-  } catch {
-    try { fs.unlinkSync(normalised); } catch {}
+  } catch (err) {
+    swallow('judge-worker.loadCore', err);
+    safeUnlink(normalised, 'judge-worker.unlinkPayload');
     process.exit(0);
   }
 
   if (typeof classifyViaBrain !== 'function' || typeof recordJudgeFeedback !== 'function') {
-    try { fs.unlinkSync(normalised); } catch {}
+    safeUnlink(normalised, 'judge-worker.unlinkPayload');
     process.exit(0);
   }
 
@@ -382,7 +396,7 @@ async function main() {
     }
   }));
 
-  try { fs.unlinkSync(normalised); } catch {}
+  safeUnlink(normalised, 'judge-worker.unlinkPayload');
   process.exit(0);
 }
 

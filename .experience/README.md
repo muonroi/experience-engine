@@ -11,7 +11,7 @@ files here without updating `package.json#files`, `bin/init.js` and
 |---|---|
 | `experience-core.js` | Thin facade over `src/`; the public API the hooks and the server load |
 | `src/` | All engine logic (config, Qdrant I/O, scoring, evolution, router, experiment, …) |
-| `interceptor*.js`, `posttool-batch-hook.js`, `stop-extractor.js`, `judge-worker.js` | Agent hooks. **Their stdout is the hook protocol** — never log to stdout from them |
+| `interceptor*.js`, `posttool-batch-hook.js`, `stop-extractor.js`, `judge-worker.js` | Agent hooks. **Their stdout is the hook protocol** — never log to stdout from them; record a dropped error with `src/swallow.js` |
 | `remote-client.js`, `exp-client-drain.js` | Thin-client transport and offline queue |
 | `exp-recall.js`, `exp-feedback.js` | Commands agents call directly |
 | `register-hooks.js`, `inject-agent-instructions.sh`, `setup*.sh`, `setup.ps1`, `sync-install.sh` | Installers |

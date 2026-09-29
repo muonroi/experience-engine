@@ -464,7 +464,7 @@ async function brainOllama(prompt, opts = {}) {
     });
     if (!res.ok) return null;
     const text = (await res.json()).response || '';
-    try { return JSON.parse(text); } catch {}
+    try { return JSON.parse(text); } catch { /* not bare JSON — try the first {...} block below */ }
     const m = text.match(/\{[\s\S]*\}/);
     return m ? JSON.parse(m[0]) : null;
   } catch { return null; }
@@ -502,7 +502,7 @@ async function brainOpenAI(prompt, opts = {}) {
       return null;
     }
     const text = (await res.json()).choices?.[0]?.message?.content || '';
-    try { return JSON.parse(text); } catch {}
+    try { return JSON.parse(text); } catch { /* not bare JSON — try the first {...} block below */ }
     const m = text.match(/\{[\s\S]*\}/);
     return m ? JSON.parse(m[0]) : null;
   } catch (err) {
@@ -580,7 +580,7 @@ async function brainDeepSeek(prompt, opts = {}) {
     const dsResp = await res.json();
     const dsMsg = dsResp.choices?.[0]?.message || {};
     const text = dsMsg.content || '{}';
-    try { return JSON.parse(text); } catch {}
+    try { return JSON.parse(text); } catch { /* not bare JSON — try the first {...} block below */ }
     const m = text.match(/\{[\s\S]*\}/);
     return m ? JSON.parse(m[0]) : null;
   } catch (err) {
