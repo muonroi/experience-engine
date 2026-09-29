@@ -250,8 +250,10 @@ default behaviour identical was taken.
 - Hooks remember each marker per session (`~/.experience/tmp/experiment-arms.json`,
   `remote-client.js`) so a timed-out search still honours a known control arm, and a brief
   cached from a marked response is refetched rather than replayed into another session.
-  A remote hook with no marker yet (e.g. no brief because no project slug) cannot know the
-  arm, so a nudge can leak on a control session's first prompt.
+  Markers carry the holdout `salt` and `share`; the client keeps them for 2 h and computes
+  the arm of a session it has no marker for (same hash as the server), which also keeps an
+  unmarked cached brief from a computed control session. Only a client that has seen no
+  marker in 2 h can still leak a nudge on a control session's first prompt.
 - The hook now sends `sourceSession` to `/api/project-brief`; hooks forward `toolUseId`
   and `hookEvent` for the exposure event.
 - Exposure events are logged for any session in an active experiment (holdout treatment,

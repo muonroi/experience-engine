@@ -68,6 +68,8 @@ const THIN_SAFE_SRC = [
   'memory-import.js',
   // Hooks and remote-client record deliberately dropped errors through it.
   'swallow.js',
+  // remote-client computes a new session's holdout arm with its unitHash.
+  'bayes.js',
 ];
 
 // Sync tools copied into ~/.experience/tools so `experience-engine sync` works

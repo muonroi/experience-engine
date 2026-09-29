@@ -254,12 +254,12 @@ async function handleProjectBrief(req, res, url) {
   // dashboard GET is never in the experiment. null unless an experiment is active.
   const holdout = experimentLog.noteHoldoutFor(sessionId, runtime);
   if (holdout && holdout.arm === 'control') {
-    return json(res, { text: null, entries: [], projectSlug: project, count: 0, cached: false, experiment: { arm: 'control' } });
+    return json(res, { text: null, entries: [], projectSlug: project, count: 0, cached: false, experiment: experimentLog.holdoutMarker(holdout) });
   }
 
   const { buildProjectBrief } = loadExperienceCore();
   const brief = await buildProjectBrief(project, { limit });
-  return json(res, holdout ? { ...brief, experiment: { arm: holdout.arm } } : brief);
+  return json(res, holdout ? { ...brief, experiment: experimentLog.holdoutMarker(holdout) } : brief);
 }
 
 function handleUser(req, res) {

@@ -74,6 +74,16 @@ function modelArm(sessionId, opts = {}) {
   return { experiment: MODEL_EXPERIMENT, arm: u < share ? 'beta' : 'legacy', salt, share, u };
 }
 
+/**
+ * What a response tells a hook about a session's holdout arm. salt and share let a
+ * thin client compute the arm of a NEW session itself (same hash as holdoutArm),
+ * so a hook whose first call times out still knows a control session.
+ * @param {{arm: string, salt: string, share: number}} holdout
+ */
+function holdoutMarker(holdout) {
+  return { arm: holdout.arm, salt: holdout.salt, share: holdout.share };
+}
+
 /** Is any experiment flag on? Everything experiment-related is a no-op when not. */
 function isExperimentActive() {
   return _config.getExperimentHoldoutShare() > 0 || _config.getConfidenceModel() !== 'legacy';
@@ -309,6 +319,7 @@ module.exports = {
   MAX_EXPERIMENT_LOG_BYTES,
   normalizeSessionId,
   holdoutArm,
+  holdoutMarker,
   isExperimentActive,
   resolveInterceptExperiment,
   appendExperimentEvent,

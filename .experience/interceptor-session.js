@@ -19,6 +19,17 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+// src/swallow.js records errors this file drops on purpose. An install that
+// predates it gets silent no-ops, so a missing module never breaks the hook.
+const { swallow } = (() => {
+  try { return require('./src/swallow'); }
+  catch {
+    return {
+      swallow() {},
+    };
+  }
+})();
+
 const EXP_DIR = path.join(os.homedir(), '.experience');
 const DEBUG_LOG = process.env.EXPERIENCE_HOOK_DEBUG_LOG || path.join(os.homedir(), '.codex', 'log', 'experience-hook-debug.jsonl');
 
@@ -154,6 +165,14 @@ function localHoldoutArm(sessionId) {
   try { return experiment ? (experiment.holdoutArm(sessionId)?.arm || null) : null; } catch { return null; }
 }
 
+// Remote mode, before trusting an unmarked cached brief: the arm remembered for
+// this session, or computed from the last marker's salt and share. A cache written
+// before the experiment started must not reach a control session.
+function remoteRecalledArm(sessionId) {
+  const remote = isRemoteMode() ? getRemoteClient() : null;
+  try { return remote ? remote.recallExperimentArm(sessionId) : null; } catch { return null; }
+}
+
 function clientCachePath(slug) {
   return path.join(EXP_DIR, 'tmp', `brief-${String(slug).replace(/[^a-z0-9._-]/gi, '_')}.json`);
 }
@@ -197,7 +216,7 @@ async function fetchBrief(slug, cwd, sessionMeta = {}) {
           ...(sessionMeta.sourceRuntime ? { sourceRuntime: sessionMeta.sourceRuntime } : {}),
         }, { config });
         if (res && res.experiment && typeof res.experiment.arm === 'string') {
-          try { remote.rememberExperimentArm(sessionMeta.sourceSession, res.experiment); } catch { /* best-effort */ }
+          try { remote.rememberExperimentArm(sessionMeta.sourceSession, res.experiment); } catch (err) { swallow('interceptor-session.rememberExperimentArm', err); }
           return { text: res.experiment.arm === 'control' ? null : (res.text || null), experiment: res.experiment };
         }
         return res?.text || null;
@@ -283,7 +302,7 @@ process.stdin.on('end', async () => {
       debugLog({ stage: 'experiment_control', slug, note: 'no brief' });
     } else if (slug) {
       const cached = readClientCache(slug);
-      if (cached && !cached.experimentActive) { text = cached.text || null; fromCache = true; }
+      if (cached && !cached.experimentActive && remoteRecalledArm(sessionId) !== 'control') { text = cached.text || null; fromCache = true; }
       else {
         const mute = suppressHookOutput();
         const fetched = await withTimeout(fetchBrief(slug, cwd, { sourceSession: sessionId, sourceRuntime: RUNTIME_OVERRIDE || null }), INTERCEPT_TIMEOUT_MS);

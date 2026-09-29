@@ -111,6 +111,15 @@ components:
         arm:
           type: string
           enum: [control, treatment]
+        salt:
+          type: string
+          description: >
+            Holdout salt, sent with `arm`. With `share`, a hook computes the arm of a
+            new session itself (control iff fmix32(fnv1a32(salt|holdout|session)) / 2^32
+            < share), so a first call that times out still knows a control session.
+        share:
+          type: number
+          description: experimentHoldoutShare, sent with `arm`.
         model:
           type: string
           enum: [legacy, beta]

@@ -291,7 +291,7 @@ test('holdout: a control session gets no suggestions, no surfacedIds and trigger
   const actual = await runScenarios({ experimentHoldoutShare: 0.5, experimentSalt: salt, experimentLog: EXPERIMENT_LOG });
   for (const name of ['edit-ts-first', 'edit-ts-repeat', 'edit-ts-third']) {
     assert.deepStrictEqual(actual[name], {
-      result: { suggestions: null, surfacedIds: [], route: null, experiment: { arm: 'control' } },
+      result: { suggestions: null, surfacedIds: [], route: null, experiment: { arm: 'control', salt, share: 0.5 } },
       recordSurface: [],
       incrementIgnoreCount: [],
       brainFilterCalls: 0,

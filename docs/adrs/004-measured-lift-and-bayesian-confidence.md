@@ -91,6 +91,9 @@ evidence. `computeEffectiveConfidence` is untouched. `confidenceModel` is
   records; `betaEvidenceEnabled: false` stops writing it.
 - **Limits:** cross-process payload races (the detached judge worker) remain
   best-effort; manual verdicts dedupe per session only when the client sends
-  `sourceSession`; a remote hook that times out before its first marker cannot know a
-  control arm, so a nudge can leak on the very first prompt of a control session; the
-  B0 intercept replay is removal-side only.
+  `sourceSession`; the B0 intercept replay is removal-side only. A remote hook that
+  times out before its session's first marker computes the arm from the last marker's
+  `salt` and `share` (kept 2 h); only a client that has seen no marker in 2 h can still
+  leak a nudge on a control session's first prompt, and for up to 2 h after the
+  experiment ends such a client still withholds the nudge from sessions it computes
+  as control.

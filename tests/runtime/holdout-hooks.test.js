@@ -17,6 +17,7 @@ const http = require('node:http');
 const { spawn, spawnSync } = require('node:child_process');
 
 const EXP_SRC = path.join(__dirname, '..', '..', '.experience');
+const experiment = require('../../.experience/src/experiment');
 const probe = spawnSync(process.execPath, ['-e', "require('http').createServer().listen(0,'127.0.0.1',function(){this.close(()=>process.exit(0))})"], { encoding: 'utf8' });
 // Same policy as remote-hooks.test.js: hook subprocesses racing loopback timeouts
 // are too timing-sensitive for shared CI runners.
@@ -29,6 +30,8 @@ function makeHome(port) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'exp-holdout-hooks-'));
   fs.mkdirSync(path.join(home, '.experience', 'tmp'), { recursive: true });
   fs.copyFileSync(path.join(EXP_SRC, 'remote-client.js'), path.join(home, '.experience', 'remote-client.js'));
+  fs.mkdirSync(path.join(home, '.experience', 'src'), { recursive: true });
+  fs.copyFileSync(path.join(EXP_SRC, 'src', 'bayes.js'), path.join(home, '.experience', 'src', 'bayes.js'));
   fs.writeFileSync(path.join(home, '.experience', 'config.json'), JSON.stringify({ serverBaseUrl: `http://127.0.0.1:${port}`, serverHookTimeoutMs: 1500 }));
   return home;
 }
@@ -152,5 +155,46 @@ test('SessionStart: control session gets no brief; the session id reaches the se
     const control2 = await runHook(home, 'interceptor-session.js', { hook_event_name: 'SessionStart', session_id: 'ctl-5', cwd });
     assert.equal(control2, '');
     assert.equal(received.filter((r) => r.url === '/api/project-brief').length, 3);
+  } finally { server.close(); }
+});
+
+// The leak ADR-004 listed: a NEW control session whose very first prompt hook
+// times out had no marker to go on, and the prompt hook still runs its risk gate
+// and auto-recall after a timeout (PreToolUse emits nothing on a timeout). The
+// last marker's salt and share now decide the arm.
+test('a new session whose first prompt hook times out gets its arm from the last marker', { skip: SKIP }, async () => {
+  const { server, port, received } = await startServer({ hangIntercept: true });
+  try {
+    const home = makeHome(port);
+    const salt = 'leak-salt';
+    const share = 0.5;
+    fs.writeFileSync(path.join(home, '.experience', 'tmp', 'experiment-arms.json'), JSON.stringify({ __holdout__: { salt, share, ts: Date.now() } }));
+    const pick = (arm) => {
+      for (let i = 0; ; i++) if (experiment.holdoutArm(`new-${i}`, { salt, share }).arm === arm) return `new-${i}`;
+    };
+    const cwd = makeRepo('golden-app');
+    const env = { EXPERIENCE_HOOK_INTERCEPT_TIMEOUT_MS: '300' };
+    const prompt = (session) => ({ hook_event_name: 'UserPromptSubmit', session_id: session, prompt: 'please run the production deploy migration now', cwd });
+    assert.equal(await runHook(home, 'interceptor-prompt.js', prompt(pick('control')), env), '', 'control: no nudge');
+    assert.equal(received.filter((r) => r.url === '/api/recall').length, 0, 'control: no auto-recall');
+    assert.match(await runHook(home, 'interceptor-prompt.js', prompt(pick('treatment')), env), /risk gate/, 'treatment keeps the nudge');
+  } finally { server.close(); }
+});
+
+test('SessionStart: a brief cached before the experiment is not served to a computed control session', { skip: SKIP }, async () => {
+  const { server, port, received } = await startServer();
+  try {
+    const home = makeHome(port);
+    const salt = 'cache-salt';
+    const share = 0.5;
+    const tmp = path.join(home, '.experience', 'tmp');
+    fs.writeFileSync(path.join(tmp, 'experiment-arms.json'), JSON.stringify({ __holdout__: { salt, share, ts: Date.now() } }));
+    fs.writeFileSync(path.join(tmp, 'brief-golden-app.json'), JSON.stringify({ ts: new Date().toISOString(), slug: 'golden-app', text: '[Project Brief] cached' }));
+    let control = null;
+    for (let i = 0; !control; i++) if (experiment.holdoutArm(`ctl-new-${i}`, { salt, share }).arm === 'control') control = `ctl-new-${i}`;
+    const cwd = makeRepo('golden-app');
+    const out = await runHook(home, 'interceptor-session.js', { hook_event_name: 'SessionStart', session_id: control, cwd });
+    assert.equal(out, '', 'no cached brief for a control session');
+    assert.equal(received.filter((r) => r.url === '/api/project-brief').length, 1, 'asked the server instead');
   } finally { server.close(); }
 });

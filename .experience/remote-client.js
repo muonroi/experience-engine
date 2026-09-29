@@ -316,46 +316,85 @@ function maybeSpawnExtractDrain(options = {}) {
 
 // --- Experiment arm memory (session holdout) -------------------------------------
 // The server marks every intercept / brief response of an active experiment with
-// `experiment: {arm}`; a control session must then get no passive engine output,
-// including the nudges the HOOKS add on their own (risk gate, prompt auto-recall).
-// A hook that times out waiting for the server has no marker, so each marker seen
-// is remembered per session here and consulted on the next hook of that session.
-// Best-effort: one small JSON file, pruned after a day.
+// `experiment: {arm, salt, share}`; a control session must then get no passive
+// engine output, including the nudges the HOOKS add on their own (risk gate,
+// prompt auto-recall). A hook that times out waiting for the server has no marker,
+// so each marker seen is remembered per session here and consulted on the next
+// hook of that session. The marker's salt and share are kept too: the arm is a
+// pure hash of (salt, session), so a NEW session whose first hook times out gets
+// its arm computed here instead of leaking a nudge. Best-effort: one small JSON
+// file, pruned after a day.
 const ARM_MEMORY_TTL_MS = 24 * 60 * 60 * 1000;
+// Short on purpose: nothing tells a client an experiment ended, so stale params
+// would hold new sessions in a control arm that no longer exists.
+const HOLDOUT_PARAMS_TTL_MS = 2 * 60 * 60 * 1000;
+const HOLDOUT_PARAMS_KEY = '__holdout__';
 
 function armMemoryPath(homeDir = getHomeDir()) {
   return path.join(getTmpDir(homeDir), 'experiment-arms.json');
 }
 
+// Same rule as experiment.normalizeSessionId: '', 'null' and 'undefined' are a
+// missing id after a String() upstream, never a session.
+function normalizeArmSessionId(sessionId) {
+  if (sessionId === null || sessionId === undefined) return null;
+  const s = String(sessionId).trim();
+  return !s || s === 'null' || s === 'undefined' ? null : s;
+}
+
+function holdoutParamsOf(marker) {
+  if (!marker || typeof marker.salt !== 'string') return null;
+  const share = Number(marker.share);
+  return Number.isFinite(share) && share >= 0 && share <= 1 ? { salt: marker.salt, share } : null;
+}
+
 function rememberExperimentArm(sessionId, marker, homeDir = getHomeDir()) {
-  const sid = String(sessionId || '').trim();
+  const sid = normalizeArmSessionId(sessionId);
   const arm = marker && typeof marker.arm === 'string' ? marker.arm : null;
   if (!sid || !arm) return false;
-  try {
-    const file = armMemoryPath(homeDir);
-    const state = safeReadJson(file, {}) || {};
-    const cutoff = Date.now() - ARM_MEMORY_TTL_MS;
-    for (const key of Object.keys(state)) {
-      if (!state[key] || typeof state[key].ts !== 'number' || state[key].ts < cutoff) delete state[key];
-    }
-    if (state[sid] && state[sid].arm === arm) return true;
-    state[sid] = { arm, ts: Date.now() };
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    const tmp = `${file}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(state));
-    fs.renameSync(tmp, file);
-    return true;
-  } catch {
-    return false;
+  const file = armMemoryPath(homeDir);
+  const state = safeReadJson(file, {}) || {};
+  const cutoff = Date.now() - ARM_MEMORY_TTL_MS;
+  for (const key of Object.keys(state)) {
+    if (!state[key] || typeof state[key].ts !== 'number' || state[key].ts < cutoff) delete state[key];
   }
+  const params = holdoutParamsOf(marker);
+  const prevParams = state[HOLDOUT_PARAMS_KEY];
+  const paramsFresh = prevParams && Date.now() - prevParams.ts < HOLDOUT_PARAMS_TTL_MS / 2
+    && prevParams.salt === params?.salt && prevParams.share === params?.share;
+  const armKnown = state[sid] && state[sid].arm === arm;
+  if (armKnown && (!params || paramsFresh)) return true;
+  state[sid] = { arm, ts: Date.now() };
+  if (params) state[HOLDOUT_PARAMS_KEY] = { ...params, ts: Date.now() };
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(state));
+  fs.renameSync(tmp, file);
+  return true;
+}
+
+let _bayes = null;
+function loadBayes() {
+  if (_bayes === null) {
+    try { _bayes = require('./src/bayes'); } catch { _bayes = false; /* install predates it: no computed arm */ }
+  }
+  return _bayes || null;
 }
 
 function recallExperimentArm(sessionId, homeDir = getHomeDir()) {
-  const sid = String(sessionId || '').trim();
+  const sid = normalizeArmSessionId(sessionId);
   if (!sid) return null;
-  const entry = (safeReadJson(armMemoryPath(homeDir), {}) || {})[sid];
-  if (!entry || typeof entry.ts !== 'number' || Date.now() - entry.ts > ARM_MEMORY_TTL_MS) return null;
-  return typeof entry.arm === 'string' ? entry.arm : null;
+  const state = safeReadJson(armMemoryPath(homeDir), {}) || {};
+  const entry = state[sid];
+  if (entry && typeof entry.ts === 'number' && Date.now() - entry.ts <= ARM_MEMORY_TTL_MS && typeof entry.arm === 'string') {
+    return entry.arm;
+  }
+  // No marker seen for this session yet: compute its arm from the last params.
+  const params = state[HOLDOUT_PARAMS_KEY];
+  if (!params || typeof params.ts !== 'number' || Date.now() - params.ts > HOLDOUT_PARAMS_TTL_MS) return null;
+  const bayes = loadBayes();
+  if (!bayes || !(params.share > 0)) return null;
+  return bayes.unitHash(`${params.salt}|holdout|${sid}`) < params.share ? 'control' : 'treatment';
 }
 
 module.exports = {

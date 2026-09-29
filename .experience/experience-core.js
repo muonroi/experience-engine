@@ -112,7 +112,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   if (holdout) {
     _experiment.noteSessionArm({ sessionId: experiment.sessionId, experiment: holdout.experiment, arm: holdout.arm, salt: holdout.salt, runtime: experiment.runtime });
     if (holdout.arm === 'control') {
-      return { suggestions: null, surfacedIds: [], route: null, experiment: { arm: 'control' } };
+      return { suggestions: null, surfacedIds: [], route: null, experiment: _experiment.holdoutMarker(holdout) };
     }
   }
   // Confidence model (spec §3 B4), also resolved once: a beta ctx only when this
@@ -673,7 +673,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
     // skip their nudges for control) and an assigned ab model arm.
     if (holdout || (model && model.assigned)) {
       experimentMarker = {
-        ...(holdout ? { arm: holdout.arm } : {}),
+        ...(holdout ? _experiment.holdoutMarker(holdout) : {}),
         ...(model && model.assigned ? { model: model.arm } : {}),
         interceptId,
       };

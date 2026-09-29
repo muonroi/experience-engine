@@ -105,13 +105,13 @@ test('/api/project-brief: control session gets no brief; treatment gets it with 
 
   const rc = res();
   await observability.handleProjectBrief(Object.assign(req({ project: 'golden-app', sourceSession: control, sourceRuntime: 'claude-code' }), { method: 'POST' }), rc, new URL('http://x/api/project-brief'));
-  assert.deepEqual(rc.body, { text: null, entries: [], projectSlug: 'golden-app', count: 0, cached: false, experiment: { arm: 'control' } });
+  assert.deepEqual(rc.body, { text: null, entries: [], projectSlug: 'golden-app', count: 0, cached: false, experiment: { arm: 'control', salt: 'srv', share: 0.5 } });
   assert.equal(built, 0);
 
   const rt = res();
   await observability.handleProjectBrief(Object.assign(req({ project: 'golden-app', sourceSession: treatment }), { method: 'POST' }), rt, new URL('http://x/api/project-brief'));
   assert.equal(rt.body.text, '[Project Brief] golden-app');
-  assert.deepEqual(rt.body.experiment, { arm: 'treatment' });
+  assert.deepEqual(rt.body.experiment, { arm: 'treatment', salt: 'srv', share: 0.5 });
 
   // Dashboard GET: no session, never in the experiment, response unchanged.
   const rg = res();
