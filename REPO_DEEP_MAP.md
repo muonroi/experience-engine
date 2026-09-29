@@ -286,7 +286,7 @@ Stats and gates are primarily handled by:
 
 | Command | Coverage |
 |---------|----------|
-| `npm run lint` | ESLint over `server.js`, `api/`, `.experience/experience-core.js`, `.experience/src/` |
+| `npm run lint` | ESLint over the whole repo (`eslint.config.js`); `no-empty` rejects an empty `catch` outside `tests/` |
 | `npm test` | Node tests under `tests/*.test.js` |
 | `npm run test:unit` | Hook runtime tests, `tests/runtime/*.test.js` |
 | `npm run test:tools` | Operator tool tests, `tests/tools/*.test.js` |
@@ -294,7 +294,7 @@ Stats and gates are primarily handled by:
 | `npm run test:health` | Health check and setup tests (subset of `test:unit`) |
 | `npm run test:server` | End-to-end server checks (subset of `test:tools`) |
 | `npm run test:ci` | Main CI-style sequence |
-| `npm run test:coverage` | Coverage report through `c8` |
+| `npm run test:coverage` | `test:ci` under `c8` with `--check-coverage` (lines 75 / branches 69 / functions 77); what CI runs |
 
 High-signal tests by area:
 

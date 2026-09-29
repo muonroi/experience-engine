@@ -501,39 +501,39 @@ function renderStore(store) {
 
   const tierRows = Object.entries(store.tiers)
     .map(function(pair) {
-      var k = pair[0], v = pair[1];
-      var label = tierLabels[k] || k;
-      var pctVal = store.total > 0 ? ((v / store.total) * 100).toFixed(1) + '%' : '\u2014';
-      var cls = k === 't0_new' ? 'muted' : k === 't2_active' ? 'good' : k === 't3_dying' ? 'bad' : '';
+      const k = pair[0], v = pair[1];
+      const label = tierLabels[k] || k;
+      const pctVal = store.total > 0 ? ((v / store.total) * 100).toFixed(1) + '%' : '\u2014';
+      const cls = k === 't0_new' ? 'muted' : k === 't2_active' ? 'good' : k === 't3_dying' ? 'bad' : '';
       return '<tr><td>' + escapeHtml(label) + '</td><td class="num ' + cls + '">' + v + '</td><td class="num muted">' + pctVal + '</td></tr>';
     }).join('');
 
-  var typeRows = Object.entries(store.types)
+  const typeRows = Object.entries(store.types)
     .sort(function(a, b) { return b[1] - a[1]; })
     .map(function(pair) {
-      var k = pair[0], v = pair[1];
-      var pctVal = store.total > 0 ? ((v / store.total) * 100).toFixed(1) + '%' : '\u2014';
+      const k = pair[0], v = pair[1];
+      const pctVal = store.total > 0 ? ((v / store.total) * 100).toFixed(1) + '%' : '\u2014';
       return '<tr><td>' + escapeHtml(k) + '</td><td class="num">' + v + '</td><td class="num muted">' + pctVal + '</td></tr>';
     }).join('');
 
-  var q = store.quality;
-  var qualityItems = [
+  const q = store.quality;
+  const qualityItems = [
     ['project_slug', q.withSlug],
     ['structured conditions', q.withStructuredCond],
     ['lang (not "all")', q.withLang],
     ['judgment', q.withJudgment],
   ];
-  var qualityRows = qualityItems.map(function(item) {
-    var label = item[0], v = item[1];
-    var pctVal = store.total > 0 ? ((v / store.total) * 100).toFixed(1) + '%' : '\u2014';
-    var cls = store.total > 0 && v / store.total >= 0.95 ? 'good' : store.total > 0 && v / store.total >= 0.7 ? 'warn' : 'bad';
+  const qualityRows = qualityItems.map(function(item) {
+    const label = item[0], v = item[1];
+    const pctVal = store.total > 0 ? ((v / store.total) * 100).toFixed(1) + '%' : '\u2014';
+    const cls = store.total > 0 && v / store.total >= 0.95 ? 'good' : store.total > 0 && v / store.total >= 0.7 ? 'warn' : 'bad';
     return '<tr><td>' + escapeHtml(label) + '</td><td class="num">' + v + '/' + store.total + '</td><td class="num ' + cls + '">' + pctVal + '</td></tr>';
   }).join('');
 
-  var colRows = Object.entries(store.collections)
+  const colRows = Object.entries(store.collections)
     .map(function(pair) {
-      var col = pair[0], cs = pair[1];
-      var topType = Object.entries(cs.types).sort(function(a, b) { return b[1] - a[1]; })[0];
+      const col = pair[0], cs = pair[1];
+      const topType = Object.entries(cs.types).sort(function(a, b) { return b[1] - a[1]; })[0];
       return '<tr><td>' + escapeHtml(col.replace('experience-', '')) + '</td><td class="num">' + cs.total + '</td><td class="num">' + cs.tiers.t0_new + '</td><td class="num">' + cs.tiers.t1_bootstrap + '</td><td class="num">' + cs.tiers.t2_active + '</td><td class="num">' + cs.tiers.t3_dying + '</td><td class="muted">' + (topType ? escapeHtml(topType[0]) + ' (' + topType[1] + ')' : '\u2014') + '</td></tr>';
     }).join('');
 

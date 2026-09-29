@@ -21,8 +21,12 @@ jobs:
         with:
           node-version: 22
 
-      - name: CI test suite
-        run: npm run test:ci
+      # The full suite under c8, gated. Hooks run as child processes and are
+      # counted too. Thresholds sit just under the measured coverage; raise them
+      # as it grows, never lower them to get green.
+      - name: CI test suite with coverage gate
+        timeout-minutes: 10
+        run: npm run test:coverage
 
       - name: Syntax check (every tracked .js file)
         run: npm run check:syntax
@@ -31,11 +35,7 @@ jobs:
         run: npm run typecheck
 
       - name: Lint check
-        run: npx eslint server.js api/ .experience/experience-core.js .experience/src/ --no-error-on-unmatched-pattern
-
-      - name: Coverage check
-        timeout-minutes: 3
-        run: npx c8@8 --lines 60 --functions 50 --branches 40 --reporter=text node --test --test-concurrency=1 tests/server-*.test.js tests/interceptor.test.js tests/embedding.test.js tests/qdrant-io.test.js tests/experience-core-routing.test.js tests/experience-core-task-routing.test.js tests/experience-core-evolution.test.js tests/npm-cli.test.js
+        run: npm run lint
 
   python-sdk:
     runs-on: ubuntu-latest

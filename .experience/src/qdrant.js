@@ -86,7 +86,7 @@ function acquireLock(collection) {
             continue;
           }
           const start = Date.now();
-          while (Date.now() - start < 1) {}
+          while (Date.now() - start < 1) { /* spin ~1ms before retrying the lock */ }
           continue;
         } catch { continue; }
       }

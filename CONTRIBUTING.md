@@ -18,7 +18,9 @@ bash .experience/setup.sh --local   # Docker Qdrant + Ollama
 ## Running Tests
 
 ```bash
-npm run test:ci     # everything CI runs
+npm run test:ci     # every test suite
+npm run test:coverage  # test:ci under c8 with the coverage gate CI enforces
+npm run lint        # ESLint over the whole repo; an empty catch must say why
 npm test            # tests/*.test.js         — server, CLI, integration
 npm run test:unit   # tests/runtime/*.test.js — hook runtime (.experience/)
 npm run test:tools  # tests/tools/*.test.js   — operator tools (tools/)
