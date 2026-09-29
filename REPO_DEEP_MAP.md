@@ -232,6 +232,7 @@ Stats and gates are primarily handled by:
 | `tools/dashboard/` | Static dashboard rendering support |
 | `tools/exp-outcome-baseline.js` | Phase A0 go/no-go: strict failure rates by runtime × tool, sessions/week, between-session variance, two-arm MDE for a holdout share and duration |
 | `tools/exp-engine-lift.js` | Session-holdout analyzer: pooled failure ratio per arm, session-cluster bootstrap CI, retry loops, guardrails, runtime strata; `--compare model` applies the pre-registered beta-vs-legacy rule |
+| `tools/exp-simulate-experiment.js` | Rehearsal: writes a baseline + holdout experiment with a planted effect into an empty dir through the real writers, for the three tools above |
 | `tools/exp-beta-replay.js` | B0 offline replay: legacy vs beta gate pass rates and posterior means by createdFrom/tier, threshold sweep, removal-side hints-per-intercept change |
 
 ---

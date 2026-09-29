@@ -38,11 +38,8 @@
  */
 'use strict';
 
-const path = require('path');
-const os = require('os');
-
 const { isMutatingTool } = require('../.experience/src/tool-outcome');
-const { readExperimentLog } = require('../.experience/src/experiment');
+const { readExperimentLog, listLogFiles } = require('../.experience/src/experiment');
 
 const COMPARISONS = {
   holdout: { experiment: 'holdout', a: 'control', b: 'treatment', label: 'control − treatment' },
@@ -311,7 +308,9 @@ function parseArgs(argv) {
     else if (k === '--json') args.json = true;
     else if (k === '--help' || k === '-h') args.help = true;
   }
-  if (!args.log) args.log = process.env.EXPERIENCE_EXPERIMENT_LOG || path.join(os.homedir(), '.experience', 'experiment.jsonl');
+  // The writer's own resolution (config experimentLog > EXPERIENCE_EXPERIMENT_LOG >
+  // ~/.experience/experiment.jsonl), so the analyzer reads the log the server writes.
+  if (!args.log) args.log = require('../.experience/src/config').getExperimentLogPath();
   return args;
 }
 
@@ -325,6 +324,10 @@ function renderReport(r) {
   const lines = [];
   lines.push(`Experience Engine — engine lift (${r.compare}: ${r.label})`);
   lines.push(`STATUS: ${r.status.toUpperCase()}${r.endDate ? ` (pre-registered end date ${r.endDate})` : ''}`);
+  if (r.input) {
+    lines.push(`log: ${r.input.log} — ${r.input.events} events from ${r.input.files} file(s)`);
+    if (r.input.files === 0) lines.push('WARNING: no experiment log there — check config experimentLog / EXPERIENCE_EXPERIMENT_LOG, or pass --log');
+  }
   lines.push(`salt: ${r.salt ?? 'n/a'}  sessions assigned ${r.sessions.assigned}, eligible ${r.sessions.eligible}, excluded (< ${r.sessions.minCalls} calls) ${r.sessions.excludedBelowMinCalls}, other salt ${r.sessions.ignoredOtherSalt}  unclassified calls ${r.unknownCalls}`);
   if (r.compare === 'holdout') lines.push('estimand: effect of PASSIVE engine output (hints, nudges, auto-recall, brief); active recall is not held out');
   lines.push('');
@@ -356,7 +359,8 @@ function main() {
     process.stdout.write('Usage: exp-engine-lift.js [--log path] [--compare holdout|model] [--end-date YYYY-MM-DD] [--salt v1] [--min-calls 5] [--resamples 2000] [--seed N] [--json]\n');
     return;
   }
-  const result = analyze(readExperimentLog(args.log), args);
+  const events = readExperimentLog(args.log);
+  const result = { ...analyze(events, args), input: { log: args.log, files: listLogFiles(args.log).length, events: events.length } };
   process.stdout.write(args.json ? JSON.stringify(result, null, 2) + '\n' : renderReport(result) + '\n');
 }
 

@@ -56,6 +56,10 @@ evidence. `computeEffectiveConfidence` is untouched. `confidenceModel` is
 
 ### Pre-registered rollout and decision rule
 
+0. Rehearse on synthetic data (`tools/exp-simulate-experiment.js`, see `tools/README.md`):
+   the analysis must find a planted effect and not find a null one. With 1,500
+   sessions, share 0.2 and a 30% lower failure rate in treatment, the relative CI
+   excluded 0 on each of five seeds.
 1. Ship with defaults (`experimentHoldoutShare: 0`, `confidenceModel: legacy`). Run
    `node tools/exp-outcome-baseline.js --holdout-share <s> --weeks <w>` on the server;
    stop here if it prints NO-GO.

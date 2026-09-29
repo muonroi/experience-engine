@@ -64,6 +64,19 @@ node tools/exp-engine-lift.js --compare model --end-date 2026-12-01
 node tools/exp-beta-replay.js --json
 ```
 
+Rehearse all three before real data: simulate a baseline and an experiment with a
+planted effect (real writers, real arm hash, rotated logs) into an empty directory,
+then point the tools at it. Without `--log` / `--experiment-log` the tools read the log
+the server writes (config `experimentLog`, else `EXPERIENCE_EXPERIMENT_LOG`, else
+`~/.experience/experiment.jsonl`) and print which file(s) they read.
+
+```bash
+node tools/exp-simulate-experiment.js --out /tmp/ee-sim --sessions 1500 --effect 0.25
+node tools/exp-outcome-baseline.js --log-dir /tmp/ee-sim --holdout-share 0.2 --weeks 3
+node tools/exp-engine-lift.js --log /tmp/ee-sim/experiment.jsonl --end-date 2026-10-22
+node tools/exp-beta-replay.js --from-file /tmp/ee-sim/points.json --activity /tmp/ee-sim/activity.jsonl
+```
+
 `exp-reset-ignore-count.js --beta` also clears the negative side of `betaEvidence`.
 
 ## experience-bulk-seed.js

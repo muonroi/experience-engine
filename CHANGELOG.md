@@ -14,6 +14,9 @@
 - Node.js 22+ is required (`engines.node >=22`); Node 20 is end-of-life.
 
 ### Added
+- `tools/exp-simulate-experiment.js`: rehearse the ADR-004 analysis. It writes a
+  baseline and a session-holdout experiment with a planted effect through the real
+  writers, for `exp-outcome-baseline`, `exp-engine-lift` and `exp-beta-replay`.
 - **Measured engine lift** (docs/specs/2026-09-25-hint-lift-and-bayesian-confidence.md,
   ADR-004), off by default:
   - Claude Code's `PostToolUseFailure` is registered; failed tool calls are recorded
@@ -39,6 +42,14 @@
   - `tools/exp-beta-replay.js` (offline replay), `exp-reset-ignore-count.js --beta`.
 
 ### Fixed
+- A thin client whose first prompt hook of a new holdout control session timed out
+  ran the risk gate and auto-recall for it, and SessionStart could serve a control
+  session a brief cached before the experiment. Experiment markers now carry the
+  holdout `salt` and `share`; the client keeps them for 2 h and computes the arm of a
+  session it has no marker for.
+- `exp-engine-lift` and `exp-outcome-baseline` ignored an `experimentLog` set in
+  config.json and analysed the default path instead. They now resolve the log as the
+  writer does, print which file(s) they read, and warn when there is none.
 - `register-hooks.js` overwrote an agent settings file it could not parse (e.g. JSON
   with comments) with just the Experience Engine hooks, wiping the user's settings.
   It now leaves such a file unchanged and reports it; an empty file is still wired.

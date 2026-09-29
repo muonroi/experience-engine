@@ -261,12 +261,18 @@ function parseArgs(argv) {
     else if (k === '--holdout-share') args.holdoutShare = Number(next());
     else if (k === '--weeks') args.weeks = Number(next());
     else if (k === '--min-calls') args.minCalls = Number(next());
-    else if (k === '--log-dir') args.logDir = next();
+    else if (k === '--log-dir') { args.logDir = next(); args.logDirExplicit = true; }
     else if (k === '--experiment-log') args.experimentLog = next();
     else if (k === '--json') args.json = true;
     else if (k === '--help' || k === '-h') args.help = true;
   }
-  if (!args.experimentLog) args.experimentLog = process.env.EXPERIENCE_EXPERIMENT_LOG || path.join(args.logDir, 'experiment.jsonl');
+  // An explicit --log-dir holds both logs; otherwise the writer's own resolution
+  // (config experimentLog > EXPERIENCE_EXPERIMENT_LOG > ~/.experience/experiment.jsonl).
+  if (!args.experimentLog) {
+    args.experimentLog = args.logDirExplicit
+      ? path.join(args.logDir, 'experiment.jsonl')
+      : require('../.experience/src/config').getExperimentLogPath();
+  }
   return args;
 }
 
@@ -275,6 +281,7 @@ function pct(v) { return Number.isFinite(v) ? `${(v * 100).toFixed(2)}%` : 'n/a'
 function renderReport(r) {
   const lines = [];
   lines.push('Experience Engine — outcome baseline (Phase A0.3)');
+  if (r.input) lines.push(`inputs: ${r.input.activityRecords} posttool rows from ${r.input.logDir}, ${r.input.experimentOutcomes} outcomes from ${r.input.experimentLog}`);
   lines.push(`basis: ${r.basis}${r.basis === 'strict' ? '' : '  (legacy keyword classifier — UPPER BOUND)'}`);
   lines.push(`mutating calls: ${r.mutatingCalls}  counted: ${r.countedCalls}  unclassified: ${r.unknownCalls}  strict: ${r.strictCalls}`);
   lines.push('');
@@ -301,8 +308,12 @@ function main() {
     process.stdout.write('Usage: exp-outcome-baseline.js [--since 30d] [--holdout-share 0.15] [--weeks 3] [--min-calls 5] [--log-dir dir] [--experiment-log path] [--json]\n');
     return;
   }
-  const records = mergeRecords(loadActivityRecords(args.logDir), loadExperimentOutcomes(args.experimentLog));
-  const result = computeBaseline(records, args);
+  const activity = loadActivityRecords(args.logDir);
+  const outcomes = loadExperimentOutcomes(args.experimentLog);
+  const result = {
+    ...computeBaseline(mergeRecords(activity, outcomes), args),
+    input: { logDir: args.logDir, activityRecords: activity.length, experimentLog: args.experimentLog, experimentOutcomes: outcomes.length },
+  };
   process.stdout.write(args.json ? JSON.stringify(result, null, 2) + '\n' : renderReport(result) + '\n');
 }
 
