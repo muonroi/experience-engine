@@ -14,6 +14,10 @@
 - Node.js 22+ is required (`engines.node >=22`); Node 20 is end-of-life.
 
 ### Added
+- Dashboard section X (snapshot schema 1.2): ADR-004 experiment progress and health —
+  sessions and classified calls per arm, a sample-ratio-mismatch check against the
+  configured share, and dropped errors on experiment paths. It never compares
+  outcomes between arms; that stays with `exp-engine-lift` at the end date.
 - `tools/exp-simulate-experiment.js`: rehearse the ADR-004 analysis. It writes a
   baseline and a session-holdout experiment with a planted effect through the real
   writers, for `exp-outcome-baseline`, `exp-engine-lift` and `exp-beta-replay`.

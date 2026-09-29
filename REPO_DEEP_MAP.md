@@ -229,7 +229,7 @@ Stats and gates are primarily handled by:
 | `tools/exp-gates.js` | Gate inspection and management |
 | `tools/exp-hint-stats.js` | Hint stats |
 | `tools/deep-health.js` | Deeper health checks |
-| `tools/dashboard/` | Static dashboard rendering support |
+| `tools/dashboard/` | Static dashboard rendering support; `experiment.js` builds section X (ADR-004 progress: arm volumes, sample-ratio-mismatch check, dropped errors on experiment paths — no outcome comparison) |
 | `tools/exp-outcome-baseline.js` | Phase A0 go/no-go: strict failure rates by runtime × tool, sessions/week, between-session variance, two-arm MDE for a holdout share and duration |
 | `tools/exp-engine-lift.js` | Session-holdout analyzer: pooled failure ratio per arm, session-cluster bootstrap CI, retry loops, guardrails, runtime strata; `--compare model` applies the pre-registered beta-vs-legacy rule |
 | `tools/exp-simulate-experiment.js` | Rehearsal: writes a baseline + holdout experiment with a planted effect into an empty dir through the real writers, for the three tools above |

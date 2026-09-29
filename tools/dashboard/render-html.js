@@ -571,6 +571,53 @@ function renderStore(store) {
     + '</section>';
 }
 
+function renderSrm(srm) {
+  if (!srm || srm.pValue == null) return '<span class="muted">—</span>';
+  const cls = srm.mismatch ? 'bad' : 'good';
+  const label = srm.mismatch ? 'MISMATCH' : 'ok';
+  return `<span class="${cls}">${label}</span> <span class="muted">(observed ${pct(srm.observedShare)} vs ${pct(srm.expectedShare)}, p=${srm.pValue < 0.0001 ? '<0.0001' : srm.pValue.toFixed(4)})</span>`;
+}
+
+function renderArmRows(arms) {
+  return arms.map(([name, a]) => `<tr><td>${escapeHtml(name)}</td><td class="num">${a.sessions}</td><td class="num">${a.eligibleSessions}</td><td class="num">${a.classifiedCalls}</td><td class="num">${a.unclassifiedCalls}</td></tr>`).join('');
+}
+
+// Section X — ADR-004 experiment progress and health. No outcome comparison here:
+// that is exp-engine-lift.js's, once, at the pre-registered end date.
+function renderExperiment(x) {
+  if (!x || (!x.active && !x.events)) return '';
+  const head = '<tr><th>Arm</th><th class="num">Sessions</th><th class="num">Eligible</th><th class="num">Classified calls</th><th class="num">Unclassified</th></tr>';
+  const swallowRows = Object.entries(x.swallowed.bySite)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td class="num bad">${v}</td></tr>`)
+    .join('') || '<tr><td colspan="2" class="muted">None in this window.</td></tr>';
+  const logLine = x.log
+    ? `${escapeHtml(x.log.path)} — ${x.events} events in ${x.log.files} file(s)${x.log.files === 0 ? ' <span class="bad">(no log found)</span>' : ''}`
+    : `${x.events} events`;
+  const model = x.model ? `
+      <div>
+        <h3>Confidence model (${escapeHtml(x.config.confidenceModel)})</h3>
+        <table><thead>${head}</thead><tbody>${renderArmRows([['beta', x.model.beta], ['legacy', x.model.legacy]])}</tbody></table>
+        <p>Split: ${renderSrm(x.model.srm)}</p>
+      </div>` : '';
+  return `
+  <section>
+    <h2>X. Experiment (ADR-004) — ${escapeHtml(x.status)}</h2>
+    <p class="muted">${escapeHtml(x.note)} Holdout share ${pct(x.config.holdoutShare)}, confidence model ${escapeHtml(x.config.confidenceModel)}${x.holdout.salt ? `, salt ${escapeHtml(x.holdout.salt)}` : ''}. Running ${x.daysRunning.toFixed(1)} days${x.sessionsPerWeek != null ? `, ${x.sessionsPerWeek.toFixed(0)} sessions/week` : ''}. Log: ${logLine}.</p>
+    <div class="grid-2">
+      <div>
+        <h3>Session holdout</h3>
+        <table><thead>${head}</thead><tbody>${renderArmRows([['control', x.holdout.control], ['treatment', x.holdout.treatment]])}</tbody></table>
+        <p>Split: ${renderSrm(x.holdout.srm)}${x.holdout.otherSaltSessions ? ` · <span class="warn">${x.holdout.otherSaltSessions} sessions under another salt</span>` : ''}</p>
+      </div>${model}
+      <div>
+        <h3>Dropped errors on experiment paths</h3>
+        <table><thead><tr><th>Call site</th><th class="num">Count</th></tr></thead><tbody>${swallowRows}</tbody></table>
+      </div>
+    </div>
+  </section>`;
+}
+
 /**
  * Render full HTML page from dashboard snapshot.
  *
@@ -594,6 +641,7 @@ function renderHtml(snapshot) {
 <p class="muted">Generated <strong>${escapeHtml(generated)}</strong> · window ${escapeHtml(win.days || '?')}d (${escapeHtml(win.since || '?')} → ${escapeHtml(win.until || '?')}) · schema v${escapeHtml(snapshot.version || '?')}</p>
 
 ${renderGates(snapshot.gates || {})}
+${renderExperiment(snapshot.experiment)}
 ${renderPrecisionSince(snapshot.precisionSince)}
 ${renderStore(snapshot.store || {})}
 ${renderPrecision(snapshot.precision || {})}
@@ -608,4 +656,4 @@ ${renderSessions(snapshot.sessions || { items: [] })}
 </html>`;
 }
 
-module.exports = { renderHtml };
+module.exports = { renderHtml, renderExperiment };

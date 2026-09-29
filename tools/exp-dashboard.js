@@ -36,8 +36,9 @@ const {
   computeStoreDistribution,
 } = require('./dashboard/aggregators');
 const { renderHtml } = require('./dashboard/render-html');
+const { computeExperiment } = require('./dashboard/experiment');
 
-const SCHEMA_VERSION = '1.1';
+const SCHEMA_VERSION = '1.2';
 const QDRANT_COLLECTIONS = ['experience-principles', 'experience-behavioral', 'experience-selfqa'];
 
 function parseArgs(argv) {
@@ -130,6 +131,19 @@ async function main() {
   const events = await collectEvents({ homeDir, since: args.since });
   const logFiles = resolveLogFiles(homeDir).map((f) => path.basename(f));
 
+  // ADR-004 experiment progress. The engine's own config resolution, so the
+  // dashboard reads the log the server writes and the share it assigns with.
+  if (args.configFile) process.env.EXPERIENCE_CONFIG_PATH = args.configFile;
+  const engineConfig = require('../.experience/src/config');
+  const experimentLog = require('../.experience/src/experiment');
+  const experimentLogPath = engineConfig.getExperimentLogPath();
+  const experiment = computeExperiment(experimentLog.readExperimentLog(experimentLogPath), events, {
+    holdoutShare: engineConfig.getExperimentHoldoutShare(),
+    confidenceModel: engineConfig.getConfidenceModel(),
+    abShare: engineConfig.getConfidenceAbShare(),
+    log: { path: experimentLogPath, files: experimentLog.listLogFiles(experimentLogPath).length },
+  });
+
   console.log('[exp-dashboard] scrolling Qdrant…');
   const payloads = new Map();
   for (const name of QDRANT_COLLECTIONS) {
@@ -177,6 +191,7 @@ async function main() {
     topOffenders,
     store,
     sessions,
+    experiment,
     meta: {
       sourceFiles: logFiles,
       linesScanned: events.length,
