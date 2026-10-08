@@ -14,6 +14,7 @@ const {
 const { log } = require('./logger');
 const { buildSparseVector, SPARSE_VECTOR_NAME } = require('./sparse');
 const { buildTextSearch } = require('./format');
+const { safeUnlink } = require('./swallow');
 
 // ============================================================
 //  Qdrant connection state
@@ -81,11 +82,11 @@ function acquireLock(collection) {
         try {
           const stat = fs.statSync(lockPath);
           if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
-            try { fs.unlinkSync(lockPath); } catch {}
+            safeUnlink(lockPath, 'qdrant.breakStaleLock');
             continue;
           }
           const start = Date.now();
-          while (Date.now() - start < 1) {}
+          while (Date.now() - start < 1) { /* spin ~1ms before retrying the lock */ }
           continue;
         } catch { continue; }
       }
@@ -96,7 +97,7 @@ function acquireLock(collection) {
 }
 
 function releaseLock(collection) {
-  try { fs.unlinkSync(fileStorePath(collection) + '.lock'); } catch {}
+  safeUnlink(fileStorePath(collection) + '.lock', 'qdrant.releaseLock');
 }
 
 function withFileStoreLock(collection, fn) {
@@ -395,7 +396,27 @@ async function setPayloadFields(collection, pointId, fields, signal) {
 //  updatePointPayload — update single point in FileStore
 // ============================================================
 
-async function updatePointPayload(collection, pointId, updateFn) {
+// Per-point serialisation (spec §3 B1). The Qdrant path is a read-modify-write of
+// the WHOLE payload json: GET, mutate, POST. Two writers for the same point in one
+// process (recordSurface racing an implicit touch, a judge verdict racing the
+// session-repeat flag) interleave as GET, GET, POST, POST and the first write is
+// lost — and betaEvidence's one-outcome-per-session replacement is only correct
+// if every update sees the previous one. So updates to one (collection, id) are
+// chained; different points still run concurrently. Cross-process races (the
+// detached judge worker, a second server) are NOT covered — best-effort, as before.
+const _pointUpdateChains = new Map();
+
+function updatePointPayload(collection, pointId, updateFn) {
+  const key = `${collection}:${pointId}`;
+  const previous = _pointUpdateChains.get(key) || Promise.resolve();
+  const run = previous.then(() => updatePointPayloadUnserialised(collection, pointId, updateFn));
+  const tail = run.catch(() => {});
+  _pointUpdateChains.set(key, tail);
+  tail.then(() => { if (_pointUpdateChains.get(key) === tail) _pointUpdateChains.delete(key); });
+  return run;
+}
+
+async function updatePointPayloadUnserialised(collection, pointId, updateFn) {
   if (!(await checkQdrant())) {
     fileStoreUpdate(collection, (entries) => {
       const entry = entries.find(e => e.id === pointId);
@@ -459,7 +480,7 @@ async function deleteEntry(collection, id) {
  * the native BM25 / MatchText leg. That dense-only write was the root cause of
  * sparse-coverage DRIFT: points added after a migration top-up lacked sparse
  * and silently degraded `/api/recall` + `/api/search` hybrid retrieval (see
- * tools/migrate-sparse-bm25.js). Mirrors the migration's re-upload vector shape.
+ * tools/migrations/migrate-sparse-bm25.js). Mirrors the migration's re-upload vector shape.
  * Defensive: any failure building the sparse vector falls back to dense-only so
  * a write is never blocked (logged at warn). Exported for testing.
  */
@@ -516,7 +537,7 @@ async function syncToQdrant() {
 //  Qdrant scores these with idf weighting server-side (sparse vector configured
 //  with modifier:"idf"). Replaces the boolean MatchText leg with real scored
 //  retrieval. A collection only supports this once it was (re)created with the
-//  sparse vector config — see tools/migrate-sparse-bm25.js. The write path
+//  sparse vector config — see tools/migrations/migrate-sparse-bm25.js. The write path
 //  probes support and falls back to dense-only, so deploy is non-breaking before
 //  migration; the recall path falls back to searchCollectionLexical.
 // ============================================================
@@ -600,7 +621,7 @@ async function searchCollectionSparse(name, queryText, limit, signal, extraFilte
  * ensureSparseCollection: create the collection WITH the text_bm25 sparse vector
  * if it does not exist. Qdrant cannot ADD a sparse vector to an existing
  * dense-only collection (PATCH update_collection only edits existing sparse
- * params) — migrating an existing collection is tools/migrate-sparse-bm25.js's
+ * params) — migrating an existing collection is tools/migrations/migrate-sparse-bm25.js's
  * job. This only covers the fresh-install case. Idempotent; non-fatal.
  */
 async function ensureSparseCollection(collection, dim, signal) {

@@ -109,6 +109,7 @@ async function recall(query, opts = {}) {
  */
 async function projects(homeDir = os.homedir()) {
   const { baseUrl, authToken } = resolveServerConfig(homeDir);
+  /** @type {Record<string, string>} */
   const headers = {};
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
   try {

@@ -18,11 +18,31 @@
  *
  * Register in ~/.claude/settings.json:
  *   PostToolUse: [{ matcher: "Edit|Write|Bash", hooks: [{ command: "node ~/.experience/interceptor-post.js" }] }]
+ *   PostToolUseFailure: [{ matcher: "Edit|Write|Bash", hooks: [{ command: "node ~/.experience/interceptor-post.js --event=failure" }] }]
+ *
+ * The failure event only RECORDS the outcome (strict `failure` field, inputHash,
+ * tool_use_id, client timestamp): no reconcile, no judge, no state cleanup. Until
+ * it was registered the engine never saw a failed Claude Code call at all, so
+ * running the verdict pipeline on it now would change hint evidence under
+ * default config. See docs/specs/2026-09-25-hint-lift-and-bayesian-confidence.md.
  */
 
 const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
+
+// src/swallow.js records errors this file drops on purpose. An install that
+// predates it gets silent no-ops, so a missing module never breaks the hook.
+const { swallow, safeUnlink, isMissing } = (() => {
+  try { return require('./src/swallow'); }
+  catch {
+    return {
+      swallow() {},
+      safeUnlink(file) { try { fs.unlinkSync(file); } catch { /* best-effort */ } },
+      isMissing: () => true,
+    };
+  }
+})();
 
 const EXP_DIR    = path.join(os.homedir(), '.experience');
 const TMP_DIR    = path.join(EXP_DIR, 'tmp');
@@ -39,6 +59,57 @@ const RUNTIME_OVERRIDE = (() => {
   return arg ? arg.slice('--runtime='.length).trim().toLowerCase() : null;
 })();
 
+// Set by register-hooks.js on the PostToolUseFailure registration. hook_event_name
+// in the payload says the same thing; the flag covers a payload without it.
+const FAILURE_EVENT_FLAG = process.argv.includes('--event=failure');
+
+// Strict outcome classifier shared with the server (src/tool-outcome.js). Absent on
+// an un-synced client → the new outcome fields are simply omitted.
+let _toolOutcome = null;
+function loadToolOutcome() {
+  if (_toolOutcome !== null) return _toolOutcome;
+  try { _toolOutcome = require(path.join(EXP_DIR, 'src', 'tool-outcome.js')); }
+  catch {
+    try { _toolOutcome = require(path.join(__dirname, 'src', 'tool-outcome.js')); }
+    catch { _toolOutcome = false; }
+  }
+  return _toolOutcome;
+}
+
+let _experiment = null;
+function loadExperiment() {
+  if (_experiment !== null) return _experiment;
+  try { _experiment = require(path.join(EXP_DIR, 'src', 'experiment.js')); }
+  catch {
+    try { _experiment = require(path.join(__dirname, 'src', 'experiment.js')); }
+    catch { _experiment = false; }
+  }
+  return _experiment;
+}
+
+/**
+ * Experiment-grade outcome fields for this call, or null when the classifier is
+ * unavailable. Logged NEXT TO the legacy toolOutcome, never instead of it — the
+ * judge keeps reading toolOutcome unchanged.
+ */
+function buildOutcomeFields(data, hookEvent, toolName, toolInput, toolOutput) {
+  const mod = loadToolOutcome();
+  if (!mod) return null;
+  try {
+    const runtime = mod.detectHookRuntime(RUNTIME_OVERRIDE) || null;
+    return {
+      hookEvent,
+      toolUseId: data?.tool_use_id || data?.toolUseId || null,
+      inputHash: mod.inputHash(toolName, toolInput),
+      failure: mod.classifyToolFailure({ hookEvent, toolName, toolResponse: toolOutput, runtime }),
+      clientTs: new Date().toISOString(),
+      runtime,
+    };
+  } catch {
+    return null;
+  }
+}
+
 let _sessionEmit = null;
 function loadSessionEmit() {
   if (_sessionEmit !== null) return _sessionEmit;
@@ -54,7 +125,7 @@ function debugLog(event) {
   try {
     fs.mkdirSync(path.dirname(DEBUG_LOG), { recursive: true });
     fs.appendFileSync(DEBUG_LOG, JSON.stringify({ ts: new Date().toISOString(), hook: 'interceptor-post', ...event }) + '\n');
-  } catch {}
+  } catch { /* debug log unwritable — nothing left to report to */ }
 }
 
 function activityLog(event) {
@@ -64,7 +135,7 @@ function activityLog(event) {
     if (typeof core._activityLog === 'function') {
       core._activityLog({ op: 'hook', hook: 'interceptor-post', ...event });
     }
-  } catch {}
+  } catch { /* no local core on a thin client — the server keeps the activity log */ }
 }
 
 function getRemoteClient() {
@@ -180,7 +251,7 @@ process.stdin.on('end', async () => {
     try {
       const raw = fs.readFileSync(STATE_FILE, 'utf8');
       state = JSON.parse(raw);
-    } catch {}
+    } catch (err) { if (!isMissing(err)) swallow('interceptor-post.readState', err); }
 
     // Parse PostToolUse input
     let data;
@@ -188,8 +259,19 @@ process.stdin.on('end', async () => {
 
     const toolName   = data.tool_name  || data.toolName  || data.toolCall?.name || '';
     const toolInput  = data.tool_input || data.input     || data.toolCall?.args || {};
-    const toolOutput = data.tool_response || data.toolResponse || data.output || data.result || {};
+    const hookEvent  = data.hook_event_name || (FAILURE_EVENT_FLAG ? 'PostToolUseFailure' : 'PostToolUse');
+    const isFailureEvent = hookEvent === 'PostToolUseFailure';
+    // A failure event carries no tool_response; its error lives at the top level.
+    // Shape it so the legacy classifier (toolOutcome) reads 'error' for it too.
+    const toolOutput = isFailureEvent
+      ? {
+        error: data.error || data.failure_reason || data.error_details || 'tool call failed',
+        is_error: true,
+        ...(data.is_interrupt === true ? { interrupted: true } : {}),
+      }
+      : (data.tool_response || data.toolResponse || data.output || data.result || {});
     const sourceMeta = buildSourceMeta(data, toolInput);
+    const outcome = buildOutcomeFields(data, hookEvent, toolName, toolInput, toolOutput);
     // Antigravity transcript reconstruction: record the tool result so the
     // extractor can pair it with the PreToolUse tool_use (trap/recipe signals).
     if (RUNTIME_OVERRIDE === 'antigravity') {
@@ -213,7 +295,7 @@ process.stdin.on('end', async () => {
       if (ageMs > STALE_MS) {
         debugLog({ stage: 'stale_state', ageMs });
         activityLog({ stage: 'stale_state', ageMs, tool: state.tool || null });
-        try { fs.unlinkSync(STATE_FILE); } catch {}
+        safeUnlink(STATE_FILE, 'interceptor-post.unlinkState');
         state = null;
       }
     }
@@ -226,6 +308,7 @@ process.stdin.on('end', async () => {
       surfacedCount: surfacedIds.length,
       surfaced: surfacedIds.slice(0, 8).map(s => ({ collection: s.collection, pointId: String(s.id || '').slice(0, 8) })),
       toolOutcome: classifyOutcome(toolName, toolInput, toolOutput),
+      ...(outcome ? { failure: outcome.failure, inputHash: outcome.inputHash, toolUseId: outcome.toolUseId, hookEvent: outcome.hookEvent, runtime: outcome.runtime } : {}),
       ...sourceMeta
     });
 
@@ -233,7 +316,7 @@ process.stdin.on('end', async () => {
     if (remote) {
       const config = remote.loadConfig();
       if (remote.isRemoteEnabled(config)) {
-        try { await remote.flushQueueForHook({ config }); } catch {}
+        try { await remote.flushQueueForHook({ config }); } catch (err) { swallow('interceptor-post.flushQueue', err); }
         // A PostToolUse event with no tool name is meaningless to the server —
         // /api/posttool rejects it with 400 "toolName is required". Posting it
         // anyway lands a permanent-poison record in the offline queue (some
@@ -241,17 +324,20 @@ process.stdin.on('end', async () => {
         // round-trip entirely; still drain the queue and clean up local state.
         if (!String(toolName || '').trim()) {
           debugLog({ stage: 'remote_posttool_skipped_no_tool', surfacedCount: surfacedIds.length });
-          try { remote.maybeSpawnExtractDrain({ config }); } catch {}
-          try { if (state) fs.unlinkSync(STATE_FILE); } catch {}
+          try { remote.maybeSpawnExtractDrain({ config }); } catch (err) { swallow('interceptor-post.spawnExtractDrain', err); }
+          if (state && !isFailureEvent) safeUnlink(STATE_FILE, 'interceptor-post.unlinkState');
           process.exitCode = 0; return;
         }
         const body = {
           toolName,
           toolInput,
           toolOutput,
-          surfacedIds,
+          // The failure event records the outcome only; the pending surfaced ids
+          // belong to the PostToolUse that will never come for this call.
+          surfacedIds: isFailureEvent ? [] : surfacedIds,
           cwd: data.cwd || process.cwd(),
           ...sourceMeta,
+          ...(outcome ? { hookEvent: outcome.hookEvent, toolUseId: outcome.toolUseId, clientTs: outcome.clientTs, runtime: outcome.runtime } : {}),
         };
         try {
           await remote.postJsonForHook('/api/posttool', body, { config });
@@ -260,10 +346,35 @@ process.stdin.on('end', async () => {
           remote.queueRequest('POST', '/api/posttool', body);
           debugLog({ stage: 'remote_posttool_queued', tool: toolName, surfacedCount: surfacedIds.length, message: sendErr?.message || String(sendErr) });
         }
-        try { remote.maybeSpawnExtractDrain({ config }); } catch {}
-        try { if (state) fs.unlinkSync(STATE_FILE); } catch {}
+        try { remote.maybeSpawnExtractDrain({ config }); } catch (err) { swallow('interceptor-post.spawnExtractDrain', err); }
+        if (state && !isFailureEvent) safeUnlink(STATE_FILE, 'interceptor-post.unlinkState');
         process.exitCode = 0; return;
       }
+    }
+
+    // Local mode: the experiment outcome event (remote mode: the server writes it).
+    // Only while an experiment is active; both arms.
+    if (outcome) {
+      const experiment = loadExperiment();
+      try {
+        if (experiment && experiment.isExperimentActive()) {
+          experiment.noteHoldoutFor(sourceMeta.sourceSession, outcome.runtime);
+          experiment.logOutcome({
+            sessionId: sourceMeta.sourceSession, toolUseId: outcome.toolUseId, tool: toolName,
+            inputHash: outcome.inputHash, failure: outcome.failure,
+            toolOutcome: classifyOutcome(toolName, toolInput, toolOutput),
+            clientTs: outcome.clientTs, runtime: outcome.runtime, hookEvent: outcome.hookEvent,
+          });
+        }
+      } catch { /* the experiment must never break the hook */ }
+    }
+
+    // Failure event, local mode: the outcome records above are all it does.
+    // Leave reconcile, the judge and last-suggestions.json exactly as they were
+    // before this event was wired.
+    if (isFailureEvent) {
+      debugLog({ stage: 'failure_event_recorded', tool: toolName });
+      process.exitCode = 0; return;
     }
 
     // Reconcile repeated no-touch behavior across pending hints, regardless of whether
@@ -295,7 +406,7 @@ process.stdin.on('end', async () => {
     if (surfacedIds.length === 0) {
       debugLog({ stage: 'no_surfaced_ids' });
       activityLog({ stage: 'no_surfaced_ids', tool: toolName || null, ...sourceMeta });
-      try { if (state) fs.unlinkSync(STATE_FILE); } catch {}
+      if (state) safeUnlink(STATE_FILE, 'interceptor-post.unlinkState');
       process.exitCode = 0; return;
     }
 
@@ -310,6 +421,7 @@ process.stdin.on('end', async () => {
         toolInputObj: toolInput || {},
         toolInput:   JSON.stringify(toolInput || {}).slice(0, 300),
         toolOutcome: classifyOutcome(toolName, toolInput, toolOutput),
+        sourceSession: sourceMeta.sourceSession || null,
       }));
 
       // --- Step 5: Spawn judge-worker detached + unref ---
@@ -338,7 +450,7 @@ process.stdin.on('end', async () => {
     }
 
     // --- Step 6: Delete last-suggestions.json ---
-    try { fs.unlinkSync(STATE_FILE); } catch {}
+    safeUnlink(STATE_FILE, 'interceptor-post.unlinkState');
     debugLog({ stage: 'done', processed: surfacedIds.length });
     activityLog({
       stage: 'done',

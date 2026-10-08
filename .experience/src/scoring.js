@@ -5,7 +5,10 @@
 'use strict';
 
 const { getValidatedHitCount } = require('./utils');
-const { getMinConfidence } = require('./config');
+const _config = require('./config');
+const { getMinConfidence } = _config;
+const _bayes = require('./bayes');
+const _betaEvidence = require('./beta-evidence');
 
 const SELFQA_COLLECTION = 'experience-selfqa';
 const PROBATIONARY_T2_RAW_SCORE_THRESHOLD = 0.60;
@@ -69,7 +72,92 @@ function computeEffectiveConfidence(data) {
   return base * ageFactor;
 }
 
-function computeEffectiveScore(point, data, queryDomain, queryProjectSlug, queryText = '') {
+// --- Bayesian confidence (spec §3 B2-B4) ---------------------------------------
+//
+// betaConfidence is a SEPARATE function, not a mode of computeEffectiveConfidence:
+// making the legacy function mode-aware would leak the model into evolve's
+// demotion (evolution.js Step 3), recall, the brief and the tools that copy the
+// formula. Only the passive path is handed a beta ctx; everything else calls
+// computeEffectiveConfidence exactly as before.
+
+// Hard floor kept in beta mode: narrow-scope's `demote` multiplies confidence by
+// 0.3, and a legacy value this low is a kill decision, not missing evidence.
+const LEGACY_HARD_FLOOR = 0.2;
+
+function isNarrowScopeDemoted(data) {
+  return typeof data?.demoteReason === 'string' && data.demoteReason.startsWith('narrow-scope');
+}
+
+function utcDateOf(nowMs) {
+  return new Date(nowMs).toISOString().slice(0, 10);
+}
+
+/**
+ * Resolve the per-intercept confidence ctx ONCE (config reads, UTC date), so every
+ * gate and rank call in one intercept sees the same thresholds and the same day.
+ * model: 'beta' | 'legacy'. A null ctx (or model 'legacy') is the legacy path.
+ */
+function buildConfidenceCtx({ model = 'beta', sessionId = null, recallMode = false, nowMs = Date.now() } = {}) {
+  return {
+    model,
+    recallMode: !!recallMode,
+    sessionId: sessionId ? String(sessionId) : null,
+    utcDate: utcDateOf(nowMs),
+    minConfidence: getMinConfidence(),
+    betaMinConfidence: _config.getBetaMinConfidence(),
+    minEvidence: _config.getBetaMinEvidence(),
+    priorMeans: _config.getBetaPriorMeans(),
+    priorStrength: _config.getBetaPriorStrength(),
+  };
+}
+
+/**
+ * Confidence decision for one entry.
+ *   legacy (no ctx, model !== 'beta', or recall): computeEffectiveConfidence vs
+ *     minConfidence — the exact legacy predicate;
+ *   beta, pos + neg < minEvidence: the legacy decision AND value (low-evidence
+ *     pass-through: a new entry neither sails through nor dies on one verdict);
+ *   beta, legacy value < 0.2 or narrow-scope demoted: hard fail;
+ *   beta otherwise: pass iff theta >= betaMinConfidence, where theta is the Beta
+ *     posterior quantile at u = hash(session|point|UTC day). Deterministic (every
+ *     hook process agrees) and monotone in evidence; a session crossing UTC
+ *     midnight may flip. No session id → theta = posterior mean. The rank value
+ *     is the posterior mean.
+ * @returns {{pass: boolean, value: number, mode: string, theta?: number, mean?: number}}
+ */
+function betaConfidence(data, ctx, pointId = null) {
+  const legacyValue = computeEffectiveConfidence(data);
+  const minConfidence = ctx && ctx.minConfidence !== undefined ? ctx.minConfidence : getMinConfidence();
+  // !(v < min), the format.js form: identical to v >= min for any numeric min.
+  const legacyPass = !(legacyValue < minConfidence);
+  if (!ctx || ctx.model !== 'beta' || ctx.recallMode) return { pass: legacyPass, value: legacyValue, mode: 'legacy' };
+  const ev = _betaEvidence.readBetaEvidence(data);
+  if (ev.pos + ev.neg < ctx.minEvidence) return { pass: legacyPass, value: legacyValue, mode: 'legacy-low-evidence' };
+  if (legacyValue < LEGACY_HARD_FLOOR || isNarrowScopeDemoted(data)) return { pass: false, value: legacyValue, mode: 'hard-gate' };
+  const { mu, k } = _betaEvidence.priorFor(data, ctx.priorMeans, ctx.priorStrength);
+  const { a, b } = _bayes.posterior({ mu, k, pos: ev.pos, neg: ev.neg });
+  const mean = _bayes.posteriorMean(a, b);
+  const theta = ctx.sessionId && pointId !== null && pointId !== undefined
+    ? _bayes.betaQuantile(_bayes.unitHash(`${ctx.sessionId}|${pointId}|${ctx.utcDate}`), a, b)
+    : mean;
+  return { pass: theta >= ctx.betaMinConfidence, value: mean, mode: 'beta', theta, mean };
+}
+
+/**
+ * THE confidence predicate of the passive path — formatPoints and the surfaced
+ * filter (which feeds recordSurface) used to carry two copies of it. Only this
+ * predicate is unified; the other gates stay where they are.
+ */
+function confidenceGateDecision(point, data, ctx) {
+  if (point && point._probationaryT2) return { pass: true, value: null, mode: 'probationary' };
+  return betaConfidence(data, ctx, point ? point.id : null);
+}
+
+function passesConfidenceGate(point, data, ctx) {
+  return confidenceGateDecision(point, data, ctx).pass;
+}
+
+function computeEffectiveScore(point, data, queryDomain, queryProjectSlug, queryText = '', confidenceCtx = null) {
   const cosine = point.score || 0;
   // Seeds never accumulate runtime hits, so granting them hitBoost (or letting
   // organic boost grow unbounded) inverts the intended ordering: a stale
@@ -177,8 +265,11 @@ function computeEffectiveScore(point, data, queryDomain, queryProjectSlug, query
   }
   // Phase 108: superseded experience penalty
   const supersededPenalty = data.superseded ? 0.15 : 0;
-  // Wave 3: Confidence weighting — low-confidence entries rank lower
-  const confWeight = computeEffectiveConfidence(data);
+  // Wave 3: Confidence weighting — low-confidence entries rank lower. In beta
+  // mode the weight is the posterior mean (legacy value under low evidence).
+  const confWeight = confidenceCtx && confidenceCtx.model === 'beta' && !confidenceCtx.recallMode
+    ? betaConfidence(data, confidenceCtx, point ? point.id : null).value
+    : computeEffectiveConfidence(data);
   const rawScore = cosine + hitBoost - recencyPenalty - ignorePenalty - irrelevantPenalty - unusedPenalty - noiseReasonPenalty - domainPenalty - projectPenalty + temporalAdj + conditionAdj - supersededPenalty;
   return rawScore * (0.6 + 0.4 * confWeight); // scale: 0.6 floor to avoid zeroing out
 }
@@ -191,13 +282,15 @@ function computeEffectiveScore(point, data, queryDomain, queryProjectSlug, query
 // opts.preserveOrder: keep the input order (used by hybrid recall, where RRF
 //   fusion has already determined the order); still attaches _effectiveScore
 //   from the point's display score so formatPoints labels render sensibly.
+// opts.confidenceCtx: the passive path's per-intercept confidence ctx (beta mode).
 function rerankByQuality(points, queryDomain, queryProjectSlug, queryText = '', opts = {}) {
+  const confidenceCtx = (opts && opts.confidenceCtx) || null;
   const mapped = points.map(p => {
     let data = {};
     try { data = JSON.parse(p.payload?.json || '{}'); } catch { /* default */ }
     const eff = (opts && (opts.rawCosineRank || opts.preserveOrder))
       ? (p.score || 0)
-      : computeEffectiveScore(p, data, queryDomain, queryProjectSlug, queryText);
+      : computeEffectiveScore(p, data, queryDomain, queryProjectSlug, queryText, confidenceCtx);
     return { ...p, _effectiveScore: eff };
   });
   if (opts && opts.preserveOrder) return mapped; // RRF-fused order is authoritative
@@ -296,6 +389,8 @@ function floatRunbooks(points) {
 
 module.exports = {
   computeEffectiveConfidence, computeEffectiveScore, rerankByQuality,
+  betaConfidence, confidenceGateDecision, passesConfidenceGate, buildConfidenceCtx,
+  LEGACY_HARD_FLOOR,
   getSurfaceCountForProbation, hasProbationaryT2Debt,
   isProbationaryT2Candidate, selectProbationaryT2Points,
   computeBriefScore, briefRecencyFactor,

@@ -17,7 +17,7 @@ deliberately org-less (`evidenceClass: "common-doc"`) and safe to ingest as-is.
 ## Ingesting
 
 ```bash
-node .experience/seed-ingest.js examples/seeds/org-doc.example.jsonl
+node scripts/maintenance/seed-ingest.js examples/seeds/org-doc.example.jsonl
 ```
 
 The script validates each entry against the evidence-class contract before

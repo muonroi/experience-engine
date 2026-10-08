@@ -134,7 +134,7 @@ async function recall(query, opts = {}, homeDir = os.homedir()) {
   let json = null;
   try { json = JSON.parse(text); } catch { /* non-JSON error body */ }
   if (!res.ok) {
-    const err = new Error(json?.error || text || `HTTP ${res.status}`);
+    const err = /** @type {Error & {status?: number}} */ (new Error(json?.error || text || `HTTP ${res.status}`));
     err.status = res.status;
     throw err;
   }

@@ -7,6 +7,7 @@
 
 const fs = require('fs');
 const pathMod = require('path');
+const { swallow } = require('./swallow');
 
 const {
   VALID_FEEDBACK_VERDICTS, VALID_NOISE_REASONS,
@@ -25,7 +26,7 @@ function sanitizeSessionToken(value) {
 }
 
 function getSessionTrackFile(meta) {
-  try { fs.mkdirSync(SESSION_TRACK_DIR, { recursive: true }); } catch {}
+  try { fs.mkdirSync(SESSION_TRACK_DIR, { recursive: true }); } catch { /* writeSessionTrack reports a missing dir */ }
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const sessionToken = sanitizeSessionToken(
     meta?.sourceSession
@@ -58,7 +59,7 @@ function readSessionTrack(meta) {
 }
 
 function writeSessionTrack(track, meta) {
-  try { fs.writeFileSync(getSessionTrackFile(meta), JSON.stringify(track)); } catch {}
+  try { fs.writeFileSync(getSessionTrackFile(meta), JSON.stringify(track)); } catch (err) { swallow('session.writeTrack', err); }
 }
 
 /**

@@ -4,6 +4,9 @@
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const { server } = require('../server.js');
 
@@ -66,6 +69,31 @@ describe('metrics endpoint', () => {
     const { text } = await fetchText('/metrics');
     assert.ok(text.includes('experience_intercepts_24h'), 'should have intercepts counter');
     assert.ok(text.includes('experience_embed_ok_24h'), 'should have embed ok counter');
+  });
+
+  it('counts swallowed errors per call site', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ee-metrics-swallow-'));
+    fs.mkdirSync(path.join(home, '.experience'), { recursive: true });
+    const now = new Date().toISOString();
+    const old = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const entries = [
+      { ts: now, op: 'swallowed', where: 'interceptor.flushQueue' },
+      { ts: now, op: 'swallowed', where: 'interceptor.flushQueue' },
+      { ts: now, op: 'swallowed', where: 'remote-client.persistAttempts' },
+      { ts: old, op: 'swallowed', where: 'stale.site' },
+    ];
+    fs.writeFileSync(path.join(home, '.experience', 'activity.jsonl'), entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    const prevHome = process.env.HOME;
+    process.env.HOME = home;
+    let text;
+    try {
+      ({ text } = await fetchText('/metrics'));
+    } finally {
+      process.env.HOME = prevHome;
+    }
+    assert.ok(text.includes('experience_swallowed_errors_24h{where="interceptor.flushQueue"} 2'));
+    assert.ok(text.includes('experience_swallowed_errors_24h{where="remote-client.persistAttempts"} 1'));
+    assert.ok(!text.includes('stale.site'), 'entries older than 24h are not counted');
   });
 });
 

@@ -72,6 +72,61 @@ function cfgValue(key, envKey, fallback) {
   return _tryDecrypt(raw);
 }
 
+// Operator-settable budgets (timeouts, answer-token caps) get coerced HERE, once, because
+// `Number.isFinite(n) && n > 0` is not validation. Measured 2026-09-17, each of these was
+// accepted by that check and each broke a live path:
+//   45.5 / 99999999999  -> AbortSignal.timeout throws ERR_OUT_OF_RANGE, and because
+//                          /api/extract has ALREADY ACKed the client, the whole session's
+//                          lessons are lost with one error line and no client signal.
+//   2147483648          -> Node clamps the timer to 1 ms with only a process warning.
+//   true                -> Number(true) === 1, i.e. a 1 ms budget.
+//   "12.7" / [999]      -> a non-integer or array-derived max_tokens the provider 400s on,
+//                          which classifyViaBrain swallows into a silent null.
+//   120 (meant seconds) -> a legal 120 ms timeout that aborts every call.
+// So: accept only a number or a numeric string, truncate to an integer, and require it to
+// land inside a plausible band — anything outside is a typo, not a budget, and the caller's
+// default is safer than honouring it.
+function numericCfg(key, envKey, fallback, min, max) {
+  const raw = cfgValue(key, envKey, fallback);
+  if (typeof raw !== 'number' && typeof raw !== 'string') return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return fallback;
+  const whole = Math.trunc(parsed);
+  if (whole < min || whole > max) {
+    // Say so. A budget silently replaced by its default is exactly the invisible failure
+    // this helper exists to prevent — the operator must be able to see that the number
+    // they set was thrown away, and why.
+    activityLog({ op: 'config-rejected', key, value: String(raw).slice(0, 40), min, max, using: fallback });
+    return fallback;
+  }
+  return whole;
+}
+
+// Shares and probabilities are fractions, so numericCfg (which truncates to an
+// integer) would turn 0.15 into 0. cfgValue returns env values as strings and the
+// config file wins over env, same as every other key. Contract (spec §3 A2):
+//   - a number or numeric string inside [min, max] is used as is;
+//   - outside the band it is CLAMPED to the nearest bound (a holdout share of 0.8
+//     is a typo for "a lot", and the bound — not the default — is the closest safe
+//     reading), and the rejection is logged;
+//   - anything else (NaN, '', true, [0.1], 'ten percent') falls back and is logged.
+// The log line is what makes a silently-ignored experiment setting visible.
+function floatCfg(key, envKey, fallback, min, max) {
+  const raw = cfgValue(key, envKey, fallback);
+  if (raw === fallback) return fallback;
+  const parsed = (typeof raw === 'number' || (typeof raw === 'string' && raw.trim() !== '')) ? Number(raw) : NaN;
+  if (!Number.isFinite(parsed)) {
+    activityLog({ op: 'config-rejected', key, value: String(raw).slice(0, 40), min, max, using: fallback });
+    return fallback;
+  }
+  if (parsed < min || parsed > max) {
+    const clamped = Math.min(max, Math.max(min, parsed));
+    activityLog({ op: 'config-rejected', key, value: String(raw).slice(0, 40), min, max, using: clamped });
+    return clamped;
+  }
+  return parsed;
+}
+
 function cfgNestedValue(key, nestedPath, envKey, fallback) {
   const cfg = getConfig();
   const nested = nestedPath.reduce((value, part) => (
@@ -108,9 +163,172 @@ function getBrainExtractModel() {
 // the extract model to DeepSeek's native API instead). Each falls back to the hot-path brain
 // getter when unset, so a box that does NOT configure a separate extract provider keeps its
 // existing single-provider behaviour unchanged (backward-compatible).
-function getBrainExtractProvider() { return cfgValue('brainExtractProvider', 'EXPERIENCE_BRAIN_EXTRACT_PROVIDER', '') || getBrainProvider(); }
+// Provider ids that speak the SAME wire protocol and are served by the same client.
+// A rename between them (openai ↔ custom ↔ siliconflow) must not be read as "the call
+// moved to another vendor". `deepseek` keeps its own family: it is OpenAI-shaped but has
+// a DIFFERENT default host, so treating it as interchangeable would let a DeepSeek model
+// inherit the SiliconFlow endpoint — the original 400 "Model does not exist".
+const _BRAIN_PROVIDER_FAMILY = { openai: 'openai-compatible', siliconflow: 'openai-compatible', custom: 'openai-compatible' };
+// The host each client falls back to when no endpoint is configured. ONE table, imported
+// by brain-llm.js and router.js, so "where does provider X go by default" has a single
+// answer — two copies had already drifted to two different DeepSeek paths. Keyed by
+// PROVIDER, not by family: siliconflow and openai share a client but not a host, and
+// resolving siliconflow to the OpenAI default would POST a SiliconFlow key to OpenAI.
+const BRAIN_DEFAULT_ENDPOINTS = {
+  openai: 'https://api.openai.com/v1/chat/completions',
+  custom: 'https://api.openai.com/v1/chat/completions',
+  siliconflow: 'https://api.siliconflow.com/v1/chat/completions',
+  'openai-compatible': 'https://api.openai.com/v1/chat/completions',
+  deepseek: 'https://api.deepseek.com/chat/completions',
+  gemini: 'https://generativelanguage.googleapis.com/v1beta/models',
+  claude: 'https://api.anthropic.com/v1/messages',
+};
+function defaultBrainEndpoint(provider) {
+  const p = String(provider || '').toLowerCase();
+  return BRAIN_DEFAULT_ENDPOINTS[p] || BRAIN_DEFAULT_ENDPOINTS[_providerFamily(p)] || '';
+}
+function _providerFamily(provider) {
+  const p = String(provider || '').toLowerCase();
+  return _BRAIN_PROVIDER_FAMILY[p] || p;
+}
+// Only these clients POST to a configurable chat/completions URL, which is the shape
+// `brainEndpoint` holds. An endpoint may therefore be INHERITED only by these; one
+// configured explicitly for a Gemini/Anthropic target (a private gateway, LiteLLM,
+// Vertex) is that client's own shape and is always honoured — dropping it while keeping
+// its key is how a gateway-only credential would reach Google or Anthropic.
+function _acceptsChatEndpoint(provider) {
+  const f = _providerFamily(provider);
+  return f === 'openai-compatible' || f === 'deepseek';
+}
+// Origins, not strings: `https://h/v1/chat` and `https://h/v1/big/chat` are the same host
+// (one gateway, two routes) and a trailing slash is not a different vendor.
+function _sameOrigin(a, b) {
+  if (!a || !b) return a === b;
+  try { return new URL(a).origin === new URL(b).origin; } catch { return a === b; }
+}
+// Where a call will ACTUALLY land, including the client's own default — an unset
+// brainEndpoint still resolves to a real host, so comparing the raw config fields would
+// call a config "cross-vendor" when both sides hit the same API.
+// Always resolves to the host the request will ACTUALLY reach, never to '': leaving the
+// client to fill in a blank meant it guessed from the HOT provider while the key had been
+// decided for the target provider, so one vendor's host received another vendor's key.
+function _effectiveEndpoint(provider, ownEndpoint, hotProvider, hotEndpoint) {
+  if (ownEndpoint) return ownEndpoint;
+  if (_inheritsEndpoint(provider, hotProvider) && hotEndpoint) return hotEndpoint;
+  return defaultBrainEndpoint(provider);
+}
+// An endpoint configured for the hot path describes the hot client. It may be reused only
+// by the same client family, and only by a family whose protocol that field's shape fits.
+function _inheritsEndpoint(provider, hotProvider) {
+  return _providerFamily(provider) === _providerFamily(hotProvider) && _acceptsChatEndpoint(provider);
+}
+// Per-source overrides of the hot-path target. Every field falls back to the hot path
+// when unset, so a box that configures none of them keeps single-provider behaviour.
+const _SOURCE_TARGET_KEYS = {
+  extract: {
+    provider: ['brainExtractProvider', 'EXPERIENCE_BRAIN_EXTRACT_PROVIDER'],
+    endpoint: ['brainExtractEndpoint', 'EXPERIENCE_BRAIN_EXTRACT_ENDPOINT'],
+    key: ['brainExtractKey', 'EXPERIENCE_BRAIN_EXTRACT_KEY'],
+  },
+  // The PIL intent classifier must answer a JSON object inside a 3.5s budget. A reasoning
+  // hot-path model spends that budget thinking (measured 2026-09-27 on step-5-preview:
+  // 4.7s and an off-schema object), so the classifier can be pinned to a fast model.
+  pil: {
+    provider: ['pilClassifierProvider', 'EE_PIL_CLASSIFIER_PROVIDER'],
+    endpoint: ['pilClassifierEndpoint', 'EE_PIL_CLASSIFIER_ENDPOINT'],
+    key: ['pilClassifierKey', 'EE_PIL_CLASSIFIER_KEY'],
+  },
+};
+function _sourceProvider(keys) {
+  const own = cfgValue(keys.provider[0], keys.provider[1], '');
+  if (own) return own;
+  // Ollama speaks its own protocol on a fixed local URL and ignores an HTTP chat
+  // endpoint, so an operator who configured a source ENDPOINT while the hot path runs
+  // on Ollama means "call this remote", not "post the remote model id to localhost".
+  const ownEndpoint = cfgValue(keys.endpoint[0], keys.endpoint[1], '');
+  if (ownEndpoint && _providerFamily(getBrainProvider()) === 'ollama') return 'custom';
+  return getBrainProvider();
+}
+function getBrainExtractProvider() { return _sourceProvider(_SOURCE_TARGET_KEYS.extract); }
+function getPilClassifierModel() {
+  return cfgValue('pilClassifierModel', 'EE_PIL_CLASSIFIER_MODEL', null) || getBrainModel();
+}
 function getBrainExtractEndpoint() { return cfgValue('brainExtractEndpoint', 'EXPERIENCE_BRAIN_EXTRACT_ENDPOINT', '') || getBrainEndpoint(); }
-function getBrainExtractKey()      { return cfgValue('brainExtractKey', 'EXPERIENCE_BRAIN_EXTRACT_KEY', '') || getBrainKey(); }
+function getBrainExtractKey() { return resolveBrainTarget('extract').key; }
+
+// The complete routing target for one call source: provider, endpoint, key and model
+// resolved TOGETHER. Resolving them apart is what sent a DeepSeek model id to SiliconFlow
+// (400 "Model does not exist", measured on the VPS 2026-09-16 — every extraction lost) and
+// what would hand one vendor's key to another. Callers pass every field to the provider
+// client, so the client never guesses: an empty endpoint means "use your own default
+// host", never "use the hot-path host".
+function resolveBrainTarget(source) {
+  const hotProvider = getBrainProvider();
+  // `brainEndpoint` holds a chat/completions URL; the Gemini and Claude clients never read
+  // it (pre-split behaviour), so a value left from another provider is not part of the hot
+  // target at all — neither to call, nor to compare origins against.
+  const hotEndpoint = _acceptsChatEndpoint(hotProvider) ? getBrainEndpoint() : '';
+  const hotKey = getBrainKey();
+  const hotResolved = _effectiveEndpoint(hotProvider, hotEndpoint, hotProvider, hotEndpoint);
+  const keys = source === 'pil' ? _SOURCE_TARGET_KEYS.pil
+    : (source === 'extract' || source === 'evolve') ? _SOURCE_TARGET_KEYS.extract
+      : null;
+  if (!keys) {
+    return {
+      provider: hotProvider,
+      endpoint: hotResolved,
+      key: hotKey,
+      model: getBrainModel(),
+      keySuppressed: false,
+    };
+  }
+  const ownEndpoint = cfgValue(keys.endpoint[0], keys.endpoint[1], '');
+  const ownKey = cfgValue(keys.key[0], keys.key[1], '');
+  const provider = _sourceProvider(keys);
+  const endpoint = _effectiveEndpoint(provider, ownEndpoint, hotProvider, hotEndpoint);
+  // Inherit the hot-path credential only when the request reaches the SAME origin the hot
+  // path already authenticates against. Both sides are fully resolved hosts, so a provider
+  // rename, an unset brainEndpoint or a client default never reads as a vendor change.
+  const sameTarget = _sameOrigin(endpoint, hotResolved);
+  // Fail closed rather than lend a credential across vendors: a 401 is diagnosable, a
+  // leaked key is not. keySuppressed lets the caller log WHY, so the 401 is readable.
+  const key = ownKey || (sameTarget ? hotKey : '');
+  return {
+    provider,
+    endpoint,
+    key,
+    model: source === 'pil' ? getPilClassifierModel() : getBrainExtractModel(),
+    keySuppressed: !ownKey && !sameTarget && !!hotKey,
+  };
+}
+// The degraded target a failed hot-path call (429, 5xx, timeout) is retried on. Resolved as
+// one unit like resolveBrainTarget: the old fallback carried only a provider NAME, so the
+// client re-read the hot endpoint, key and model and re-sent the same request to the same
+// vendor — useless against the 5-concurrent-request cap StepFun enforces (429 measured on
+// the VPS 2026-09-27). Null when no fallback is configured.
+function getBrainFallbackProvider() {
+  return cfgValue('brainFallback', 'EXPERIENCE_BRAIN_FALLBACK', getBrainProvider() === 'ollama' ? '' : 'ollama');
+}
+function resolveBrainFallbackTarget() {
+  const provider = String(getBrainFallbackProvider() || '').toLowerCase();
+  if (!provider) return null;
+  const hotProvider = getBrainProvider();
+  const hotEndpoint = _acceptsChatEndpoint(hotProvider) ? getBrainEndpoint() : '';
+  const hotKey = getBrainKey();
+  const hotResolved = _effectiveEndpoint(hotProvider, hotEndpoint, hotProvider, hotEndpoint);
+  const ownEndpoint = cfgValue('brainFallbackEndpoint', 'EXPERIENCE_BRAIN_FALLBACK_ENDPOINT', '');
+  const ownKey = cfgValue('brainFallbackKey', 'EXPERIENCE_BRAIN_FALLBACK_KEY', '');
+  const endpoint = _effectiveEndpoint(provider, ownEndpoint, hotProvider, hotEndpoint);
+  const sameTarget = _sameOrigin(endpoint, hotResolved);
+  return {
+    provider,
+    endpoint,
+    key: ownKey || (sameTarget ? hotKey : ''),
+    model: cfgValue('brainFallbackModel', 'EXPERIENCE_BRAIN_FALLBACK_MODEL', null) || getBrainModel(),
+    // Ollama takes no credential, so an empty key there is not a suppressed one.
+    keySuppressed: provider !== 'ollama' && !ownKey && !sameTarget && !!hotKey,
+  };
+}
 // Source-aware model picker. Sources are set by callers via meta.source in callBrainWithFallback.
 function getBrainModelForSource(source) {
   if (source === 'extract' || source === 'evolve') return getBrainExtractModel();
@@ -316,6 +534,109 @@ function getRunbookStitchMin() {
   return Number.isFinite(n) && n >= 2 ? Math.round(n) : 3;
 }
 
+// --- Measured engine lift: session-level holdout (spec §3 A1-A3) ---
+// experimentHoldoutShare: fraction of sessions assigned to the CONTROL arm, which
+// gets no passive engine output at all. Default 0 = no experiment, no experiment
+// log, every path identical to before. Capped at 0.5: a control arm larger than
+// the treatment arm is never the intent and halves the product for nothing.
+function getExperimentHoldoutShare() {
+  return floatCfg('experimentHoldoutShare', 'EXPERIENCE_EXPERIMENT_HOLDOUT_SHARE', 0, 0, 0.5);
+}
+// Changing the salt re-randomises every session — the way to start a fresh
+// experiment without the previous one's assignment leaking into it.
+function getExperimentSalt() {
+  const v = cfgValue('experimentSalt', 'EXPERIENCE_EXPERIMENT_SALT', 'v1');
+  return (typeof v === 'string' || typeof v === 'number') && String(v).trim() ? String(v).trim() : 'v1';
+}
+// Dedicated append-only log: activity.jsonl rotates at 10 MB into ONE overwritten
+// .1 file (~20 MB retained), which a 2-4 week experiment would outrun.
+function getExperimentLogPath() {
+  const v = cfgValue('experimentLog', 'EXPERIENCE_EXPERIMENT_LOG', '');
+  return typeof v === 'string' && v.trim() ? v.trim() : pathMod.join(getHomeExpDir(), 'experiment.jsonl');
+}
+
+// --- Bayesian confidence (spec §3 B1-B4) ---
+// confidenceModel: which confidence the PASSIVE path gates and ranks with.
+//   legacy (default) — computeEffectiveConfidence, exactly as before;
+//   shadow — legacy decides; the beta pipeline also runs and one aggregated
+//            confidence-shadow event per intercept records the shown-set diff;
+//   beta   — betaConfidence decides the passive path;
+//   ab     — per session, legacy or beta (share confidenceAbShare), assigned with
+//            the experiment salt under a separate "|model|" tag, so independent of
+//            the holdout arm.
+// Recall, the brief, evolve and the tools never see a beta ctx: they stay legacy.
+const CONFIDENCE_MODELS = new Set(['legacy', 'shadow', 'beta', 'ab']);
+function getConfidenceModel() {
+  const raw = cfgValue('confidenceModel', 'EXPERIENCE_CONFIDENCE_MODEL', 'legacy');
+  const v = String(raw ?? '').trim().toLowerCase();
+  if (CONFIDENCE_MODELS.has(v)) return v;
+  activityLog({ op: 'config-rejected', key: 'confidenceModel', value: String(raw).slice(0, 40), using: 'legacy' });
+  return 'legacy';
+}
+function getConfidenceAbShare() {
+  return floatCfg('confidenceAbShare', 'EXPERIENCE_CONFIDENCE_AB_SHARE', 0.5, 0, 1);
+}
+// Default = minConfidence so beta starts on the legacy threshold; B0
+// (tools/exp-beta-replay.js) picks the calibrated value before any online use.
+function getBetaMinConfidence() {
+  const legacy = Number(getMinConfidence());
+  return floatCfg('betaMinConfidence', 'EXPERIENCE_BETA_MIN_CONFIDENCE', Number.isFinite(legacy) ? legacy : 0.42, 0, 1);
+}
+// Below this much weighted evidence (pos + neg) the beta model defers to the
+// legacy decision AND value: a new entry must not pass or die on one verdict.
+function getBetaMinEvidence() {
+  return floatCfg('betaMinEvidence', 'EXPERIENCE_BETA_MIN_EVIDENCE', 3, 0, 1000);
+}
+// B1 bookkeeping is the one default-on piece: written by the verdict writers,
+// read by nothing unless confidenceModel is shadow/beta/ab. Off = no field written.
+function getBetaEvidenceEnabled() {
+  const v = cfgValue('betaEvidenceEnabled', 'EXPERIENCE_BETA_EVIDENCE_ENABLED', true);
+  if (v === false) return false;
+  const str = String(v).trim().toLowerCase();
+  return !(str === 'false' || str === '0' || str === 'off' || str === 'no');
+}
+
+// Evidence weight per source (B1). Implicit touch is low because the pre-surface
+// relevance gate runs the SAME assessHintUsage the reconciler later uses, so a
+// shown PreToolUse hint on a path-bearing action is "touched" almost by
+// construction. Session-repeat (trackSuggestions' third-repeat flag) is 0: it
+// counts how often a hint was re-shown, not whether it was wrong.
+const DEFAULT_BETA_EVIDENCE_WEIGHTS = Object.freeze({
+  manual: 1.0, judge: 0.7, implicitTouch: 0.2, implicitNoise: 0.3, organic: 0.3, sessionRepeat: 0,
+});
+function _numberTable(key, envKey, defaults, min, max) {
+  let raw = cfgValue(key, envKey, null);
+  if (raw == null) return { ...defaults };
+  if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { raw = null; } }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    activityLog({ op: 'config-rejected', key, value: String(cfgValue(key, envKey, '')).slice(0, 40), using: 'defaults' });
+    return { ...defaults };
+  }
+  const out = { ...defaults };
+  for (const [k, v] of Object.entries(raw)) {
+    const n = Number(v);
+    if (typeof v !== 'boolean' && v !== '' && Number.isFinite(n) && n >= min && n <= max) out[k] = n;
+    else activityLog({ op: 'config-rejected', key: `${key}.${k}`, value: String(v).slice(0, 40), min, max, using: k in defaults ? defaults[k] : 'ignored' });
+  }
+  return out;
+}
+function getBetaEvidenceWeights() {
+  return _numberTable('betaEvidenceWeights', 'EXPERIENCE_BETA_EVIDENCE_WEIGHTS', DEFAULT_BETA_EVIDENCE_WEIGHTS, 0, 10);
+}
+// Prior mean by createdFrom (B2). 'seed-*' matches any seed-prefixed origin;
+// 'default' is everything else. Strength k: seeds 20 (authoritative docs should
+// not swing on a handful of verdicts), others 4.
+const DEFAULT_BETA_PRIOR_MEANS = Object.freeze({
+  'seed-*': 0.7, 'doc-to-experience': 0.7, 'evolution-abstraction': 0.7, 'bulk-seed': 0.8, imported: 0.6, default: 0.5,
+});
+const DEFAULT_BETA_PRIOR_STRENGTH = Object.freeze({ seed: 20, default: 4 });
+function getBetaPriorMeans() {
+  return _numberTable('betaPriorMeans', 'EXPERIENCE_BETA_PRIOR_MEANS', DEFAULT_BETA_PRIOR_MEANS, 0.01, 0.99);
+}
+function getBetaPriorStrength() {
+  return _numberTable('betaPriorStrength', 'EXPERIENCE_BETA_PRIOR_STRENGTH', DEFAULT_BETA_PRIOR_STRENGTH, 0.1, 1000);
+}
+
 // --- Activity Log ---
 let _activityLog = null;
 
@@ -331,11 +652,14 @@ function activityLog(event) {
 
 module.exports = {
   getConfig, refreshConfig, cfgValue, cfgNestedValue,
+  numericCfg, floatCfg,
   getQdrantBase, getQdrantApiKey,
   getOllamaBase, getOllamaEmbedUrl, getOllamaGenerateUrl,
   getEmbedProvider, getEmbedModel, getOllamaEmbedModel, getEmbedEndpoint, getEmbedKey, getEmbedDim, getEmbedTimeoutMs,
   getBrainProvider, getBrainModel, getBrainExtractModel, getBrainModelForSource, getBrainEndpoint, getBrainKey,
-  getBrainExtractProvider, getBrainExtractEndpoint, getBrainExtractKey,
+  getBrainExtractProvider, getBrainExtractEndpoint, getBrainExtractKey, resolveBrainTarget,
+  getPilClassifierModel, getBrainFallbackProvider, resolveBrainFallbackTarget,
+  BRAIN_DEFAULT_ENDPOINTS, defaultBrainEndpoint,
   getMinConfidence, getHighConfidence, getMinSearchScore,
   getPassiveHybrid, getPassiveLexicalMaxAdds, getPassiveLexicalDisplayScore,
   getSearchHybrid,
@@ -345,6 +669,10 @@ module.exports = {
   getPrivacyLevel, getProfilePath, getSignalWindowDays,
   getRiskGateEnabled, getRiskKeywords, DEFAULT_RISK_KEYWORDS,
   getRunbookNudgeEnabled, getRunbookStitchMin,
+  getExperimentHoldoutShare, getExperimentSalt, getExperimentLogPath,
+  getConfidenceModel, getConfidenceAbShare, getBetaMinConfidence, getBetaMinEvidence,
+  getBetaEvidenceEnabled, getBetaEvidenceWeights, getBetaPriorMeans, getBetaPriorStrength,
+  DEFAULT_BETA_EVIDENCE_WEIGHTS, DEFAULT_BETA_PRIOR_MEANS, DEFAULT_BETA_PRIOR_STRENGTH,
   COLLECTIONS, SELFQA_COLLECTION, EDGE_COLLECTION, ROUTES_COLLECTION,
   DEDUP_THRESHOLD, QUERY_MAX_CHARS, COMPACT_DIM,
   VALID_FEEDBACK_VERDICTS, VALID_NOISE_REASONS, VALID_NOISE_DISPOSITIONS, VALID_NOISE_SOURCES,

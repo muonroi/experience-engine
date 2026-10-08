@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { execSync } = require('child_process');
+const { swallow } = require('./swallow');
 
 const BUFFER_SYNC_FILE = path.join(os.homedir(), '.experience', 'tmp', 'ide-buffers.json');
 
@@ -52,7 +53,7 @@ function detectEnvironment() {
   }
   try {
     activePaths.push(process.cwd());
-  } catch {}
+  } catch { /* cwd was deleted under us */ }
 
   return {
     hostOS,
@@ -83,7 +84,7 @@ function getIDEBuffers() {
     if (fs.existsSync(BUFFER_SYNC_FILE)) {
       return JSON.parse(fs.readFileSync(BUFFER_SYNC_FILE, 'utf8')) || {};
     }
-  } catch (e) {}
+  } catch (err) { swallow('sync-utils.readBufferSync', err); }
   return {};
 }
 
@@ -109,6 +110,10 @@ function syncIDEBuffers(buffers) {
   return saveIDEBuffers(current);
 }
 
+/**
+ * @param {string} filePath
+ * @param {BufferEncoding} [encoding]
+ */
 function readBufferOrDisk(filePath, encoding = 'utf8') {
   try {
     const buffers = getIDEBuffers();

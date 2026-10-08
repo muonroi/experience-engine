@@ -35,6 +35,7 @@ def main():
     # 1. Client creation
     assert_test(client.base_url == BASE, "client has correct base_url")
     assert_test(client.timeout == 10, "client has correct timeout")
+    assert_test(Client(BASE, token="t").token == "t", "client accepts a bearer token")
 
     # 2. Health
     print("\n--- health ---")
@@ -66,11 +67,11 @@ def main():
     except ExperienceAPIError as e:
         assert_test(e.status_code == 400, "empty toolName returns 400")
 
-    # 5. Extract (short transcript → stored=0)
+    # 5. Extract (server ACKs immediately, extraction runs in the background)
     print("\n--- extract ---")
     try:
         r = client.extract("short")
-        assert_test(r.get("stored") == 0, "short transcript stores 0")
+        assert_test(r.get("accepted") is True, "extract is accepted asynchronously")
     except ExperienceAPIError as e:
         print(f"  SKIP: extract failed ({e})")
         failed += 1

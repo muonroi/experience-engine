@@ -12,6 +12,17 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+// src/swallow.js records errors this file drops on purpose. An install that
+// predates it gets silent no-ops, so a missing module never breaks the hook.
+const { swallow } = (() => {
+  try { return require('./src/swallow'); }
+  catch {
+    return {
+      swallow() {},
+    };
+  }
+})();
+
 const DEBUG_LOG = process.env.EXPERIENCE_HOOK_DEBUG_LOG || path.join(os.homedir(), '.codex', 'log', 'experience-hook-debug.jsonl');
 
 // Explicit runtime tag passed by register-hooks.js (e.g. `--runtime=antigravity`).
@@ -48,7 +59,7 @@ function debugLog(event) {
   try {
     fs.mkdirSync(path.dirname(DEBUG_LOG), { recursive: true });
     fs.appendFileSync(DEBUG_LOG, JSON.stringify({ ts: new Date().toISOString(), hook: 'interceptor', ...event }) + '\n');
-  } catch {}
+  } catch { /* debug log unwritable — nothing left to report to */ }
 }
 
 function activityLog(event) {
@@ -58,7 +69,7 @@ function activityLog(event) {
     if (typeof core._activityLog === 'function') {
       core._activityLog({ op: 'hook', hook: 'interceptor', ...event });
     }
-  } catch {}
+  } catch { /* no local core on a thin client — the server keeps the activity log */ }
 }
 
 function getRemoteClient() {
@@ -97,6 +108,25 @@ function _loadInstalled(rel) {
   }
 }
 const _surfaceTrigger = _loadInstalled('src/surface-trigger.js');
+
+// Session-holdout arm (docs/specs/2026-09-25-hint-lift-and-bayesian-confidence.md
+// §3 A3). A control session must get no passive engine output — including the
+// risk-gate nudge this hook appends on its own. The server's `experiment` marker
+// decides (and is remembered for later hooks of the session); local mode computes
+// the same arm from the same config; failing both, an arm remembered from an
+// earlier hook. null = not in an experiment.
+function resolveExperimentArm(sessionId, marker) {
+  const remote = getRemoteClient();
+  if (marker && typeof marker.arm === 'string') {
+    try { if (remote) remote.rememberExperimentArm(sessionId, marker); } catch (err) { swallow('interceptor.rememberExperimentArm', err); }
+    return marker.arm;
+  }
+  if (!isRemoteMode()) {
+    const experiment = _loadInstalled('src/experiment.js');
+    try { return experiment ? (experiment.holdoutArm(sessionId)?.arm || null) : null; } catch { return null; }
+  }
+  try { return remote ? remote.recallExperimentArm(sessionId) : null; } catch { return null; }
+}
 
 // Tool-level risk gate (PreToolUse): a one-line nudge when a command keyword or a
 // cross-repo file path is touched and nothing relevant surfaced. No extra recall
@@ -315,12 +345,12 @@ function suppressHookOutput() {
     return true;
   };
 
-  process.stdout.write = ((chunk, encoding, callback) => {
+  process.stdout.write = /** @type {any} */ ((chunk, encoding, callback) => {
     if (typeof encoding === 'function') encoding();
     if (typeof callback === 'function') callback();
     return capture('stdout', chunk);
   });
-  process.stderr.write = ((chunk, encoding, callback) => {
+  process.stderr.write = /** @type {any} */ ((chunk, encoding, callback) => {
     if (typeof encoding === 'function') encoding();
     if (typeof callback === 'function') callback();
     return capture('stderr', chunk);
@@ -404,19 +434,20 @@ process.stdin.on('end', async () => {
       if (remote) {
         const config = remote.loadConfig();
         if (remote.isRemoteEnabled(config)) {
-          try { await remote.flushQueueForHook({ config }); } catch {}
+          try { await remote.flushQueueForHook({ config }); } catch (err) { swallow('interceptor.flushQueue', err); }
           return remote.postJsonForHook('/api/intercept', {
           toolName: tool,
           toolInput,
           cwd: data.cwd || process.cwd(),
           ...sourceMeta,
+          ...(data.tool_use_id ? { toolUseId: data.tool_use_id } : {}),
           }, { config });
         }
       }
 
       const corePath = path.join(os.homedir(), '.experience', 'experience-core.js');
       const { interceptWithMeta: interceptMeta, intercept: localIntercept } = require(corePath);
-      if (interceptMeta) return interceptMeta(tool, toolInput, ctrl.signal, sourceMeta);
+      if (interceptMeta) return interceptMeta(tool, toolInput, ctrl.signal, sourceMeta, data.tool_use_id ? { toolUseId: data.tool_use_id } : undefined);
       return { suggestions: await localIntercept(tool, toolInput, ctrl.signal, sourceMeta), surfacedIds: [], route: null };
     })().catch(error => {
       if (ctrl.signal.aborted) {
@@ -464,7 +495,7 @@ process.stdin.on('end', async () => {
     try {
       const remote = getRemoteClient();
       if (remote) remote.maybeSpawnExtractDrain();
-    } catch {}
+    } catch (err) { swallow('interceptor.spawnExtractDrain', err); }
     debugLog({ stage: 'intercept_done', tool, hasResult: !!result, surfacedCount: surfacedIds.length, preview: typeof result === 'string' ? result.slice(0, 240) : null, ...sourceMeta });
     activityLog({
       stage: 'intercept_done',
@@ -494,7 +525,7 @@ process.stdin.on('end', async () => {
           surfaced: surfacedIds.slice(0, 8).map(s => ({ collection: s.collection, pointId: String(s.id || '').slice(0, 8) })),
           ...sourceMeta
         });
-      } catch {}
+      } catch (err) { swallow('interceptor.writeSuggestionsState', err); }
     }
 
     // Write route decision for consumers (GSD, external tools)
@@ -511,7 +542,7 @@ process.stdin.on('end', async () => {
           routeSource: routeInfo?.source || null,
           ...sourceMeta
         });
-      } catch {}
+      } catch (err) { swallow('interceptor.writeRouteState', err); }
     }
 
     let outputText = result || '';
@@ -532,12 +563,14 @@ process.stdin.on('end', async () => {
         if (isClaudeTui) {
           process.stderr.write(`💡 Experience: ${hintCount} hint${hintCount === 1 ? '' : 's'} surfaced (Ctrl+O to expand)\n`);
         }
-      } catch {}
+      } catch { /* stderr closed — the indicator is cosmetic */ }
     }
 
     // Risk gate: when nothing relevant surfaced for a risky tool step, append a
     // one-line nudge naming the trigger so the agent can recall or explicitly skip.
-    if (surfacedIds.length === 0) {
+    // Not for a holdout control session: an empty hint set there is the
+    // experiment, not a gap to nudge about.
+    if (surfacedIds.length === 0 && resolveExperimentArm(sourceMeta.sourceSession, resultMeta?.experiment) !== 'control') {
       const gate = buildToolRiskGate(tool, toolInput, data.cwd || process.cwd());
       if (gate && gate.line) {
         activityLog({ stage: 'risk_gate', tool, kind: gate.top.kind, topic: gate.top.topic, ...sourceMeta });
@@ -549,7 +582,7 @@ process.stdin.on('end', async () => {
   } catch (error) {
     try {
       if (typeof mute?.restore === 'function') mute.restore();
-    } catch {}
+    } catch (err) { swallow('interceptor.muteRestore', err); }
     debugLog({ stage: 'error', message: error?.message || String(error), stack: error?.stack || null });
     activityLog({ stage: 'error', message: error?.message || String(error), stack: error?.stack || null });
     try {
@@ -558,7 +591,7 @@ process.stdin.on('end', async () => {
       if (isCodexHookInvocation(data, tool)) {
         emitPreToolUseGuidance(data, tool);
       }
-    } catch {}
+    } catch (err) { swallow('interceptor.errorFallbackGuidance', err); }
   }
   // Exit naturally so undici sockets close cleanly; hardExit (unref'd) is the
   // watchdog if drain ever hangs. See hardExit comment above.

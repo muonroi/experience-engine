@@ -13,6 +13,18 @@ const {
   getExtractTimeoutMs,
 } = require('./remote-client');
 
+// src/swallow.js records errors this file drops on purpose. An install that
+// predates it gets silent no-ops, so a missing module never breaks the hook.
+const { swallow, safeUnlink } = (() => {
+  try { return require('./src/swallow'); }
+  catch {
+    return {
+      swallow() {},
+      safeUnlink(file) { try { fs.unlinkSync(file); } catch { /* best-effort */ } },
+    };
+  }
+})();
+
 const LOCK_TTL_MS = 60_000;
 const MAX_EVENTS_PER_RUN = 5;
 
@@ -49,7 +61,7 @@ function compactQueuedExtractBodies(homeDir) {
     record.body = compactedBody;
     try {
       fs.writeFileSync(filePath, JSON.stringify(record, null, 2));
-    } catch {}
+    } catch (err) { swallow('exp-client-drain.persistCompacted', err); }
   }
 }
 
@@ -68,14 +80,14 @@ function acquireLock(homeDir = getHomeDir()) {
   try {
     const stat = fs.statSync(lockPath);
     if ((Date.now() - stat.mtimeMs) < LOCK_TTL_MS) return null;
-  } catch {}
+  } catch { /* no lock file — free to take */ }
   fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, ts: new Date().toISOString() }));
   return lockPath;
 }
 
 function releaseLock(lockPath) {
   if (!lockPath) return;
-  try { fs.unlinkSync(lockPath); } catch {}
+  safeUnlink(lockPath, 'exp-client-drain.releaseLock');
 }
 
 async function main() {

@@ -62,7 +62,9 @@ async function startServer(config) {
   });
 
   let stderr = '';
+  let stdout = '';
   child.stderr.on('data', chunk => { stderr += chunk.toString('utf8'); });
+  child.stdout.on('data', chunk => { stdout += chunk.toString('utf8'); });
 
   const baseUrl = `http://127.0.0.1:${port}`;
   try {
@@ -76,6 +78,7 @@ async function startServer(config) {
     baseUrl,
     child,
     homeDir,
+    get stdout() { return stdout; },
     async stop() {
       child.kill('SIGTERM');
       await new Promise(resolve => child.once('exit', resolve));
@@ -138,6 +141,46 @@ test('protected GET endpoints require auth when token is configured', async () =
     assert.equal(userAuthorized.status, 200);
   } finally {
     await runtime.stop();
+  }
+});
+
+test('near-miss bearer tokens are rejected', async () => {
+  const token = 'test-server-token';
+  const runtime = await startServer({ server: { authToken: token } });
+
+  try {
+    for (const hdr of [`Bearer ${token}x`, `Bearer ${token.slice(0, -1)}`, token, `bearer ${token}`, '']) {
+      const res = await fetch(`${runtime.baseUrl}/api/user`, { headers: { Authorization: hdr } });
+      assert.equal(res.status, 401, `header ${JSON.stringify(hdr)} must not authenticate`);
+    }
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test('binds loopback by default without a token, all interfaces with one', async () => {
+  const unconfigured = await startServer({});
+  try {
+    assert.match(unconfigured.stdout, /"host":"127\.0\.0\.1"/);
+    assert.doesNotMatch(unconfigured.stdout, /server_unauthenticated/);
+  } finally {
+    await unconfigured.stop();
+  }
+
+  const withToken = await startServer({ server: { authToken: 't' } });
+  try {
+    assert.match(withToken.stdout, /"host":"\*"/);
+  } finally {
+    await withToken.stop();
+  }
+});
+
+test('warns when explicitly exposed without a token', async () => {
+  const exposed = await startServer({ server: { host: '0.0.0.0' } });
+  try {
+    assert.match(exposed.stdout, /server_unauthenticated/);
+  } finally {
+    await exposed.stop();
   }
 });
 

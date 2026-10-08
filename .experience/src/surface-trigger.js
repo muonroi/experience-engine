@@ -59,7 +59,9 @@ function _withTimeout(promise, ms) {
  * gitRepoRootOf injected for cross-repo). PURE w.r.t. its own logic — all I/O is
  * in the injected deps.
  *
- * @returns {null} when no trigger fires, or a status object:
+ * @param {{promptText?: string, toolName?: string, toolInput?: object, cwd?: string}} [args]
+ * @param {object} [injected]
+ * @returns {null|object} null when no trigger fires, or a status object:
  *   {unavailable:true}          — risk-triggers module not synced (caller may fall back)
  *   {disabled:true}             — gate turned off via config/env
  *   {error:true}                — detectRiskTriggers threw (already logged)

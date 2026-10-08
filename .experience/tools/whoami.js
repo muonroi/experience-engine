@@ -57,7 +57,7 @@ function doRebuild() {
   }
 
   const { events, skipped } = readActivityEvents(config.getActivityLogPath(), Number.isFinite(sinceMs) ? sinceMs : 0);
-  const { signals, stats } = detectSignals({ transcript, activityEvents: events, now });
+  const { signals, stats } = detectSignals({ transcript, activityEvents: events });
   const profile = aggregateProfile(loadProfile(config.getProfilePath()), signals, { now });
   saveProfile(profile, config.getProfilePath());
 

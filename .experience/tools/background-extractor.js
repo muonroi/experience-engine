@@ -17,7 +17,7 @@
  *   schtasks /create /sc MINUTE /mo 30 /tn "ExperienceExtractor" /tr "node %USERPROFILE%\.experience\tools\background-extractor.js"
  *
  * Setup (cron on Linux/macOS):
- *   */30 * * * * node ~/.experience/tools/background-extractor.js >> ~/.experience/logs/background-extract.log 2>&1
+ *   0,30 * * * * node ~/.experience/tools/background-extractor.js >> ~/.experience/logs/background-extract.log 2>&1
  *
  * Or run continuously with --watch:
  *   node tools/background-extractor.js --watch --interval 1800
@@ -41,6 +41,17 @@ const {
   readMarker,
   writeMarker,
 } = require(path.join(expDir, 'stop-extractor.js'));
+
+// src/swallow.js records errors this file drops on purpose. An install that
+// predates it gets silent no-ops, so a missing module never breaks the hook.
+const { swallow } = (() => {
+  try { return require(path.join(expDir, 'src', 'swallow.js')); }
+  catch {
+    return {
+      swallow() {},
+    };
+  }
+})();
 
 let _remote = null;
 function getRemote() {
@@ -93,7 +104,7 @@ function log(msg) {
   try {
     fs.mkdirSync(path.dirname(LOG_PATH), { recursive: true });
     fs.appendFileSync(LOG_PATH, line + '\n');
-  } catch {}
+  } catch { /* extractor log unwritable — nothing left to report to */ }
 }
 
 async function extractAndStore(transcript, projectPath, meta) {
@@ -128,7 +139,7 @@ function enrichMeta(projectPath) {
     if (fs.existsSync(enrichPath) && projectPath) {
       return require(enrichPath).enrichSourceMeta(null, undefined, projectPath) || {};
     }
-  } catch {}
+  } catch (err) { swallow('background-extractor.enrichSourceMeta', err); }
   return {};
 }
 

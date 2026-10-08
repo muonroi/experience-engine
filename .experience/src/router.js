@@ -10,8 +10,11 @@ const {
   ROUTES_COLLECTION, getExpUser, cfgValue, getConfig,
   getQdrantBase, getQdrantApiKey, getEmbedDim,
   getBrainProvider, getBrainModel, getBrainEndpoint, getBrainKey,
+  numericCfg,
+  defaultBrainEndpoint,
   getOllamaGenerateUrl,
   activityLog,
+  resolveBrainFallbackTarget,
 } = require("./config");
 const { estimateTextUnits, logCostCall, getEmbedding } = require("./embedding");
 const { checkQdrant, fileStoreRead, fileStoreWrite, fileStoreUpsert, searchCollection, buildQdrantUserFilter } = require("./qdrant");
@@ -183,18 +186,85 @@ async function ensureRoutesCollection() {
 
 // Fire once on module load — removes per-call overhead from routeModel()
 ensureRoutesCollection().catch(() => {});
-async function classifyViaBrain(prompt, timeoutMs = 10000, options = {}) {
+// Answer budget for the one-word classifiers. 10 tokens is right for an instruct model
+// and useless for a reasoning one, which spends its whole budget thinking: measured
+// 2026-09-17, step-3.5-flash needed 880 tokens (11.7s) to emit "balanced" and returned an
+// empty string at every smaller budget. Each branch passes its own historical default
+// (HTTP 10, Ollama 5) so an unconfigured box is unchanged.
+//
+// ONE key drives three consumers — the tier classifier (router.js), the route classifier
+// and the PostToolUse judge (judge-worker.js) — so raising it for a reasoning model raises
+// the judge's per-tool-call budget too. That is deliberate: they all talk to the same
+// brainModel, so a model that cannot answer in 10 tokens cannot answer for any of them.
+function classifyMaxTokens(fallback) {
+  return numericCfg('brainClassifyMaxTokens', 'EXPERIENCE_BRAIN_CLASSIFY_MAX_TOKENS', fallback, 1, 32768);
+}
+// …and the matching TIME budget, because tokens alone do not make a reasoning model usable:
+// the same measurement took 11.7s wall, over the 10s default this function used to hardcode.
+// Only the DEFAULT is configurable — a caller that passes its own budget (judge-worker 8s,
+// /api/pil-context 3.5s) keeps it, since those numbers exist to bound a latency the operator
+// did not choose. (/api/route-task does NOT come through here: it calls callBrainWithFallback
+// and has its own routeTaskBrainTimeoutMs.)
+function classifyTimeoutMs(fallback) {
+  return numericCfg('brainClassifyTimeoutMs', 'EXPERIENCE_BRAIN_CLASSIFY_TIMEOUT_MS', fallback, 1000, 600000);
+}
+
+const OPENAI_SHAPED_PROVIDERS = new Set(['siliconflow', 'openai', 'custom', 'deepseek']);
+// Providers this function knows how to reach. A NAMED provider outside the OpenAI-shaped
+// set (gemini takes its key in the query string, claude uses x-api-key and its own body)
+// must not be dragged into the chat/completions branch just because an endpoint is
+// present — that would put its credential on the wire in a scheme it cannot parse.
+// An endpoint with no recognised provider keeps the legacy meaning: OpenAI-shaped.
+const KNOWN_BRAIN_PROVIDERS = new Set([...OPENAI_SHAPED_PROVIDERS, 'ollama', 'gemini', 'claude']);
+
+// Below this much budget left, a fallback call cannot answer and would only add a request.
+const MIN_FALLBACK_BUDGET_MS = 500;
+
+async function classifyViaBrain(prompt, timeoutMs, options = {}) {
+  // A caller-supplied budget wins; otherwise the configurable default applies.
+  const budgetMs = Number(timeoutMs) > 0 ? Number(timeoutMs) : classifyTimeoutMs(10000);
+  const startedAt = Date.now();
+  const result = await classifyOnce(prompt, budgetMs, options);
+  if (result !== null) return result;
+  // A caller that pinned its own target (judge consensus, the PIL classifier, the extract
+  // route of /api/brain) asked THAT model; another one answering would be a silent swap.
+  if (['provider', 'endpoint', 'key', 'model'].some((k) => options[k] !== undefined)) return null;
+  const fallback = resolveBrainFallbackTarget();
+  if (!fallback) return null;
+  const remainingMs = budgetMs - (Date.now() - startedAt);
+  if (remainingMs < MIN_FALLBACK_BUDGET_MS) return null;
+  const fallbackResult = await classifyOnce(prompt, remainingMs, {
+    ...options,
+    provider: fallback.provider,
+    endpoint: fallback.endpoint,
+    key: fallback.key,
+    model: fallback.model,
+  });
+  if (fallbackResult !== null) activityLog({ op: 'brain-fallback', provider: fallback.provider, model: fallback.model, source: 'classify' });
+  return fallbackResult;
+}
+
+async function classifyOnce(prompt, budgetMs, options) {
   // P1 Item 2: optional per-call overrides for cross-model judge consensus.
   // When omitted, falls back to env-driven brain config (existing behavior).
-  const brainProvider = options.provider || getBrainProvider();
-  const endpoint = options.endpoint || getBrainEndpoint();
+  // Normalised once: the config resolver, the default-host table and the BRAIN_FNS lookup
+  // are all case-insensitive, so a raw-case comparison here would let `"Gemini"` walk past
+  // the protocol guard below and put that key on the wire as a Bearer header.
+  const brainProvider = String(options.provider || getBrainProvider() || '').toLowerCase();
+  // A DEFINED override is authoritative even when empty. `||` here used to turn the
+  // extract path's deliberate "no key for this vendor" into "send the hot-path key",
+  // which shipped one provider's secret to another through /api/brain.
+  const endpoint = options.endpoint !== undefined ? options.endpoint : getBrainEndpoint();
   const brainModel = options.model || getBrainModel();
-  const key = options.key || getBrainKey() || '';
+  const key = (options.key !== undefined ? options.key : getBrainKey()) || '';
   const units = estimateTextUnits(prompt, 4000);
 
-  if (brainProvider === 'siliconflow' || endpoint) {
+  // Every OpenAI-shaped provider goes through this branch. Without the provider list a
+  // caller that passes an empty endpoint (meaning "use the provider default") would fall
+  // through to the Ollama branch and silently answer null.
+  if (OPENAI_SHAPED_PROVIDERS.has(brainProvider) || (endpoint && !KNOWN_BRAIN_PROVIDERS.has(brainProvider))) {
     if (!key) return null;
-    const targetEndpoint = endpoint || 'https://api.siliconflow.com/v1/chat/completions';
+    const targetEndpoint = endpoint || defaultBrainEndpoint(brainProvider) || defaultBrainEndpoint('siliconflow');
     const startedAt = Date.now();
     try {
       // Default system prompt is for the tier classifier (fast/balanced/premium).
@@ -204,7 +274,7 @@ async function classifyViaBrain(prompt, timeoutMs = 10000, options = {}) {
       const reqBody = {
         model: brainModel || 'Qwen/Qwen2.5-7B-Instruct',
         messages,
-        max_tokens: options.maxTokens || 10,
+        max_tokens: Number(options.maxTokens) > 0 ? Number(options.maxTokens) : classifyMaxTokens(10),
         temperature: 0.0,
       };
       if (options.responseFormat) reqBody.response_format = options.responseFormat;
@@ -212,7 +282,7 @@ async function classifyViaBrain(prompt, timeoutMs = 10000, options = {}) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
         body: JSON.stringify(reqBody),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: AbortSignal.timeout(budgetMs),
       });
       if (!res.ok) {
         logCostCall('judge', brainProvider, 'judge', units, { ok: false, durationMs: Date.now() - startedAt });
@@ -237,7 +307,7 @@ async function classifyViaBrain(prompt, timeoutMs = 10000, options = {}) {
         model: brainModel || 'qwen2.5:3b',
         prompt: ollamaPrompt,
         stream: false,
-        options: { temperature: 0.0, num_predict: options.maxTokens || 5 },
+        options: { temperature: 0.0, num_predict: Number(options.maxTokens) > 0 ? Number(options.maxTokens) : classifyMaxTokens(5) },
       };
       if (options && options.responseFormat) {
         if (options.responseFormat.type === 'json_object') {
@@ -251,7 +321,7 @@ async function classifyViaBrain(prompt, timeoutMs = 10000, options = {}) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(ollamaBody),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: AbortSignal.timeout(budgetMs),
       });
       if (!res.ok) {
         logCostCall('judge', brainProvider, 'judge', units, { ok: false, durationMs: Date.now() - startedAt });
@@ -440,7 +510,7 @@ function buildModelRoutePrompt(taskText, context) {
 function shouldSkipKeywordModelPrefilter(runtime) {
   return runtime === 'codex';
 }
-async function storeRouteDecision(taskText, taskHash, tier, model, runtime, context, vector) {
+async function storeRouteDecision(taskText, taskHash, tier, model, runtime, context, vector, recorded = null) {
   const id = require('crypto').randomUUID();
   const projectSlug = context?.projectSlug || extractProjectSlug(context?.files?.[0] || '') || null;
   const routeData = {
@@ -448,6 +518,7 @@ async function storeRouteDecision(taskText, taskHash, tier, model, runtime, cont
     source: 'brain', outcome: null, retryCount: 0, duration: null,
     domain: context?.domain || null, projectSlug,
     createdAt: new Date().toISOString(), feedbackAt: null,
+    ...(recorded || {}),
   };
 
   // Qdrant is the primary store; FileStore is the OFFLINE FALLBACK, matching
@@ -691,7 +762,7 @@ async function routeTask(task, context, _runtime) { // runtime reserved for futu
   });
   return fallback;
 }
-async function routeFeedback(taskHash, tier, model, outcome, retryCount, duration) {
+async function routeFeedback(taskHash, tier, model, outcome, retryCount, duration, task = null) {
   if (!taskHash || !outcome) return false;
 
   const validOutcomes = ['success', 'fail', 'retry', 'cancelled'];
@@ -770,8 +841,73 @@ async function routeFeedback(taskHash, tier, model, outcome, retryCount, duratio
     }
   }
 
-  activityLog({ op: 'route-feedback', taskHash, tier, outcome: normalizedOutcome, retryCount: retryCount || 0, duration: duration || null });
-  return found;
+  // A client that routes locally never asked EE, so there is no decision to update.
+  // Measured 2026-09-27: 263 stored decisions, 0 with an outcome, because every
+  // feedback carried a hash EE had never stored. Record the decision with its outcome
+  // instead, so routeHistory has something to learn from.
+  let recorded = false;
+  const taskText = typeof task === 'string' ? task.slice(0, 500) : '';
+  if (!found && taskText && tier) {
+    try {
+      const vector = await getEmbedding(taskText);
+      if (vector) {
+        await storeRouteDecision(taskText, taskHash, tier, model || null, null, null, vector, {
+          source: 'client',
+          outcome: normalizedOutcome,
+          retryCount: retryCount || 0,
+          duration: duration || null,
+          feedbackAt: new Date().toISOString(),
+        });
+        recorded = true;
+      }
+    } catch (err) {
+      log('warn', 'route_feedback_record_failed', { taskHash, error: serializeError(err) });
+    }
+  }
+
+  activityLog({ op: 'route-feedback', taskHash, tier, outcome: normalizedOutcome, retryCount: retryCount || 0, duration: duration || null, recorded });
+  return found || recorded;
+}
+
+const ROUTE_TIERS = ['fast', 'balanced', 'premium'];
+const ROUTE_HISTORY_TOP_K = 10;
+
+// History-only routing advice: one embedding plus one vector search over past decisions
+// that carry an OUTCOME — no LLM. The client decides the tier inside its own turn; this
+// only tells it what happened to similar tasks before.
+//   floorTier:     one above the highest tier a similar task failed on (never go below it)
+//   suggestedTier: the lowest tier a similar task succeeded on with no failure at or
+//                  above it (safe to go down to)
+async function routeHistory(task) {
+  const taskText = String(task || '').slice(0, 500);
+  const empty = (reason) => ({ floorTier: null, suggestedTier: null, matches: 0, reason });
+  if (!taskText) return empty('empty task');
+  const vector = await getEmbedding(taskText);
+  if (!vector) return empty('embedding unavailable');
+  const hits = await searchCollection(ROUTES_COLLECTION, vector, ROUTE_HISTORY_TOP_K);
+  const threshold = getRouterHistoryThreshold();
+  const failed = new Set();
+  const succeeded = new Set();
+  let matches = 0;
+  for (const hit of hits) {
+    if ((hit.score || 0) < threshold) continue;
+    const data = (() => { try { return JSON.parse(hit.payload?.json || '{}'); } catch { return {}; } })();
+    if (!data.outcome || !ROUTE_TIERS.includes(data.tier)) continue;
+    matches++;
+    const negative = data.outcome === 'fail' || data.outcome === 'cancelled' || (data.retryCount || 0) >= 2;
+    (negative ? failed : succeeded).add(ROUTE_TIERS.indexOf(data.tier));
+  }
+  if (matches === 0) return empty('no similar task with a recorded outcome');
+  const highestFailed = failed.size ? Math.max(...failed) : -1;
+  const floorIdx = highestFailed >= 0 ? Math.min(highestFailed + 1, ROUTE_TIERS.length - 1) : -1;
+  const safe = [...succeeded].filter((i) => i > highestFailed);
+  const suggestedIdx = safe.length ? Math.min(...safe) : -1;
+  return {
+    floorTier: floorIdx >= 0 ? ROUTE_TIERS[floorIdx] : null,
+    suggestedTier: suggestedIdx >= 0 ? ROUTE_TIERS[suggestedIdx] : null,
+    matches,
+    reason: `${matches} similar task(s): succeeded on [${[...succeeded].sort().map((i) => ROUTE_TIERS[i])}], failed on [${[...failed].sort().map((i) => ROUTE_TIERS[i])}]`,
+  };
 }
 
 // ============================================================
@@ -789,6 +925,6 @@ module.exports = {
   normalizeTaskRoutePayload, buildTaskRoutePrompt, resolveTierModel,
   resolveTierReasoningEffort, buildModelRoutePrompt,
   shouldSkipKeywordModelPrefilter, storeRouteDecision,
-  routeModel, routeTask, routeFeedback,
+  routeModel, routeTask, routeFeedback, routeHistory,
   detectRuntime, resolveRuntimeFromSourceMeta,
 };

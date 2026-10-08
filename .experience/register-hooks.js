@@ -87,6 +87,16 @@ const AGENTS = [
       if (!cfg.hooks.PostToolUse.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor-post')))) {
         cfg.hooks.PostToolUse.push({ matcher: 'Edit|Write|Bash', hooks: [{ type:'command', command:`node "${interceptorPost}"`, timeout:5 }] });
       }
+      // PostToolUse fires only when a tool SUCCEEDS; failures arrive on the separate
+      // PostToolUseFailure event, which nothing listened to — so the engine never saw
+      // a failed Claude Code tool call. Same script, same matcher; --event=failure
+      // tells interceptor-post.js it is the failure event (it also reads
+      // hook_event_name). It only records the outcome: no reconcile, no judge, so the
+      // verdict pipeline is unchanged. No other runtime has an equivalent event.
+      cfg.hooks.PostToolUseFailure = cfg.hooks.PostToolUseFailure || [];
+      if (!cfg.hooks.PostToolUseFailure.some(h => (h.hooks||[]).some(e => e.command?.includes('interceptor-post')))) {
+        cfg.hooks.PostToolUseFailure.push({ matcher: 'Edit|Write|Bash', hooks: [{ type:'command', command:`node "${interceptorPost}" --event=failure`, timeout:5 }] });
+      }
       // UserPromptSubmit hook injects long-form guidance (multi-paragraph
       // recipe text) at message start. PreToolUse still emits per-tool
       // hints via additionalContext (supported since Claude CLI v2.1.9 —
@@ -190,12 +200,12 @@ const AGENTS = [
       const tomlPath = path.join(home, '.codex', 'config.toml');
       try {
         let toml = '';
-        try { toml = fs.readFileSync(tomlPath, 'utf8'); } catch {}
+        try { toml = fs.readFileSync(tomlPath, 'utf8'); } catch { /* no config.toml yet — start empty */ }
         if (!toml.includes('codex_hooks')) {
           toml += (toml && !toml.endsWith('\n') ? '\n' : '') + '[features]\ncodex_hooks = true\n';
           fs.writeFileSync(tomlPath, toml);
         }
-      } catch {}
+      } catch (err) { console.log('  Codex: could not enable codex_hooks in ' + tomlPath + ': ' + err.message); }
     }
   },
   {
@@ -299,9 +309,17 @@ for (const agent of AGENTS) {
     let cfg = {};
     let exists = false;
     try {
-      cfg = JSON.parse(fs.readFileSync(agent.file, 'utf8'));
-      exists = true;
-    } catch {}
+      const raw = fs.readFileSync(agent.file, 'utf8');
+      if (raw.trim()) {
+        cfg = JSON.parse(raw);
+        exists = true;
+      }
+    } catch (err) {
+      // Missing or empty file = an agent not wired yet. Anything else (unreadable,
+      // or not strict JSON) must skip the agent: patching {} and writing it back
+      // would wipe the user's settings.
+      if (err.code !== 'ENOENT') throw new Error('cannot read ' + agent.file + ' (' + err.message + ') — left unchanged');
+    }
 
     if (mode === 'existing-only') {
       // Upgrade mode: only re-patch if the agent's config file already exists

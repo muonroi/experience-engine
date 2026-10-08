@@ -60,7 +60,7 @@ function outcomeToVerdict(outcome) {
  * @param {object} [payload.evidence] free-form evidence payload (logged only)
  * @param {object} deps
  * @param {Function} deps.recordFeedback — async (collection, pointId, verdict, reason, opts?) => bool
- * @param {Function} [deps.activityLog]   — sync logger
+ * @param {Function} [deps.activityLog]   - sync logger
  *
  * @returns {Promise<{ok: boolean, applied: number, skipped: number, cached?: boolean, error?: string}>}
  */
@@ -91,7 +91,7 @@ async function applyPhaseOutcome(payload, deps) {
   for (const ref of toolEventIds) {
     if (!ref || !ref.collection || !ref.pointId) { skipped++; continue; }
     try {
-      const ok = await deps.recordFeedback(ref.collection, ref.pointId, mapping.verdict, mapping.reason, { source: 'phase-outcome' });
+      const ok = await deps.recordFeedback(ref.collection, ref.pointId, mapping.verdict, mapping.reason, { source: 'phase-outcome', sessionId });
       if (ok) applied++; else skipped++;
     } catch { skipped++; }
   }

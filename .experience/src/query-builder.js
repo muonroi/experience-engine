@@ -276,7 +276,7 @@ function extractBashIntent(command) {
  *
  * @param {string} toolName
  * @param {object} toolInput
- * @param {object} [opts] — { projectSlug, existingSymbols }
+ * @param {object} [opts] - { projectSlug, existingSymbols }
  * @returns {string}
  */
 function buildSemanticQuery(toolName, toolInput, opts = {}) {

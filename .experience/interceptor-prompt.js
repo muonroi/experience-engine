@@ -24,6 +24,18 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+// src/swallow.js records errors this file drops on purpose. An install that
+// predates it gets silent no-ops, so a missing module never breaks the hook.
+const { swallow, safeUnlink } = (() => {
+  try { return require('./src/swallow'); }
+  catch {
+    return {
+      swallow() {},
+      safeUnlink(file) { try { fs.unlinkSync(file); } catch { /* best-effort */ } },
+    };
+  }
+})();
+
 const EXP_DIR = path.join(os.homedir(), '.experience');
 const DEBUG_LOG = process.env.EXPERIENCE_HOOK_DEBUG_LOG || path.join(os.homedir(), '.codex', 'log', 'experience-hook-debug.jsonl');
 
@@ -74,7 +86,7 @@ function debugLog(event) {
   try {
     fs.mkdirSync(path.dirname(DEBUG_LOG), { recursive: true });
     fs.appendFileSync(DEBUG_LOG, JSON.stringify({ ts: new Date().toISOString(), hook: 'interceptor-prompt', ...event }) + '\n');
-  } catch {}
+  } catch { /* debug log unwritable — nothing left to report to */ }
 }
 
 function activityLog(event) {
@@ -84,7 +96,7 @@ function activityLog(event) {
     if (typeof core._activityLog === 'function') {
       core._activityLog({ op: 'hook', hook: 'interceptor-prompt', ...event });
     }
-  } catch {}
+  } catch { /* no local core on a thin client — the server keeps the activity log */ }
 }
 
 function writeLastSuggestionsState(tool, surfacedIds, sourceMeta, promptMeta = {}) {
@@ -113,7 +125,7 @@ function writeLastSuggestionsState(tool, surfacedIds, sourceMeta, promptMeta = {
       surfaced: surfacedIds.slice(0, 8).map(s => ({ collection: s.collection, pointId: String(s.id || '').slice(0, 8) })),
       ...sourceMeta
     });
-  } catch {}
+  } catch (err) { swallow('interceptor-prompt.writeSuggestionsState', err); }
 }
 
 function statePath() {
@@ -129,7 +141,7 @@ function readLastSuggestionsState() {
 }
 
 function deleteLastSuggestionsState() {
-  try { fs.unlinkSync(statePath()); } catch {}
+  safeUnlink(statePath(), 'interceptor-prompt.unlinkState');
 }
 
 function isPromptOnlyState(state) {
@@ -275,12 +287,12 @@ function suppressHookOutput() {
     return true;
   };
 
-  process.stdout.write = ((chunk, encoding, callback) => {
+  process.stdout.write = /** @type {any} */ ((chunk, encoding, callback) => {
     if (typeof encoding === 'function') encoding();
     if (typeof callback === 'function') callback();
     return capture('stdout', chunk);
   });
-  process.stderr.write = ((chunk, encoding, callback) => {
+  process.stderr.write = /** @type {any} */ ((chunk, encoding, callback) => {
     if (typeof encoding === 'function') encoding();
     if (typeof callback === 'function') callback();
     return capture('stderr', chunk);
@@ -322,6 +334,24 @@ function _loadInstalled(rel) {
   }
 }
 const _surfaceTrigger = _loadInstalled('src/surface-trigger.js');
+
+// Session-holdout arm (docs/specs/2026-09-25-hint-lift-and-bayesian-confidence.md
+// §3 A3): a control session gets no passive engine output, so neither the risk
+// gate (with its targeted auto-recall) nor the legacy recall nudge. The server's
+// `experiment` marker decides and is remembered; local mode computes the same arm
+// from the same config; on a timed-out passive search, the remembered arm.
+function resolveExperimentArm(sessionId, marker) {
+  const remote = getRemoteClient();
+  if (marker && typeof marker.arm === 'string') {
+    try { if (remote) remote.rememberExperimentArm(sessionId, marker); } catch (err) { swallow('interceptor-prompt.rememberExperimentArm', err); }
+    return marker.arm;
+  }
+  if (!isRemoteMode()) {
+    const experiment = _loadInstalled('src/experiment.js');
+    try { return experiment ? (experiment.holdoutArm(sessionId)?.arm || null) : null; } catch { return null; }
+  }
+  try { return remote ? remote.recallExperimentArm(sessionId) : null; } catch { return null; }
+}
 // Default 2500ms: a fast recall (options.fast → no brain LLM rerank) returns in
 // ~1.5-2s, so this delivers the [id col] payload while keeping the synchronous
 // UserPromptSubmit hook responsive. The old 1500ms could not fit even a fast
@@ -496,12 +526,13 @@ process.stdin.on('end', async () => {
       if (remote) {
         const config = remote.loadConfig();
         if (remote.isRemoteEnabled(config)) {
-          try { await remote.flushQueueForHook({ config }); } catch {}
+          try { await remote.flushQueueForHook({ config }); } catch (err) { swallow('interceptor-prompt.flushQueue', err); }
           return remote.postJsonForHook('/api/intercept', {
           toolName: 'UserPrompt',
           toolInput,
           cwd: data.cwd || process.cwd(),
           ...sourceMeta,
+          hookEvent: 'UserPromptSubmit',
           }, { config });
         }
       }
@@ -519,7 +550,7 @@ process.stdin.on('end', async () => {
         activityLog({ stage: 'skip', reason: 'interceptWithMeta not exported', ...sourceMeta });
         return null;
       }
-      return interceptWithMeta('UserPrompt', toolInput, ctrl.signal, sourceMeta);
+      return interceptWithMeta('UserPrompt', toolInput, ctrl.signal, sourceMeta, { hookEvent: 'UserPromptSubmit' });
     })().catch(error => {
       if (ctrl.signal.aborted) {
         debugLog({ stage: 'aborted', message: error?.message || String(error) });
@@ -573,7 +604,7 @@ process.stdin.on('end', async () => {
       try {
         const remote = getRemoteClient();
         if (remote) remote.maybeSpawnExtractDrain();
-      } catch {}
+      } catch (err) { swallow('interceptor-prompt.spawnExtractDrain', err); }
       debugLog({ stage: 'done', hasSuggestions: !!suggestions, hasRoute: !!routeInfo });
       activityLog({
         stage: 'done',
@@ -603,6 +634,13 @@ process.stdin.on('end', async () => {
     } else {
       debugLog({ stage: 'passive_timeout', note: 'continuing to risk gate' });
       activityLog({ stage: 'passive_timeout', ...sourceMeta });
+    }
+
+    // Holdout control session: stop here — no risk gate, no auto-recall, no nudge.
+    if (resolveExperimentArm(sourceMeta.sourceSession, passiveTimedOut ? null : resultMeta?.experiment) === 'control') {
+      debugLog({ stage: 'experiment_control', note: 'no passive output' });
+      activityLog({ stage: 'experiment_control', ...sourceMeta });
+      process.exitCode = 0; return;
     }
 
     // Conditional risk gate — fires only on a deterministic trigger (keyword/cross-repo).

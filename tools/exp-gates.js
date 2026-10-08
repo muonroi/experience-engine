@@ -103,7 +103,7 @@ function computeDedupAndHygiene(points) {
 
   for (const point of points) {
     let data = {};
-    try { data = JSON.parse(point.payload?.json || '{}'); } catch {}
+    try { data = JSON.parse(point.payload?.json || '{}'); } catch { /* malformed payload — treat as empty */ }
     if (isPlaceholderLesson(data)) lowQualityCount++;
     const trigger = normalizeText(data.trigger);
     const solution = normalizeText(data.solution);
@@ -161,7 +161,7 @@ function computeOrganicExtractionStats(points, assessQuality) {
   };
   for (const point of points) {
     let data = {};
-    try { data = JSON.parse(point.payload?.json || '{}'); } catch {}
+    try { data = JSON.parse(point.payload?.json || '{}'); } catch { /* malformed payload — treat as empty */ }
     if (data.createdFrom !== 'session-extractor') continue;
     stats.totalOrganic++;
     if (!assessQuality || assessQuality(data)?.ok) stats.qualityOrganic++;
@@ -179,7 +179,7 @@ function computePrincipleQualityStats(points) {
   };
   for (const point of points) {
     let data = {};
-    try { data = JSON.parse(point.payload?.json || '{}'); } catch {}
+    try { data = JSON.parse(point.payload?.json || '{}'); } catch { /* malformed payload — treat as empty */ }
     const hasFailureMode = !!String(data.failureMode || '').trim();
     const hasJudgment = !!String(data.judgment || '').trim();
     const hasConditions = Array.isArray(data.conditions) && data.conditions.length > 0;
@@ -200,7 +200,7 @@ function computeNovelProofStats(points) {
   };
   for (const point of points) {
     let data = {};
-    try { data = JSON.parse(point.payload?.json || '{}'); } catch {}
+    try { data = JSON.parse(point.payload?.json || '{}'); } catch { /* malformed payload — treat as empty */ }
     const evidence = data.novelCaseEvidence || {};
     const holdoutMatched = Number(evidence.holdoutMatchedCount) || 0;
     const holdoutTested = Number(evidence.holdoutTestedCount) || 0;
@@ -364,7 +364,7 @@ async function checkGates(options = {}) {
   try {
     const data = await qdrantGet(qdrantBase, qdrantKey, '/collections');
     qdrantOk = !!data?.result?.collections;
-  } catch {}
+  } catch { /* unreachable — qdrantOk stays false */ }
   results.gate1.checks.push({
     name: 'Qdrant reachable',
     target: 'Collections accessible',
@@ -379,7 +379,7 @@ async function checkGates(options = {}) {
   try {
     const vec = await homeCore.getEmbeddingRaw('gate check probe');
     embedOk = vec && vec.length > 0;
-  } catch {}
+  } catch { /* embed failed — embedOk stays false */ }
   results.gate1.checks.push({
     name: 'Embed API works',
     target: 'Returns vector',
@@ -401,7 +401,7 @@ async function checkGates(options = {}) {
       brainOk = !!result && typeof result === 'object' && Object.keys(result).length > 0;
       if (!brainOk && attempt < 2) await new Promise((resolve) => setTimeout(resolve, 350));
     }
-  } catch {}
+  } catch { /* brain failed — brainOk stays false */ }
   results.gate1.checks.push({
     name: 'Brain API works',
     target: 'Returns JSON',

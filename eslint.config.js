@@ -1,6 +1,5 @@
 /**
- * ESLint flat config — compatible with ESLint v9+.
- * Mirrors the rules from .eslintrc.json (legacy format for ESLint v8).
+ * ESLint flat config (ESLint v9+). `npm run lint` covers the whole repo.
  */
 'use strict';
 
@@ -56,7 +55,21 @@ module.exports = [
       'no-eval': 'error',
       'no-implied-eval': 'error',
       'no-new-func': 'error',
+      // A dropped error needs a reason: record it with .experience/src/swallow.js,
+      // or leave a comment in the catch saying why it is expected.
+      'no-empty': ['error', { allowEmptyCatch: false }],
     },
+  },
+  {
+    files: ['**/*.mjs'],
+    languageOptions: { sourceType: 'module' },
+  },
+  {
+    // Test cleanup (rmSync of a temp dir, closing a server) may drop errors.
+    files: ['tests/**'],
+    rules: { 'no-empty': ['error', { allowEmptyCatch: true }] },
+  },
+  {
     ignores: ['node_modules/', 'coverage/'],
   },
 ];

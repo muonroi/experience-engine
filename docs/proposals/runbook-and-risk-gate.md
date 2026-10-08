@@ -42,7 +42,7 @@ two parallel systems.
 | `handleRecall` does **NOT** emit an `activity.jsonl` row, and CLI sends `sourceSession:null` | `server.js:1104-1145,1118` |
 | `signal-detector.detectSignals({transcript, activityEvents})` already parses activity rows; today it filters only `op==='hook' && hook==='interceptor-prompt'` | `.experience/src/signal-detector.js:115,156,249` |
 | Provenance is carried by `createdFrom` (seed-org-doc, doc-to-experience, session-extractor, evolution-abstraction, bulk-seed, imported, seed-common-doc) | grep across `.experience/*.js` |
-| Derived-entry synthesis already has a precedent: scroll a collection → derive a NEW entry with `createdFrom` + `derivedFromId` | `.experience/doc-to-experience.js:24-29,136,267` |
+| Derived-entry synthesis already has a precedent: scroll a collection → derive a NEW entry with `createdFrom` + `derivedFromId` | `scripts/maintenance/doc-to-experience.js:24-29,136,267` |
 | Memory format already supports `[[name]]` cross-links | `~/.claude/.../memory/*.md`, SessionStart brief `GET /api/graph?id=` |
 
 ## 3. Design

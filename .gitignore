@@ -16,3 +16,10 @@ health-check.sh
 .quick-codex-lock/
 fixtures/config-vps.json
 .experience/.bulk-extract-marker.json
+
+# Generated / scratch artifacts
+coverage/
+*.bak
+/scroll-*.json
+/stats.json
+*.egg-info/

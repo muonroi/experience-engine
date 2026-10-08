@@ -86,10 +86,10 @@ async function sendFeedback(payload, homeDir = os.homedir()) {
   });
   const text = await res.text();
   let json = null;
-  try { json = JSON.parse(text); } catch {}
+  try { json = JSON.parse(text); } catch { /* non-JSON body — the status check below reports it */ }
   if (!res.ok) {
     const message = json?.error || text || `HTTP ${res.status}`;
-    const error = new Error(message);
+    const error = /** @type {Error & {status?: number}} */ (new Error(message));
     error.status = res.status;
     throw error;
   }

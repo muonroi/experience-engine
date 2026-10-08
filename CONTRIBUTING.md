@@ -18,14 +18,19 @@ bash .experience/setup.sh --local   # Docker Qdrant + Ollama
 ## Running Tests
 
 ```bash
-node tools/test-server.js       # REST API tests (49 assertions)
-node tools/test-scoring.js      # Anti-noise scoring tests
-node tools/test-context.js      # Context-aware query tests
-node tools/test-activity-log.js # Activity logging tests
-node tools/test-exp-stats.js    # Observability CLI tests
+npm run test:ci     # every test suite
+npm run test:coverage  # test:ci under c8 with the coverage gate CI enforces
+npm run lint        # ESLint over the whole repo; an empty catch must say why
+npm test            # tests/*.test.js         — server, CLI, integration
+npm run test:unit   # tests/runtime/*.test.js — hook runtime (.experience/)
+npm run test:tools  # tests/tools/*.test.js   — operator tools (tools/)
 ```
 
-All tests must pass with zero dependencies — Node.js 20+ only.
+New tests go under `tests/` (`tests/runtime/` for `.experience/` code, `tests/tools/`
+for `tools/`), named `*.test.js`. `tests/manual/` holds scripts that need real local
+session data and are not run in CI.
+
+All tests must pass with zero dependencies — Node.js 22+ only.
 
 ## Code Style
 
@@ -70,3 +75,30 @@ Start a [Discussion](https://github.com/muonroi/experience-engine/discussions) w
 - The most surprising novel case a principle caught
 
 This helps validate the "experience > memory" thesis with real data.
+
+## Releasing
+
+Releases are published by `.github/workflows/release.yml` when a tag is pushed.
+
+**npm package** (`@muonroi/experience-engine`):
+
+```bash
+npm version <patch|minor|major> -m "chore(release): v%s"   # bumps package.json, syncs openapi.yaml, commits, tags
+git push origin develop --follow-tags
+```
+
+The workflow checks the tag equals `package.json`, runs the CI suite, publishes with
+npm provenance and creates the GitHub release.
+
+**Python SDK** (`muonroi-experience`): bump `version` in `sdk/python/pyproject.toml` and
+`__version__` in `sdk/python/muonroi_experience/__init__.py`, commit, then
+`git tag python-sdk-vX.Y.Z && git push origin python-sdk-vX.Y.Z`.
+
+One-time setup by a maintainer:
+
+- npm: on npmjs.com, add `muonroi/experience-engine` / `release.yml` / environment `npm`
+  as a Trusted Publisher — or store an automation token as the `NPM_TOKEN` secret.
+- PyPI: on pypi.org, add `muonroi/experience-engine` / `release.yml` / environment `pypi`
+  as a Trusted Publisher.
+- GitHub: create the `npm` and `pypi` environments (Settings → Environments); add
+  required reviewers there if releases should need approval.

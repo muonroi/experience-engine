@@ -24,22 +24,30 @@
  *   - Audit log written to ~/.experience/reset-ignore-<iso>.jsonl
  *   - --collection limits scope
  *   - --min-ignore N only resets entries with ignoreCount >= N
+ *
+ * --beta also clears the NEGATIVE side of betaEvidence (neg = 0, negative session
+ * entries dropped) on the same entries. Without it the Beta confidence model
+ * would keep charging an entry for the very pre-fix noise this reset exists to
+ * forget (docs/specs/2026-09-25-hint-lift-and-bayesian-confidence.md §3 B1).
  */
 
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+const { clearNegativeEvidence } = require('../.experience/src/beta-evidence');
+
 const COLLECTIONS_DEFAULT = ['experience-principles', 'experience-behavioral', 'experience-selfqa'];
 const SCROLL_BATCH = 128;
 
 function parseArgs(argv) {
-  const args = { apply: false, minIgnore: 1, collection: null, qdrantUrl: null, qdrantKey: null };
+  const args = { apply: false, beta: false, minIgnore: 1, collection: null, qdrantUrl: null, qdrantKey: null };
   for (let i = 2; i < argv.length; i++) {
     const k = argv[i];
     const next = () => argv[++i];
     switch (k) {
       case '--apply':       args.apply = true; break;
+      case '--beta':        args.beta = true; break;
       case '--min-ignore':  args.minIgnore = parseInt(next(), 10) || 1; break;
       case '--collection':  args.collection = next(); break;
       case '--qdrant-url':  args.qdrantUrl = next(); break;
@@ -48,6 +56,7 @@ function parseArgs(argv) {
       case '-h':
         process.stdout.write(`exp-reset-ignore-count.js — DRY-RUN by default.\n\n` +
           `  --apply                actually write payload updates\n` +
+          `  --beta                 also clear betaEvidence.neg (negative evidence)\n` +
           `  --min-ignore N         only reset entries with ignoreCount >= N (default 1)\n` +
           `  --collection <name>    limit to one collection (default: all 3)\n` +
           `  --qdrant-url <url>     override (default from config)\n` +
@@ -73,6 +82,19 @@ async function qdrantPost(qdrantUrl, qdrantKey, urlPath, body) {
   });
   if (!res.ok) throw new Error(`qdrant ${res.status} ${res.statusText}`);
   return res.json();
+}
+
+/**
+ * The reset applied to one entry's parsed payload. Pure: returns a new object.
+ * @param {object} data
+ * @param {{beta?: boolean}} [opts]
+ */
+function resetPointData(data, opts = {}) {
+  const nextData = Object.assign({}, data, { ignoreCount: 0 });
+  // Also reset noiseReasonCounts because those drive shouldSuppressForNoise.
+  if (nextData.noiseReasonCounts) nextData.noiseReasonCounts = {};
+  if (opts.beta) clearNegativeEvidence(nextData);
+  return nextData;
 }
 
 async function* scrollCollection(qdrantUrl, qdrantKey, collection) {
@@ -102,7 +124,7 @@ async function main() {
   const audit = fs.createWriteStream(auditPath, { flags: 'a' });
 
   const summary = { scanned: 0, eligible: 0, reset: 0, errors: 0, totalIgnoreCleared: 0 };
-  process.stdout.write(`mode: ${args.apply ? 'APPLY' : 'DRY-RUN'}\n`);
+  process.stdout.write(`mode: ${args.apply ? 'APPLY' : 'DRY-RUN'}${args.beta ? ' (+ betaEvidence.neg)' : ''}\n`);
   process.stdout.write(`min-ignore: ${args.minIgnore}\n`);
   process.stdout.write(`audit: ${auditPath}\n\n`);
 
@@ -118,12 +140,11 @@ async function main() {
       audit.write(JSON.stringify({
         ts: new Date().toISOString(), coll, id: point.id,
         before, after: 0, applied: args.apply,
+        ...(args.beta ? { betaNegBefore: data.betaEvidence && Number.isFinite(data.betaEvidence.neg) ? data.betaEvidence.neg : null } : {}),
       }) + '\n');
       if (args.apply) {
         try {
-          const nextData = Object.assign({}, data, { ignoreCount: 0 });
-          // Also reset noiseReasonCounts because those drive shouldSuppressForNoise.
-          if (nextData.noiseReasonCounts) nextData.noiseReasonCounts = {};
+          const nextData = resetPointData(data, { beta: args.beta });
           await qdrantPost(qdrantUrl, qdrantKey, `/collections/${coll}/points/payload`, {
             points: [point.id],
             payload: { json: JSON.stringify(nextData) },
@@ -141,4 +162,8 @@ async function main() {
   process.stdout.write(`\nsummary: ${JSON.stringify(summary, null, 2)}\n`);
 }
 
-main().catch(err => { console.error(err); process.exit(1); });
+if (require.main === module) {
+  main().catch(err => { console.error(err); process.exit(1); });
+}
+
+module.exports = { parseArgs, resetPointData };

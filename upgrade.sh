@@ -63,6 +63,9 @@ done
 
 step() { printf '\n[upgrade] %s\n' "$*"; }
 
+# --sync-only extracts sessions from the checked-out code; it never pulls.
+if [ "$SYNC_ONLY" = "true" ]; then DO_PULL=false; fi
+
 # ── Step 1: git pull (optional) ────────────────────────────────────────────
 if [ "$DO_PULL" = "true" ]; then
   if [ -d "$REPO_DIR/.git" ]; then
@@ -79,10 +82,6 @@ fi
 
 # ── Sync-only shortcut ──────────────────────────────────────────────────────
 if [ "$SYNC_ONLY" = "true" ]; then
-  if [ "$DO_PULL" = "true" ] && [ -d "$REPO_DIR/.git" ]; then
-    step "Pulling latest from origin..."
-    git -C "$REPO_DIR" pull --ff-only
-  fi
   # Jump straight to session sync
   BULK_EXTRACT="$REPO_DIR/.experience/tools/bulk-extract.js"
   IMPORT_MEMORY="$REPO_DIR/.experience/tools/import-memory.js"
@@ -119,7 +118,7 @@ if [ -f "$CONFIG_PATH" ]; then
   # in the case statement with no useful error.
   if ! command -v node >/dev/null 2>&1; then
     echo "[upgrade] Node.js is required to detect install mode but was not found in PATH." >&2
-    echo "[upgrade] Install Node.js 20+ and re-run: bash upgrade.sh" >&2
+    echo "[upgrade] Install Node.js 22+ and re-run: bash upgrade.sh" >&2
     exit 1
   fi
   if ! MODE=$(node -e "

@@ -487,13 +487,6 @@ const CSS = `
   .surface .query { color: #444; flex: 1; }
 `;
 
-/**
- * Render full HTML page from dashboard snapshot.
- *
- * @param {object} snapshot — matches schema.md top-level shape
- * @returns {string} self-contained HTML document
- */
-
 function renderStore(store) {
   if (!store || !store.total) {
     return '<section><h2>D. Store Distribution</h2><p class="muted">No store data available.</p></section>';
@@ -508,39 +501,39 @@ function renderStore(store) {
 
   const tierRows = Object.entries(store.tiers)
     .map(function(pair) {
-      var k = pair[0], v = pair[1];
-      var label = tierLabels[k] || k;
-      var pctVal = store.total > 0 ? ((v / store.total) * 100).toFixed(1) + '%' : '\u2014';
-      var cls = k === 't0_new' ? 'muted' : k === 't2_active' ? 'good' : k === 't3_dying' ? 'bad' : '';
+      const k = pair[0], v = pair[1];
+      const label = tierLabels[k] || k;
+      const pctVal = store.total > 0 ? ((v / store.total) * 100).toFixed(1) + '%' : '\u2014';
+      const cls = k === 't0_new' ? 'muted' : k === 't2_active' ? 'good' : k === 't3_dying' ? 'bad' : '';
       return '<tr><td>' + escapeHtml(label) + '</td><td class="num ' + cls + '">' + v + '</td><td class="num muted">' + pctVal + '</td></tr>';
     }).join('');
 
-  var typeRows = Object.entries(store.types)
+  const typeRows = Object.entries(store.types)
     .sort(function(a, b) { return b[1] - a[1]; })
     .map(function(pair) {
-      var k = pair[0], v = pair[1];
-      var pctVal = store.total > 0 ? ((v / store.total) * 100).toFixed(1) + '%' : '\u2014';
+      const k = pair[0], v = pair[1];
+      const pctVal = store.total > 0 ? ((v / store.total) * 100).toFixed(1) + '%' : '\u2014';
       return '<tr><td>' + escapeHtml(k) + '</td><td class="num">' + v + '</td><td class="num muted">' + pctVal + '</td></tr>';
     }).join('');
 
-  var q = store.quality;
-  var qualityItems = [
+  const q = store.quality;
+  const qualityItems = [
     ['project_slug', q.withSlug],
     ['structured conditions', q.withStructuredCond],
     ['lang (not "all")', q.withLang],
     ['judgment', q.withJudgment],
   ];
-  var qualityRows = qualityItems.map(function(item) {
-    var label = item[0], v = item[1];
-    var pctVal = store.total > 0 ? ((v / store.total) * 100).toFixed(1) + '%' : '\u2014';
-    var cls = store.total > 0 && v / store.total >= 0.95 ? 'good' : store.total > 0 && v / store.total >= 0.7 ? 'warn' : 'bad';
+  const qualityRows = qualityItems.map(function(item) {
+    const label = item[0], v = item[1];
+    const pctVal = store.total > 0 ? ((v / store.total) * 100).toFixed(1) + '%' : '\u2014';
+    const cls = store.total > 0 && v / store.total >= 0.95 ? 'good' : store.total > 0 && v / store.total >= 0.7 ? 'warn' : 'bad';
     return '<tr><td>' + escapeHtml(label) + '</td><td class="num">' + v + '/' + store.total + '</td><td class="num ' + cls + '">' + pctVal + '</td></tr>';
   }).join('');
 
-  var colRows = Object.entries(store.collections)
+  const colRows = Object.entries(store.collections)
     .map(function(pair) {
-      var col = pair[0], cs = pair[1];
-      var topType = Object.entries(cs.types).sort(function(a, b) { return b[1] - a[1]; })[0];
+      const col = pair[0], cs = pair[1];
+      const topType = Object.entries(cs.types).sort(function(a, b) { return b[1] - a[1]; })[0];
       return '<tr><td>' + escapeHtml(col.replace('experience-', '')) + '</td><td class="num">' + cs.total + '</td><td class="num">' + cs.tiers.t0_new + '</td><td class="num">' + cs.tiers.t1_bootstrap + '</td><td class="num">' + cs.tiers.t2_active + '</td><td class="num">' + cs.tiers.t3_dying + '</td><td class="muted">' + (topType ? escapeHtml(topType[0]) + ' (' + topType[1] + ')' : '\u2014') + '</td></tr>';
     }).join('');
 
@@ -578,6 +571,59 @@ function renderStore(store) {
     + '</section>';
 }
 
+function renderSrm(srm) {
+  if (!srm || srm.pValue == null) return '<span class="muted">—</span>';
+  const cls = srm.mismatch ? 'bad' : 'good';
+  const label = srm.mismatch ? 'MISMATCH' : 'ok';
+  return `<span class="${cls}">${label}</span> <span class="muted">(observed ${pct(srm.observedShare)} vs ${pct(srm.expectedShare)}, p=${srm.pValue < 0.0001 ? '<0.0001' : srm.pValue.toFixed(4)})</span>`;
+}
+
+function renderArmRows(arms) {
+  return arms.map(([name, a]) => `<tr><td>${escapeHtml(name)}</td><td class="num">${a.sessions}</td><td class="num">${a.eligibleSessions}</td><td class="num">${a.classifiedCalls}</td><td class="num">${a.unclassifiedCalls}</td></tr>`).join('');
+}
+
+// Section X — ADR-004 experiment progress and health. No outcome comparison here:
+// that is exp-engine-lift.js's, once, at the pre-registered end date.
+function renderExperiment(x) {
+  if (!x || (!x.active && !x.events)) return '';
+  const head = '<tr><th>Arm</th><th class="num">Sessions</th><th class="num">Eligible</th><th class="num">Classified calls</th><th class="num">Unclassified</th></tr>';
+  const swallowRows = Object.entries(x.swallowed.bySite)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td class="num bad">${v}</td></tr>`)
+    .join('') || '<tr><td colspan="2" class="muted">None in this window.</td></tr>';
+  const logLine = x.log
+    ? `${escapeHtml(x.log.path)} — ${x.events} events in ${x.log.files} file(s)${x.log.files === 0 ? ' <span class="bad">(no log found)</span>' : ''}`
+    : `${x.events} events`;
+  const model = x.model ? `
+      <div>
+        <h3>Confidence model (${escapeHtml(x.config.confidenceModel)})</h3>
+        <table><thead>${head}</thead><tbody>${renderArmRows([['beta', x.model.beta], ['legacy', x.model.legacy]])}</tbody></table>
+        <p>Split: ${renderSrm(x.model.srm)}</p>
+      </div>` : '';
+  return `
+  <section>
+    <h2>X. Experiment (ADR-004) — ${escapeHtml(x.status)}</h2>
+    <p class="muted">${escapeHtml(x.note)} Holdout share ${pct(x.config.holdoutShare)}, confidence model ${escapeHtml(x.config.confidenceModel)}${x.holdout.salt ? `, salt ${escapeHtml(x.holdout.salt)}` : ''}. Running ${x.daysRunning.toFixed(1)} days${x.sessionsPerWeek != null ? `, ${x.sessionsPerWeek.toFixed(0)} sessions/week` : ''}. Log: ${logLine}.</p>
+    <div class="grid-2">
+      <div>
+        <h3>Session holdout</h3>
+        <table><thead>${head}</thead><tbody>${renderArmRows([['control', x.holdout.control], ['treatment', x.holdout.treatment]])}</tbody></table>
+        <p>Split: ${renderSrm(x.holdout.srm)}${x.holdout.otherSaltSessions ? ` · <span class="warn">${x.holdout.otherSaltSessions} sessions under another salt</span>` : ''}</p>
+      </div>${model}
+      <div>
+        <h3>Dropped errors on experiment paths</h3>
+        <table><thead><tr><th>Call site</th><th class="num">Count</th></tr></thead><tbody>${swallowRows}</tbody></table>
+      </div>
+    </div>
+  </section>`;
+}
+
+/**
+ * Render full HTML page from dashboard snapshot.
+ *
+ * @param {object} snapshot - matches schema.md top-level shape
+ * @returns {string} self-contained HTML document
+ */
 function renderHtml(snapshot) {
   const generated = snapshot.generatedAt || new Date().toISOString();
   const win = snapshot.dataWindow || {};
@@ -595,6 +641,7 @@ function renderHtml(snapshot) {
 <p class="muted">Generated <strong>${escapeHtml(generated)}</strong> · window ${escapeHtml(win.days || '?')}d (${escapeHtml(win.since || '?')} → ${escapeHtml(win.until || '?')}) · schema v${escapeHtml(snapshot.version || '?')}</p>
 
 ${renderGates(snapshot.gates || {})}
+${renderExperiment(snapshot.experiment)}
 ${renderPrecisionSince(snapshot.precisionSince)}
 ${renderStore(snapshot.store || {})}
 ${renderPrecision(snapshot.precision || {})}
@@ -609,4 +656,4 @@ ${renderSessions(snapshot.sessions || { items: [] })}
 </html>`;
 }
 
-module.exports = { renderHtml };
+module.exports = { renderHtml, renderExperiment };

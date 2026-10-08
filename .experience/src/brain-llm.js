@@ -9,11 +9,15 @@ const { estimateTextUnits, logCostCall } = require('./embedding');
 const { log, serializeError } = require('./logger');
 
 const cfgValue = _config.cfgValue;
+const numericCfg = _config.numericCfg;
 const getBrainProvider = _config.getBrainProvider;
 const getBrainModel = _config.getBrainModel;
 const getBrainModelForSource = _config.getBrainModelForSource;
 const getBrainEndpoint = _config.getBrainEndpoint;
 const getBrainKey = _config.getBrainKey;
+const resolveBrainTarget = _config.resolveBrainTarget;
+const resolveBrainFallbackTarget = _config.resolveBrainFallbackTarget;
+const defaultBrainEndpoint = _config.defaultBrainEndpoint;
 const getOllamaGenerateUrl = _config.getOllamaGenerateUrl;
 const activityLog = _config.activityLog;
 
@@ -34,29 +38,89 @@ const BRAIN_FNS = {
   custom:      brainOpenAI,   // OpenAI-compatible API
 };
 
+// One explicit time budget for the extract/evolve path, so routing it to another provider
+// cannot silently shrink it to that provider's own default (see callBrainWithFallback).
+// Configurable because the right number is a property of the MODEL, not of this code: a
+// reasoning model spends most of its budget thinking before it emits a token. Measured
+// 2026-09-17 on a real extract prompt at EXTRACT_CONCURRENCY=4 — step-3.7-flash took
+// 36-52s per call and was cut off by the 45s default, losing the extraction. Raise
+// brainExtractTimeoutMs for such a model: /api/extract ACKs asynchronously (server.js
+// answers before extractFromSession runs), so a server-side budget above the thin client's
+// 60s serverExtractTimeoutMs never blocks a caller — the client is waiting on the ACK, not
+// on the brain.
+const DEFAULT_EXTRACT_BRAIN_TIMEOUT_MS = 45000;
+// Band, not just a positivity check: below 1s no provider can answer, and above 10min the
+// value is a unit mistake. numericCfg explains what each rejected shape used to do.
+function getExtractBrainTimeoutMs() {
+  return numericCfg('brainExtractTimeoutMs', 'EXPERIENCE_BRAIN_EXTRACT_TIMEOUT_MS',
+    DEFAULT_EXTRACT_BRAIN_TIMEOUT_MS, 1000, 600000);
+}
+// Answer budget for the hint-relevance filter. Same reason: a reasoning model needs room
+// to think before the answer, and 120 tokens buys it nothing but an empty string. Each
+// branch passes its own historical default (HTTP 120, Ollama 20) so an unconfigured box is
+// byte-identical; the knob overrides both.
+function getRelevanceMaxTokens(fallback = 120) {
+  return numericCfg('brainRelevanceMaxTokens', 'EXPERIENCE_BRAIN_RELEVANCE_MAX_TOKENS',
+    fallback, 1, 32768);
+}
+
 // Fallback config: primary provider → fallback provider
 function getBrainFallback() {
-  return cfgValue('brainFallback', 'EXPERIENCE_BRAIN_FALLBACK', getBrainProvider() === 'ollama' ? '' : 'ollama');
+  return _config.getBrainFallbackProvider();
 }
 
 async function callBrainWithFallback(prompt, meta = {}) {
-  const brainProvider = getBrainProvider();
-  const fallbackProvider = getBrainFallback();
-  const primary = BRAIN_FNS[brainProvider] || BRAIN_FNS.ollama;
-  const units = estimateTextUnits(prompt, 4000);
-
   // Source-aware model selection: extract+evolve get the larger pattern-abstraction
   // model; intercept-filter/judge/route stay on the cheaper hot-path model.
   const source = meta.source || 'general';
   const model = getBrainModelForSource(source);
 
+  // The extract model may live on a DIFFERENT provider/endpoint/key than the hot-path
+  // brain (e.g. hot-path Qwen on SiliconFlow, extract on DeepSeek's native API). Routing
+  // the model name ALONE sends a DeepSeek model id to SiliconFlow, which answers
+  // 400 "Model does not exist" — measured on the VPS 2026-09-16, it silently cost every
+  // extraction. resolveBrainTarget resolves provider+endpoint+key+model as one unit, and
+  // returns the hot-path values verbatim when no extract provider is configured, so a
+  // single-provider box is unchanged.
+  const isExtractSource = source === 'extract' || source === 'evolve';
+  const hotProvider = getBrainProvider();
+  const target = resolveBrainTarget(source);
+  // Lowercased: the config resolver is case-insensitive, so `DeepSeek` must not resolve
+  // a perfect target and then execute on the ollama fallback, discarding endpoint and key.
+  const primary = BRAIN_FNS[String(target.provider || '').toLowerCase()] || BRAIN_FNS.ollama;
+  const units = estimateTextUnits(prompt, 4000);
+  // Every field travels: an endpoint resolved to '' tells the client to use its OWN
+  // default host, and a key resolved to '' is authoritative (fail closed), because the
+  // config crossed a vendor boundary without supplying one.
+  const providerOpts = { endpoint: target.endpoint, key: target.key };
+  if (target.keySuppressed) {
+    log('warn', 'brain_extract_key_suppressed', {
+      provider: target.provider,
+      hotProvider,
+      reason: 'brainExtractKey unset while the extract path targets another provider/origin — refusing to send the hot-path key',
+    });
+  }
+  // The fallback is the DEGRADED path, so for extraction it is the hot-path brain itself
+  // whenever extraction was routed elsewhere (hot model + hot credentials); otherwise it is
+  // the configured fallback target, resolved with its own endpoint, key and model.
+  const fallback = isExtractSource && target.provider !== hotProvider
+    ? { provider: hotProvider, model: getBrainModel() }
+    : resolveBrainFallbackTarget();
+  const fallbackProvider = fallback ? fallback.provider : '';
+
   // Allow callers (e.g. route-task) to enforce tighter time budgets than the default 15s.
-  const timeoutMs = Number(meta.timeoutMs ?? 0);
+  // Extraction has no caller-supplied budget, so without an explicit one it would inherit
+  // whichever per-provider default the routing landed on (15s on DeepSeek, 30s on the
+  // OpenAI-shaped client, 90s on Ollama) — i.e. moving the SLOWER extract model onto the
+  // SHORTER budget. Pin one budget for the extract path so routing cannot change it.
+  const timeoutMs = meta.timeoutMs != null
+    ? Number(meta.timeoutMs)
+    : (isExtractSource ? getExtractBrainTimeoutMs() : 0);
   const signal = meta.signal || (Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined);
 
   let startedAt = Date.now();
-  let result = await primary(prompt, { signal, model });
-  logCostCall('brain', brainProvider, source, units, {
+  let result = await primary(prompt, { signal, model, ...providerOpts });
+  logCostCall('brain', target.provider, source, units, {
     ok: !!result,
     phase: 'primary',
     model,
@@ -64,28 +128,45 @@ async function callBrainWithFallback(prompt, meta = {}) {
   });
   if (result) return result;
 
-  activityLog({ op: 'brain-failure', provider: brainProvider, phase: 'primary', model });
-  if (fallbackProvider && BRAIN_FNS[fallbackProvider]) {
+  activityLog({ op: 'brain-failure', provider: target.provider, phase: 'primary', model });
+  if (fallbackProvider && BRAIN_FNS[String(fallbackProvider).toLowerCase()]) {
     startedAt = Date.now();
-    result = await BRAIN_FNS[fallbackProvider](prompt, { signal, model });
+    // Never the extract model or extract KEY: sending the extract model here is what
+    // produced the original 400 "Model does not exist", and the extract key would hand
+    // one provider's secret to another. A degraded fallback is the point of a fallback.
+    const fallbackModel = fallback.model;
+    const fallbackOpts = { signal, model: fallbackModel };
+    if (fallback.endpoint !== undefined) {
+      fallbackOpts.endpoint = fallback.endpoint;
+      fallbackOpts.key = fallback.key;
+    }
+    if (fallback.keySuppressed) {
+      log('warn', 'brain_fallback_key_suppressed', {
+        provider: fallbackProvider,
+        hotProvider,
+        reason: 'brainFallbackKey unset while the fallback targets another provider/origin — refusing to send the hot-path key',
+      });
+    }
+    result = await BRAIN_FNS[String(fallbackProvider).toLowerCase()](prompt, fallbackOpts);
     logCostCall('brain', fallbackProvider, source, units, {
       ok: !!result,
       phase: 'fallback',
-      model,
+      model: fallbackModel,
       durationMs: Date.now() - startedAt,
     });
     if (result) {
-      activityLog({ op: 'brain-fallback', provider: fallbackProvider, model });
+      activityLog({ op: 'brain-fallback', provider: fallbackProvider, model: fallbackModel });
       return result;
     }
-    activityLog({ op: 'brain-failure', provider: fallbackProvider, phase: 'fallback', model });
+    activityLog({ op: 'brain-failure', provider: fallbackProvider, phase: 'fallback', model: fallbackModel });
   }
   return null;
 }
 
 // P6: Brain relevance filter — lightweight brain call to check if suggestions match the action
 // Input: the action query + numbered warnings. Output: which numbers are relevant.
-// Timeout: 3s (tight — fail-open if brain is slow). Cost: ~80 tokens input, ~5 tokens output.
+// Timeout: relevanceTimeoutMs (default 6.5s, fail-open if the brain is slow). Answer
+// budget: brainRelevanceMaxTokens (default 120 on HTTP, 20 on Ollama).
 async function brainRelevanceFilter(actionQuery, suggestionLines, signal, projectSlug) {
   if (!suggestionLines || suggestionLines.length === 0) return null;
 
@@ -130,7 +211,7 @@ Reply with the relevant warning numbers separated by commas (e.g. "1,3"), or "no
       const res = await fetch(getOllamaGenerateUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: getBrainModel(), prompt, stream: false, options: { temperature: 0.1, num_predict: 20 } }),
+        body: JSON.stringify({ model: getBrainModel(), prompt, stream: false, options: { temperature: 0.1, num_predict: getRelevanceMaxTokens(20) } }),
         signal: signal || AbortSignal.timeout(relevanceTimeout),
       });
       if (!res.ok) {
@@ -139,11 +220,13 @@ Reply with the relevant warning numbers separated by commas (e.g. "1,3"), or "no
       }
       response = (await res.json()).response || '';
     } else {
-      const endpoint = getBrainEndpoint() || 'https://api.openai.com/v1/chat/completions';
+      // Per-PROVIDER default: the generic OpenAI host would send a SiliconFlow key to
+      // api.openai.com on any box that leaves brainEndpoint unset.
+      const endpoint = getBrainEndpoint() || defaultBrainEndpoint(getBrainProvider());
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getBrainKey()}` },
-        body: JSON.stringify({ model: getBrainModel(), messages: [{ role: "user", content: prompt }], temperature: 0.1, max_tokens: 120 }),
+        body: JSON.stringify({ model: getBrainModel(), messages: [{ role: "user", content: prompt }], temperature: 0.1, max_tokens: getRelevanceMaxTokens(120) }),
         signal: signal || AbortSignal.timeout(relevanceTimeout),
       });
       if (!res.ok) {
@@ -381,7 +464,7 @@ async function brainOllama(prompt, opts = {}) {
     });
     if (!res.ok) return null;
     const text = (await res.json()).response || '';
-    try { return JSON.parse(text); } catch {}
+    try { return JSON.parse(text); } catch { /* not bare JSON — try the first {...} block below */ }
     const m = text.match(/\{[\s\S]*\}/);
     return m ? JSON.parse(m[0]) : null;
   } catch { return null; }
@@ -389,7 +472,13 @@ async function brainOllama(prompt, opts = {}) {
 
 async function brainOpenAI(prompt, opts = {}) {
   // Reused for any OpenAI-compatible API (OpenAI, SiliconFlow, Together, Groq, etc.)
-  const endpoint = getBrainEndpoint() || 'https://api.openai.com/v1/chat/completions';
+  // opts.endpoint/opts.key let a caller route this call to a provider other than the
+  // hot-path brain (the extract path does). A DEFINED opts value is authoritative even
+  // when empty: '' means "use my own default host", NOT "fall back to the hot-path host"
+  // — falling back there is exactly how an extract model reached the wrong vendor.
+  const endpoint = (opts.endpoint !== undefined ? opts.endpoint : getBrainEndpoint())
+    || defaultBrainEndpoint(getBrainProvider()) || defaultBrainEndpoint('openai');
+  const key = opts.key !== undefined ? opts.key : getBrainKey();
   const model = opts.model || getBrainModel() || 'gpt-4o-mini';
   const body = { model, messages: [{ role:'user', content: prompt }], temperature: 0.3 };
   // Only add json_object mode for known-supporting providers (OpenAI, DeepSeek)
@@ -399,7 +488,7 @@ async function brainOpenAI(prompt, opts = {}) {
   try {
     const res = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getBrainKey()}` },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
       body: JSON.stringify(body),
       signal: opts.signal || AbortSignal.timeout(30000),
     });
@@ -413,7 +502,7 @@ async function brainOpenAI(prompt, opts = {}) {
       return null;
     }
     const text = (await res.json()).choices?.[0]?.message?.content || '';
-    try { return JSON.parse(text); } catch {}
+    try { return JSON.parse(text); } catch { /* not bare JSON — try the first {...} block below */ }
     const m = text.match(/\{[\s\S]*\}/);
     return m ? JSON.parse(m[0]) : null;
   } catch (err) {
@@ -428,7 +517,15 @@ async function brainOpenAI(prompt, opts = {}) {
 async function brainGemini(prompt, opts = {}) {
   try {
     const model = opts.model || getBrainModel() || 'gemini-2.0-flash';
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${getBrainKey()}`, {
+    // opts.key MUST win here: this provider puts the credential in the URL, so reading
+    // the hot-path key while a caller routed the call elsewhere would hand one provider's
+    // secret to Google, in a query string every proxy logs.
+    const key = opts.key !== undefined ? opts.key : getBrainKey();
+    // Only an explicitly non-empty endpoint is used, and resolveBrainTarget never sends
+    // one here: this client speaks Google's path-shaped protocol, so a chat/completions
+    // URL from another vendor would both break the call and put this key on that host.
+    const base = (opts.endpoint || defaultBrainEndpoint('gemini')).replace(/\/+$/, '');
+    const res = await fetch(`${base}/${model}:generateContent?key=${key}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0.3 } }),
@@ -442,9 +539,12 @@ async function brainGemini(prompt, opts = {}) {
 
 async function brainClaude(prompt, opts = {}) {
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    // Same rule as brainGemini: a caller that routed this call to another provider must
+    // supply that provider's key, or the hot-path secret crosses an origin boundary.
+    // As with Gemini: a non-empty override only; this client speaks Anthropic's schema.
+    const res = await fetch(opts.endpoint || defaultBrainEndpoint('claude'), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': getBrainKey(), 'anthropic-version': '2023-06-01' },
+      headers: { 'Content-Type': 'application/json', 'x-api-key': opts.key !== undefined ? opts.key : getBrainKey(), 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({ model: opts.model || getBrainModel() || 'claude-haiku-4-5-20251001', max_tokens: 512, messages: [{ role:'user', content: prompt }] }),
       signal: opts.signal || AbortSignal.timeout(15000),
     });
@@ -457,10 +557,13 @@ async function brainClaude(prompt, opts = {}) {
 
 async function brainDeepSeek(prompt, opts = {}) {
   try {
-    const endpoint = getBrainEndpoint() || 'https://api.deepseek.com/chat/completions';
+    // opts.endpoint/opts.key: same cross-provider routing as brainOpenAI — the extract
+    // path targets DeepSeek's native API while the hot-path brain stays on SiliconFlow.
+    const endpoint = (opts.endpoint !== undefined ? opts.endpoint : getBrainEndpoint())
+      || defaultBrainEndpoint('deepseek');
     const res = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getBrainKey()}` },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${opts.key !== undefined ? opts.key : getBrainKey()}` },
       body: JSON.stringify({ model: opts.model || getBrainModel() || 'deepseek-chat', messages: [{ role:'user', content: prompt }], temperature: 0.3, response_format: { type:'json_object' } }),
       signal: opts.signal || AbortSignal.timeout(15000),
     });
@@ -477,7 +580,7 @@ async function brainDeepSeek(prompt, opts = {}) {
     const dsResp = await res.json();
     const dsMsg = dsResp.choices?.[0]?.message || {};
     const text = dsMsg.content || '{}';
-    try { return JSON.parse(text); } catch {}
+    try { return JSON.parse(text); } catch { /* not bare JSON — try the first {...} block below */ }
     const m = text.match(/\{[\s\S]*\}/);
     return m ? JSON.parse(m[0]) : null;
   } catch (err) {
@@ -494,6 +597,8 @@ async function brainDeepSeek(prompt, opts = {}) {
 
 module.exports = {
   BRAIN_FNS,
+  getExtractBrainTimeoutMs,
+  getRelevanceMaxTokens,
   getBrainFallback,
   callBrainWithFallback,
   brainRelevanceFilter,

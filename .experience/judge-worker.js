@@ -16,6 +16,18 @@ const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
 
+// src/swallow.js records errors this file drops on purpose. An install that
+// predates it gets silent no-ops, so a missing module never breaks the hook.
+const { swallow, safeUnlink } = (() => {
+  try { return require('./src/swallow'); }
+  catch {
+    return {
+      swallow() {},
+      safeUnlink(file) { try { fs.unlinkSync(file); } catch { /* best-effort */ } },
+    };
+  }
+})();
+
 const EXP_DIR   = path.join(os.homedir(), '.experience');
 const queueFile = process.argv[2];
 const VALID_NOISE_REASONS = new Set(['wrong_repo', 'wrong_language', 'wrong_task', 'stale_rule']);
@@ -209,12 +221,13 @@ async function main() {
   let data;
   try {
     data = JSON.parse(fs.readFileSync(normalised, 'utf8'));
-  } catch {
-    try { fs.unlinkSync(normalised); } catch {}
+  } catch (err) {
+    swallow('judge-worker.readPayload', err);
+    safeUnlink(normalised, 'judge-worker.unlinkPayload');
     process.exit(0);
   }
 
-  const { surfacedIds = [], toolName = '', toolInput = '', toolInputObj = {}, toolOutcome = null } = data;
+  const { surfacedIds = [], toolName = '', toolInput = '', toolInputObj = {}, toolOutcome = null, sourceSession = null } = data;
 
   // Load core functions from experience-core.js
   let classifyViaBrain, recordJudgeFeedback, activityLog, extractProjectPath, extractProjectSlug, detectContext, assessHintUsage;
@@ -227,13 +240,14 @@ async function main() {
     extractProjectSlug  = core._extractProjectSlug;
     detectContext       = core._detectContext;
     assessHintUsage     = core._assessHintUsage;
-  } catch {
-    try { fs.unlinkSync(normalised); } catch {}
+  } catch (err) {
+    swallow('judge-worker.loadCore', err);
+    safeUnlink(normalised, 'judge-worker.unlinkPayload');
     process.exit(0);
   }
 
   if (typeof classifyViaBrain !== 'function' || typeof recordJudgeFeedback !== 'function') {
-    try { fs.unlinkSync(normalised); } catch {}
+    safeUnlink(normalised, 'judge-worker.unlinkPayload');
     process.exit(0);
   }
 
@@ -374,13 +388,15 @@ async function main() {
           toolOutcome,
         });
       }
-      await recordJudgeFeedback(collection, id, verdict, noiseReason);
+      // sourceSession: one betaEvidence outcome per (session, point) — a judge
+      // verdict must not stack on an explicit verdict for the same session.
+      await recordJudgeFeedback(collection, id, verdict, noiseReason, { sessionId: sourceSession });
     } catch {
       // Ignore — feedback failure must not crash worker
     }
   }));
 
-  try { fs.unlinkSync(normalised); } catch {}
+  safeUnlink(normalised, 'judge-worker.unlinkPayload');
   process.exit(0);
 }
 

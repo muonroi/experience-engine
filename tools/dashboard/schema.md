@@ -329,6 +329,40 @@ Useful for spreadsheet analysis or `pandas.read_csv(URL)`.
 
 ---
 
+## Section X — `experiment` (since v1.2)
+
+ADR-004 experiment progress and health, from `tools/dashboard/experiment.js`.
+**Monitoring only**: arm volumes, the split check and dropped errors — never which
+arm fails less. That comparison is `tools/exp-engine-lift.js`'s, once, at the
+pre-registered end date. The HTML section is omitted when no experiment is
+configured and the log is empty.
+
+```jsonc
+{
+  "status": "monitoring, not a decision",
+  "note": "Outcomes are compared only by tools/exp-engine-lift.js at the pre-registered end date (ADR-004).",
+  "active": true,                       // experimentHoldoutShare > 0 or confidenceModel != legacy
+  "config": { "holdoutShare": 0.2, "confidenceModel": "ab", "abShare": 0.5 },
+  "log": { "path": "~/.experience/experiment.jsonl", "files": 2 },  // resolved as the writer does
+  "events": 18380,
+  "firstSessionAt": "ISO-8601", "lastEventAt": "ISO-8601",
+  "daysRunning": 18.9, "sessionsPerWeek": 148,
+  "mutatingOutcomes": 7919,
+  "holdout": {
+    "salt": "v1", "otherSaltSessions": 0,
+    "control":   { "sessions": 86,  "eligibleSessions": 77,  "classifiedCalls": 1738, "unclassifiedCalls": 42 },
+    "treatment": { "sessions": 314, "eligibleSessions": 290, "classifiedCalls": 5935, "unclassifiedCalls": 204 },
+    // Sample-ratio mismatch: chi-square (1 dof) of observed vs configured share.
+    // mismatch = p < 0.001 → sessions lost or mislabelled in one arm; the analysis would be biased.
+    "srm": { "expectedShare": 0.2, "observedShare": 0.215, "chi2": 0.56, "pValue": 0.45, "mismatch": false }
+  },
+  "model": { "beta": { ... }, "legacy": { ... }, "srm": { ... } },   // null unless model arms were logged
+  "swallowed": { "total": 1, "bySite": { "interceptor.rememberExperimentArm": 1 } }  // op:'swallowed' on experiment paths
+}
+```
+
+---
+
 ## Section M — `meta`
 
 Build-time debug info for reproducibility.

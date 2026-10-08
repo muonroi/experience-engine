@@ -101,7 +101,7 @@ function toolResultBlock(content) {
  * @param {Array}  opts.blocks    - content blocks (use the *Block builders)
  * @returns {string|null} path written, or null if skipped/failed.
  */
-function appendRuntimeEvent({ runtime, sessionId, cwd, role, blocks } = {}) {
+function appendRuntimeEvent({ runtime, sessionId, cwd, role, blocks } = /** @type {any} */ ({})) {
   try {
     if (runtime !== 'antigravity') return null;            // scope guard — other runtimes untouched
     if (!isEnabled()) return null;                         // EE opt-in gate

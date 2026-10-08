@@ -6,6 +6,17 @@ const os = require('os');
 const path = require('path');
 const { compactTranscript } = require('./extract-compact');
 
+// src/swallow.js records errors this file drops on purpose. An install that
+// predates it gets silent no-ops, so a missing module never breaks the hook.
+const { swallow } = (() => {
+  try { return require('./src/swallow'); }
+  catch {
+    return {
+      swallow() {},
+    };
+  }
+})();
+
 const crypto = require('crypto');
 
 const MIN_NEW_LINES = 5;
@@ -57,7 +68,7 @@ async function maybeWarnIfStale(homeDir = getHomeDir(), remote, config) {
   try {
     const markerPath = getVersionCheckMarkerPath(homeDir);
     let lastChecked = 0;
-    try { lastChecked = fs.statSync(markerPath).mtimeMs; } catch {}
+    try { lastChecked = fs.statSync(markerPath).mtimeMs; } catch { /* no marker yet — never checked */ }
     const now = Date.now();
     if (now - lastChecked < 24 * 60 * 60 * 1000) return;  // cooldown
     const installedAt = config?.installedAt ? new Date(config.installedAt).getTime() : now;
@@ -205,7 +216,7 @@ function resolveGeminiProjectPath(dirName, homeDir) {
     for (const [absPath, slug] of Object.entries(projects)) {
       if (slug === dirName) return absPath;
     }
-  } catch {}
+  } catch (err) { swallow('stop-extractor.resolveGeminiProject', err); }
   return null;
 }
 
@@ -273,7 +284,7 @@ function buildGeminiSessionData(logPath) {
     // New format: each line is a JSON object (message)
     const lines = readJsonlLines(logPath);
     for (const line of lines) {
-      try { messages.push(JSON.parse(line)); } catch {}
+      try { messages.push(JSON.parse(line)); } catch { /* skip a torn or partial line */ }
     }
   } else {
     // Old format: single JSON file with messages array
@@ -367,7 +378,7 @@ function findAllRecentSessions(homeDir = getHomeDir(), now = Date.now(), maxAgeM
       const head = fs.readFileSync(f.file, 'utf8').split('\n', 1)[0];
       const meta = head ? JSON.parse(head) : null;
       if (meta && meta.type === 'session_meta' && typeof meta.cwd === 'string') cwd = meta.cwd;
-    } catch {}
+    } catch { /* unreadable or non-JSON head — keep the fallback cwd */ }
     sessions.push({ runtime: 'muonroi-cli', file: f.file, mtimeMs: f.mtimeMs, projectPath: cwd });
   }
 
@@ -382,7 +393,7 @@ function findAllRecentSessions(homeDir = getHomeDir(), now = Date.now(), maxAgeM
       const head = fs.readFileSync(f.file, 'utf8').split('\n', 1)[0];
       const meta = head ? JSON.parse(head) : null;
       if (meta && meta.type === 'session_meta' && typeof meta.cwd === 'string') cwd = meta.cwd;
-    } catch {}
+    } catch { /* unreadable or non-JSON head — keep the fallback cwd */ }
     sessions.push({ runtime: 'antigravity', file: f.file, mtimeMs: f.mtimeMs, projectPath: cwd });
   }
 
@@ -666,7 +677,7 @@ async function extractAndStore(homeDir, session, sessionData, sourceKind) {
     const extractTimeoutMs = typeof remote.getExtractTimeoutMs === 'function'
       ? remote.getExtractTimeoutMs(config)
       : undefined;
-    try { await remote.flushQueue({ homeDir, config, timeoutMs: extractTimeoutMs }); } catch {}
+    try { await remote.flushQueue({ homeDir, config, timeoutMs: extractTimeoutMs }); } catch (err) { swallow('stop-extractor.flushQueue', err); }
     const body = {
       transcript,
       projectPath,
@@ -682,13 +693,13 @@ async function extractAndStore(homeDir, session, sessionData, sourceKind) {
         if (meta && meta.lang) body.lang = meta.lang;
         if (meta && meta.framework) body.framework = meta.framework;
       }
-    } catch {}
+    } catch (err) { swallow('stop-extractor.enrichSourceMeta', err); }
     try {
       const result = await remote.postJson('/api/extract', body, { homeDir, config, timeoutMs: extractTimeoutMs });
       count = result?.stored || 0;
     } catch (error) {
       remote.queueRequest('POST', '/api/extract', body, { homeDir });
-      try { remote.maybeSpawnExtractDrain({ homeDir, config }); } catch {}
+      try { remote.maybeSpawnExtractDrain({ homeDir, config }); } catch (err) { swallow('stop-extractor.spawnExtractDrain', err); }
     }
   } else {
     const { extractFromSession } = getCore(homeDir);
@@ -848,7 +859,7 @@ async function main() {
     if (remote && remote.isRemoteEnabled(remote.loadConfig(homeDir))) {
       await maybeWarnIfStale(homeDir, remote, remote.loadConfig(homeDir));
     }
-  } catch {}
+  } catch (err) { swallow('stop-extractor.staleVersionCheck', err); }
 
   if (isBackfill) {
     if (result.processed > 0 || result.extracted > 0) {

@@ -355,6 +355,9 @@ fi
 #   - profile-render.js  "Who Am I" v4.0 slice 2 — pure profile→directive renderer
 #                        the SessionStart hook loads when privacyLevel != off to
 #                        inject the on-device "Developer Profile (live)" block
+#   - swallow.js         records errors the hooks and remote-client drop on purpose
+#   - bayes.js           unitHash, so remote-client can compute a new session's
+#                        holdout arm from the last experiment marker
 THIN_SAFE_SRC=(
   config.js
   risk-triggers.js
@@ -362,6 +365,8 @@ THIN_SAFE_SRC=(
   signal-detector.js
   profile-model.js
   profile-render.js
+  swallow.js
+  bayes.js
 )
 mkdir -p "$INSTALL_DIR/src"
 for f in "${THIN_SAFE_SRC[@]}"; do

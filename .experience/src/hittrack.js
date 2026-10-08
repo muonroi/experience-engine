@@ -9,6 +9,7 @@ const _qdrant = require('./qdrant');
 const _session = require('./session');
 const _noise = require('./noise');
 const _activity = require('./activity');
+const _betaEvidence = require('./beta-evidence');
 
 const { ensureSignalMetrics, ensureNovelCaseEvidence, isPrincipleLikeEntry } = _format;
 const { updatePointPayload } = _qdrant;
@@ -22,7 +23,13 @@ function getValidatedHitCount(data) {
   return 0;
 }
 
-function applyHitUpdate(data) {
+// betaEvidence (spec §3 B1): every writer below passes its source. The evidence
+// handle is taken BEFORE the legacy mutation — applyHitUpdate zeroes ignoreCount,
+// and the first-write initialisation must see the counters as they were.
+// `evidence` is optional so the many existing callers that pass applyHitUpdate
+// straight to updatePointPayload record nothing extra.
+function applyHitUpdate(data, evidence = null) {
+  const handle = evidence ? _betaEvidence.beginBetaEvidence(data, evidence.source) : null;
   ensureSignalMetrics(data);
   data.validatedCount = (data.validatedCount || 0) + 1;
   data.hitCount = data.validatedCount;
@@ -33,7 +40,17 @@ function applyHitUpdate(data) {
   if (data.confirmedAt.length > 50) data.confirmedAt = data.confirmedAt.slice(-50);
   const confidenceFloor = 0.50 + Math.min(0.18, (data.validatedCount || 0) * 0.04);
   data.confidence = Math.max(Number(data.confidence || 0), confidenceFloor);
+  if (handle) _betaEvidence.recordBetaEvidence(data, handle, { sessionId: evidence.sessionId, sign: 1 });
   return data;
+}
+
+// Legacy noise-source names → betaEvidence sources. 'followed' from an implicit
+// source would be a touch; the implicit writers use applyHitUpdateWithContext.
+function betaSourceFor(source, disposition) {
+  if (source === 'manual') return 'manual';
+  if (source === 'judge') return 'judge';
+  if (source === 'implicit-posttool' || source === 'prompt-stale') return disposition === 'followed' ? 'implicit-touch' : 'implicit-noise';
+  return null;
 }
 
 function applySurfaceUpdate(data) {
@@ -90,9 +107,10 @@ function recordNovelCaseEvidence(data, context = {}) {
   return data;
 }
 
+// Implicit touch (reconcilePendingHints): the deterministic path/lang match.
 function applyHitUpdateWithContext(context = {}) {
   return function applyHitWithContext(data) {
-    applyHitUpdate(data);
+    applyHitUpdate(data, { source: 'implicit-touch', sessionId: context.sourceSession || null });
     const projectSlug = String(context.projectSlug || '').trim();
     if (projectSlug) {
       if (!Array.isArray(data.confirmedProjects)) data.confirmedProjects = [];
@@ -119,12 +137,18 @@ function applyHitUpdateWithContext(context = {}) {
   };
 }
 
+// options.sessionId: one betaEvidence outcome per (session, point).
+// options.betaSource: override the evidence source (recordFeedback maps
+// phase-outcome verdicts, which legacy files under 'manual', to 'judge').
 function applyNoiseDispositionData(disposition, source = 'manual', reason = null, options = {}) {
   return function applyNoiseDisposition(data) {
     const normalizedDisposition = normalizeNoiseDisposition(disposition);
     if (!normalizedDisposition) return data;
+    const betaSource = options.betaSource || betaSourceFor(source, normalizedDisposition);
+    const handle = betaSource ? _betaEvidence.beginBetaEvidence(data, betaSource) : null;
     if (normalizedDisposition === 'followed') {
       applyHitUpdate(data);
+      _betaEvidence.recordBetaEvidence(data, handle, { sessionId: options.sessionId, sign: 1 });
       return data;
     }
     if (normalizedDisposition === 'ignored') incrementIgnoreCountData(data);
@@ -134,6 +158,7 @@ function applyNoiseDispositionData(disposition, source = 'manual', reason = null
       if (options.countIrrelevant) incrementIrrelevantData(data);
     }
     recordNoiseMetadataData(data, source, reason);
+    _betaEvidence.recordBetaEvidence(data, handle, { sessionId: options.sessionId, sign: -1 });
     return data;
   };
 }
@@ -142,8 +167,9 @@ function incrementIrrelevantWithReasonData(reason) {
   return applyNoiseDispositionData('irrelevant', 'manual', reason);
 }
 
-async function recordHit(collection, pointId) {
-  await updatePointPayload(collection, pointId, applyHitUpdate);
+// An explicit API hit (no in-tree caller today) is a manual confirmation.
+async function recordHit(collection, pointId, options = {}) {
+  await updatePointPayload(collection, pointId, (data) => applyHitUpdate(data, { source: 'manual', sessionId: options.sessionId || null }));
 }
 
 async function recordSurface(collection, pointId) {
@@ -154,6 +180,8 @@ async function recordHoldoutOutcome(collection, pointId, outcome = {}) {
   await updatePointPayload(collection, pointId, (data) => recordHoldoutOutcomeOnData(data, outcome));
 }
 
+// Session-repeat flag (trackSuggestions' third re-show). Deliberately NO
+// betaEvidence: its weight is 0 — re-showing a hint says nothing about the hint.
 async function incrementIgnoreCount(collection, pointId) {
   await updatePointPayload(collection, pointId, incrementIgnoreCountData);
 }
@@ -165,11 +193,17 @@ async function recordFeedback(collection, pointId, verdictOrFollowed, reason = n
   const normalizedReason = verdict === 'IRRELEVANT' ? normalizeNoiseReason(reason) : null;
   const source = options.source === 'judge' ? 'judge' : 'manual';
   const callerContext = options.callerContext || null;
+  // Evidence source: phase-outcome is an automated outcome mapping, not an
+  // explicit verdict, so it weighs like the judge rather than like a human.
+  const evidenceOpts = {
+    sessionId: options.sessionId || null,
+    betaSource: options.source === 'phase-outcome' ? 'judge' : source,
+  };
   const baseUpdateFn = verdict === 'FOLLOWED'
-    ? applyNoiseDispositionData('followed', source, null)
+    ? applyNoiseDispositionData('followed', source, null, evidenceOpts)
     : verdict === 'IGNORED'
-      ? applyNoiseDispositionData('ignored', source, null)
-      : applyNoiseDispositionData('irrelevant', source, normalizedReason);
+      ? applyNoiseDispositionData('ignored', source, null, evidenceOpts)
+      : applyNoiseDispositionData('irrelevant', source, normalizedReason, evidenceOpts);
 
   // Wrap to also append caller context to noiseContextHistory (capped at 50
   // entries to avoid unbounded growth). Future evolve step consumes this to
@@ -217,10 +251,10 @@ async function recordFeedback(collection, pointId, verdictOrFollowed, reason = n
   return true;
 }
 
-async function recordJudgeFeedback(collection, pointId, verdict, reason = null) {
+async function recordJudgeFeedback(collection, pointId, verdict, reason = null, options = {}) {
   const normalized = normalizeFeedbackVerdict(verdict);
   if (!normalized) return false;
-  return recordFeedback(collection, pointId, normalized, reason, { source: 'judge' });
+  return recordFeedback(collection, pointId, normalized, reason, { source: 'judge', sessionId: options.sessionId || null });
 }
 
 module.exports = {

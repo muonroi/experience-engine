@@ -260,7 +260,7 @@ function killTunnel() {
     setTimeout(() => {
       try {
         procToKill.kill('SIGKILL');
-      } catch (e) {}
+      } catch { /* already exited */ }
     }, 2000);
     sshProcess = null;
   }
@@ -284,7 +284,7 @@ process.on('exit', () => {
   if (sshProcess) {
     try {
       sshProcess.kill('SIGKILL');
-    } catch(e) {}
+    } catch { /* already exited */ }
   }
 });
 

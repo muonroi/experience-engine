@@ -61,7 +61,7 @@ async function ensureCollection(baseUrl, apiKey, snapshot) {
   try {
     await qdrantRequest(baseUrl, apiKey, `/collections/${snapshot.name}`);
     return;
-  } catch {}
+  } catch { /* collection absent — create it below */ }
 
   const vectors = snapshot?.meta?.config?.params?.vectors || snapshot?.meta?.config?.vectors;
   if (!vectors) throw new Error(`cannot restore ${snapshot.name}: missing vector config`);

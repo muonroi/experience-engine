@@ -184,7 +184,7 @@ records:
 ${recordsYaml}
 `;
 
-const root = path.join(__dirname, '..');
+const root = path.join(__dirname, '..', 'assets', 'demo');
 const ymlPath = path.join(root, 'demo.yml');
 fs.writeFileSync(ymlPath, yaml, 'utf8');
 
@@ -200,7 +200,7 @@ try {
   });
   console.log('\n✓ demo.gif created');
   console.log('');
-  console.log('Update README to reference: ![Demo](demo.gif)');
+  console.log('Update README to reference: ![Demo](assets/demo/demo.gif)');
 } catch (err) {
   console.error('\n✗ terminalizer render failed:', err.message);
   console.log('');

@@ -70,3 +70,24 @@ test('omits PostToolBatch when EXP_INTERCEPTOR_BATCH is absent (backward compati
   assert.ok(!hooks.PostToolBatch || hooks.PostToolBatch.length === 0, 'no PostToolBatch wired');
   assert.ok(hasCmd(hooks.PreToolUse, 'interceptor'), 'other hooks still wired');
 });
+
+test('leaves a settings file that is not strict JSON untouched', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ee-rh-badjson-'));
+  const file = path.join(home, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const original = '{\n  // user comment\n  "model": "opus",\n  "permissions": { "allow": ["Bash(ls)"] }\n}\n';
+  fs.writeFileSync(file, original);
+  runRegister(home);
+
+  assert.equal(fs.readFileSync(file, 'utf8'), original, 'user settings were not overwritten');
+});
+
+test('wires an agent whose settings file exists but is empty', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ee-rh-empty-'));
+  const file = path.join(home, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, '');
+  runRegister(home);
+
+  assert.ok(hasCmd(claudeHooks(home).PreToolUse, 'interceptor'), 'PreToolUse wired');
+});

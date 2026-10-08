@@ -115,7 +115,7 @@ async function main() {
       if (action === 'new') stats.new++; else if (action === 'upsert') stats.upserted++; else stats.skippedUnchanged++;
       if (args.verbose) console.log(`  ${action.padEnd(9)} T${mapped.tier} [${mapped.type}] ${record.name} → ${record.projectSlug || '(no-scope)'}`);
     }
-    summarize(stats, true, thinClient);
+    summarize(stats, true);
     return;
   }
 
@@ -160,7 +160,7 @@ async function main() {
   }
 
   writeMarker(marker);
-  summarize(stats, false, thinClient);
+  summarize(stats, false);
 }
 
 function summarize(stats, dryRun) {

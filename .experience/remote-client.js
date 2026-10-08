@@ -7,6 +7,18 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 
+// src/swallow.js records errors this file drops on purpose. An install that
+// predates it gets silent no-ops, so a missing module never breaks the hook.
+const { swallow, safeUnlink } = (() => {
+  try { return require('./src/swallow'); }
+  catch {
+    return {
+      swallow() {},
+      safeUnlink(file) { try { fs.unlinkSync(file); } catch { /* best-effort */ } },
+    };
+  }
+})();
+
 const DEFAULT_TIMEOUT_MS = 5000;
 const DEFAULT_HOOK_TIMEOUT_MS = 1200;
 const DEFAULT_HOOK_FLUSH_TIMEOUT_MS = 150;
@@ -92,6 +104,7 @@ function getExtractTimeoutMs(config = loadConfig()) {
 }
 
 function buildHeaders(config = loadConfig(), extraHeaders = {}) {
+  /** @type {Record<string, string>} */
   const headers = { ...extraHeaders };
   const token = getServerAuthToken(config);
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -142,7 +155,7 @@ async function requestJson(method, requestPath, body, options = {}) {
   }
 
   if (!res.ok) {
-    const error = new Error(json?.error || text || `${method} ${requestPath} failed`);
+    const error = /** @type {Error & {status?: number, body?: any}} */ (new Error(json?.error || text || `${method} ${requestPath} failed`));
     error.status = res.status;
     error.body = json;
     throw error;
@@ -192,7 +205,7 @@ async function flushQueue(options = {}) {
     if (processed >= (options.limit || DEFAULT_FLUSH_LIMIT)) break;
     const record = safeReadJson(filePath, null);
     if (!record || !record.method || !record.path) {
-      try { fs.unlinkSync(filePath); } catch {}
+      safeUnlink(filePath, 'remote-client.dropInvalidRecord');
       continue;
     }
     if (allowedPaths && !allowedPaths.has(record.path)) {
@@ -200,7 +213,7 @@ async function flushQueue(options = {}) {
     }
     try {
       await requestJson(record.method, record.path, record.body, options);
-      try { fs.unlinkSync(filePath); } catch {}
+      safeUnlink(filePath, 'remote-client.dequeue');
       results.sent++;
       processed++;
     } catch (error) {
@@ -217,12 +230,12 @@ async function flushQueue(options = {}) {
           fs.mkdirSync(qDir, { recursive: true });
           fs.renameSync(filePath, path.join(qDir, path.basename(filePath)));
         } catch {
-          try { fs.unlinkSync(filePath); } catch {}
+          safeUnlink(filePath, 'remote-client.dropPoisonRecord');
         }
         results.quarantined++;
         continue;
       }
-      try { fs.writeFileSync(filePath, JSON.stringify(record, null, 2)); } catch {}
+      try { fs.writeFileSync(filePath, JSON.stringify(record, null, 2)); } catch (err) { swallow('remote-client.persistAttempts', err); }
       results.failed.push({ file: path.basename(filePath), error: record.lastError });
       break;
     }
@@ -281,7 +294,7 @@ function maybeSpawnExtractDrain(options = {}) {
   try {
     const stat = fs.statSync(lockPath);
     if ((Date.now() - stat.mtimeMs) < 60_000) return false;
-  } catch {}
+  } catch { /* no lock file — free to take */ }
 
   const scriptPath = path.join(getExperienceDir(homeDir), 'exp-client-drain.js');
   const compactPath = path.join(getExperienceDir(homeDir), 'extract-compact.js');
@@ -299,6 +312,89 @@ function maybeSpawnExtractDrain(options = {}) {
   });
   child.unref();
   return true;
+}
+
+// --- Experiment arm memory (session holdout) -------------------------------------
+// The server marks every intercept / brief response of an active experiment with
+// `experiment: {arm, salt, share}`; a control session must then get no passive
+// engine output, including the nudges the HOOKS add on their own (risk gate,
+// prompt auto-recall). A hook that times out waiting for the server has no marker,
+// so each marker seen is remembered per session here and consulted on the next
+// hook of that session. The marker's salt and share are kept too: the arm is a
+// pure hash of (salt, session), so a NEW session whose first hook times out gets
+// its arm computed here instead of leaking a nudge. Best-effort: one small JSON
+// file, pruned after a day.
+const ARM_MEMORY_TTL_MS = 24 * 60 * 60 * 1000;
+// Short on purpose: nothing tells a client an experiment ended, so stale params
+// would hold new sessions in a control arm that no longer exists.
+const HOLDOUT_PARAMS_TTL_MS = 2 * 60 * 60 * 1000;
+const HOLDOUT_PARAMS_KEY = '__holdout__';
+
+function armMemoryPath(homeDir = getHomeDir()) {
+  return path.join(getTmpDir(homeDir), 'experiment-arms.json');
+}
+
+// Same rule as experiment.normalizeSessionId: '', 'null' and 'undefined' are a
+// missing id after a String() upstream, never a session.
+function normalizeArmSessionId(sessionId) {
+  if (sessionId === null || sessionId === undefined) return null;
+  const s = String(sessionId).trim();
+  return !s || s === 'null' || s === 'undefined' ? null : s;
+}
+
+function holdoutParamsOf(marker) {
+  if (!marker || typeof marker.salt !== 'string') return null;
+  const share = Number(marker.share);
+  return Number.isFinite(share) && share >= 0 && share <= 1 ? { salt: marker.salt, share } : null;
+}
+
+function rememberExperimentArm(sessionId, marker, homeDir = getHomeDir()) {
+  const sid = normalizeArmSessionId(sessionId);
+  const arm = marker && typeof marker.arm === 'string' ? marker.arm : null;
+  if (!sid || !arm) return false;
+  const file = armMemoryPath(homeDir);
+  const state = safeReadJson(file, {}) || {};
+  const cutoff = Date.now() - ARM_MEMORY_TTL_MS;
+  for (const key of Object.keys(state)) {
+    if (!state[key] || typeof state[key].ts !== 'number' || state[key].ts < cutoff) delete state[key];
+  }
+  const params = holdoutParamsOf(marker);
+  const prevParams = state[HOLDOUT_PARAMS_KEY];
+  const paramsFresh = prevParams && Date.now() - prevParams.ts < HOLDOUT_PARAMS_TTL_MS / 2
+    && prevParams.salt === params?.salt && prevParams.share === params?.share;
+  const armKnown = state[sid] && state[sid].arm === arm;
+  if (armKnown && (!params || paramsFresh)) return true;
+  state[sid] = { arm, ts: Date.now() };
+  if (params) state[HOLDOUT_PARAMS_KEY] = { ...params, ts: Date.now() };
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(state));
+  fs.renameSync(tmp, file);
+  return true;
+}
+
+let _bayes = null;
+function loadBayes() {
+  if (_bayes === null) {
+    try { _bayes = require('./src/bayes'); } catch { _bayes = false; /* install predates it: no computed arm */ }
+  }
+  return _bayes || null;
+}
+
+function recallExperimentArm(sessionId, homeDir = getHomeDir()) {
+  const sid = normalizeArmSessionId(sessionId);
+  if (!sid) return null;
+  const state = safeReadJson(armMemoryPath(homeDir), {}) || {};
+  const entry = state[sid];
+  if (entry && typeof entry.ts === 'number' && Date.now() - entry.ts <= ARM_MEMORY_TTL_MS && typeof entry.arm === 'string') {
+    return entry.arm;
+  }
+  // No marker seen for this session yet: compute its arm from the last params.
+  const params = state[HOLDOUT_PARAMS_KEY];
+  if (!params || typeof params.ts !== 'number' || Date.now() - params.ts > HOLDOUT_PARAMS_TTL_MS) return null;
+  const bayes = loadBayes();
+  if (!bayes || !(params.share > 0)) return null;
+  return bayes.unitHash(`${params.salt}|holdout|${sid}`) < params.share ? 'control' : 'treatment';
 }
 
 module.exports = {
@@ -326,4 +422,6 @@ module.exports = {
   getQueueDir,
   getQuarantineDir,
   isPermanentHttpError,
+  rememberExperimentArm,
+  recallExperimentArm,
 };
