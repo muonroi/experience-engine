@@ -217,7 +217,20 @@ async function handleRecall(req, res) {
   if (!query) return error(res, 'query is required');
   if (query.length > 10_000) return error(res, 'query exceeds 10KB');
 
+  if (body.strict_project !== undefined && typeof body.strict_project !== 'boolean') {
+    return error(res, 'strict_project must be a boolean');
+  }
+  const strictProject = body.strict_project === true;
+  if (strictProject && ['project_slug', 'cwd'].some(key => body[key] !== undefined &&
+    (typeof body[key] !== 'string' || !body[key].trim()))) {
+    return error(res, 'strict recall requires non-empty string project_slug/cwd values');
+  }
+
   const derived = deriveCallerMeta(body);
+  if (strictProject && (!derived.project_slug ||
+    ['any', 'all', '*'].includes(derived.project_slug.trim().toLowerCase()))) {
+    return error(res, 'Cannot resolve a concrete project for strict recall; pass project_slug from /api/projects');
+  }
   const meta = {
     sourceKind: body.sourceKind || 'recall-api',
     sourceRuntime: body.sourceRuntime || 'api',
@@ -238,7 +251,8 @@ async function handleRecall(req, res) {
   // Active recall = semantic-search mode. Reuses the intercept pipeline (embed →
   // search → rank → format → recordSurface) but with recallMode:true, which:
   //   - ranks by RAW COSINE (not the penalty-weighted effective score),
-  //   - drops the positive lang/framework/project scope gates, and
+  //   - drops positive scope gates unless strictProject requires exact project
+  //     identity before formatting, surface tracking, and graph expansion, and
   //   - bypasses the min-search-score floor (format.js GATE 2).
   // The score floor is a noise-control signal for PASSIVE hints — a deliberate
   // query has no such ceiling. Integrity gates still apply: superseded,
@@ -256,14 +270,17 @@ async function handleRecall(req, res) {
     { command: query, _promptHook: true },
     AbortSignal.timeout(fast ? 4000 : 8000),
     meta,
-    { recallMode: true, fast }
+    { recallMode: true, fast, strictProject }
   );
   const entries = (result?.surfacedIds || []).map(s => ({ id: String(s.id || ''), collection: s.collection || null }));
   // P1: record the recall on activity.jsonl so the engine can later detect a
   // session that stitched ≥N recalls (runbook-candidate signal). activityLog
   // never throws (it self-guards), so this cannot break the response path.
   activityLog(buildRecallEvent(query, meta, entries));
-  return json(res, { text: result?.suggestions || null, entries, count: entries.length, query });
+  return json(res, { text: result?.suggestions || null, entries, count: entries.length, query,
+    ...(strictProject ? { scope: { strict: true, project: derived.project_slug, policy: 'project-only',
+      ...(body.cwd ? { cwd: body.cwd } : {}) } } : {}),
+  });
 }
 
 // /api/import-memory — thin-client bridge for the curated-memory importer.

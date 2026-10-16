@@ -84,12 +84,17 @@ describe('metrics endpoint', () => {
     ];
     fs.writeFileSync(path.join(home, '.experience', 'activity.jsonl'), entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
     const prevHome = process.env.HOME;
+    const prevUserProfile = process.env.USERPROFILE;
     process.env.HOME = home;
+    process.env.USERPROFILE = home;
     let text;
     try {
       ({ text } = await fetchText('/metrics'));
     } finally {
-      process.env.HOME = prevHome;
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevUserProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = prevUserProfile;
     }
     assert.ok(text.includes('experience_swallowed_errors_24h{where="interceptor.flushQueue"} 2'));
     assert.ok(text.includes('experience_swallowed_errors_24h{where="remote-client.persistAttempts"} 1'));

@@ -67,7 +67,7 @@ The rest of the server lives under `api/`:
 | `api/handlers/health.js` | `/health`, `/metrics`, `/api/version`, stale-client logging |
 | `api/handlers/hooks.js` | Hook-path writes: intercept, posttool(-batch), prompt-stale, extract, ingest-point, evolve |
 | `api/handlers/observability.js` | stats, projects, gates, graph, timeline, user, hint-stats, project-brief |
-| `api/handlers/knowledge.js` | feedback, principles share/import, search, recall, import-memory, collection bootstrap |
+| `api/handlers/knowledge.js` | feedback, principles share/import, search, recall (opt-in strict project proof), import-memory, collection bootstrap |
 | `api/handlers/pil.js` | `/api/pil-context` |
 | `api/handlers/routing.js` | route-task/-model/-feedback, sync-buffers, brain proxy, phase-outcome, workflow-event |
 | `api/auth.js` | Bearer auth (constant-time), rate limiting, protected/read-only path rules |

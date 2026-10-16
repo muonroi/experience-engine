@@ -825,6 +825,11 @@ paths:
         returned entry (bumps surfaceCount, NOT hitCount). The agent then
         reports usefulness via /api/feedback so actively pulled context
         reinforces precisely and filters noise faster than passive hints.
+        Opt-in strict_project=true instead enforces project-only identity on
+        search hits and graph expansion. Untagged, global, malformed and
+        conflicting project identities are omitted. Supply project_slug or a
+        cwd resolvable through server project metadata; unknown scope is a 400.
+        A strict response carries proof binding the enforced project and caller cwd.
         Full auth token.
       requestBody:
         required: true
@@ -837,6 +842,8 @@ paths:
                 query: { type: string, description: Natural-language question/context (max 10KB) }
                 cwd: { type: string, description: Working dir used to derive project/lang scope }
                 project_slug: { type: string }
+                strict_project: { type: boolean, default: false }
+                fast: { type: boolean, default: false }
                 lang: { type: string }
                 sourceSession: { type: string }
       responses:
@@ -860,8 +867,16 @@ paths:
                         collection: { type: string }
                   count: { type: integer }
                   query: { type: string }
+                  scope:
+                    type: object
+                    description: Present only after strict project filtering is enforced.
+                    properties:
+                      strict: { type: boolean }
+                      project: { type: string }
+                      cwd: { type: string }
+                      policy: { type: string, enum: [project-only] }
         '400':
-          description: query is required / exceeds 10KB
+          description: Invalid query, strict flag, or unresolved strict project scope
 
   /api/timeline:
     get:
