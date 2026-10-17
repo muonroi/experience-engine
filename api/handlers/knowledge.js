@@ -6,6 +6,7 @@ const { activityLog, buildRecallEvent } = require('../../.experience/src/activit
 const { QDRANT_BASE, VALID_FEEDBACK_VERDICTS, VALID_NOISE_REASONS, _cfg, deriveCallerMeta, loadExperienceCore, qdrantHeaders } = require('../config');
 const { error, json, readBody, slog } = require('../http');
 const { requireAuth } = require('../auth');
+const { resolveRepositoryContext } = require('../../lib/repository-context');
 
 async function resolvePointIdPrefix(collection, pointId) {
   let offset = null;
@@ -227,6 +228,15 @@ async function handleRecall(req, res) {
   }
 
   const derived = deriveCallerMeta(body);
+  let repository;
+  if (strictProject && body.repository !== undefined) {
+    try { repository = resolveRepositoryContext(body.repository, body.cwd, _cfg.org?.repoPatterns); }
+    catch (err) {
+      slog('warn', 'recall_repository_context_rejected', { error: err.message });
+      return error(res, `Invalid repository context: ${err.message}`);
+    }
+    if (body.project_slug === undefined) derived.project_slug = repository.project;
+  }
   if (strictProject && (!derived.project_slug ||
     ['any', 'all', '*'].includes(derived.project_slug.trim().toLowerCase()))) {
     return error(res, 'Cannot resolve a concrete project for strict recall; pass project_slug from /api/projects');
@@ -279,7 +289,8 @@ async function handleRecall(req, res) {
   activityLog(buildRecallEvent(query, meta, entries));
   return json(res, { text: result?.suggestions || null, entries, count: entries.length, query,
     ...(strictProject ? { scope: { strict: true, project: derived.project_slug, policy: 'project-only',
-      ...(body.cwd ? { cwd: body.cwd } : {}) } } : {}),
+      ...(body.cwd ? { cwd: body.cwd } : {}),
+      ...(repository ? { repository: { root: repository.root, project: derived.project_slug } } : {}) } } : {}),
   });
 }
 

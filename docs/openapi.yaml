@@ -828,8 +828,14 @@ paths:
         Opt-in strict_project=true instead enforces project-only identity on
         search hits and graph expansion. Untagged, global, malformed and
         conflicting project identities are omitted. Supply project_slug or a
-        cwd resolvable through server project metadata; unknown scope is a 400.
+        cwd resolvable through server project metadata, or filesystem-derived
+        repository identity from the authenticated client. New repositories do
+        not require org.repoPatterns registration. The repository root must
+        contain cwd; an explicit project_slug still takes precedence. Without
+        resolvable identity, strict recall returns 400 rather than widening scope.
         A strict response carries proof binding the enforced project and caller cwd.
+        Requests with repository context also receive scope.repository proof;
+        clients must reject legacy responses that ignore that context.
         Full auth token.
       requestBody:
         required: true
@@ -843,6 +849,13 @@ paths:
                 cwd: { type: string, description: Working dir used to derive project/lang scope }
                 project_slug: { type: string }
                 strict_project: { type: boolean, default: false }
+                repository:
+                  type: object
+                  description: Authenticated client assertion derived from local Git or project markers; not query text.
+                  required: [root, project]
+                  properties:
+                    root: { type: string, maxLength: 1024 }
+                    project: { type: string, maxLength: 200 }
                 fast: { type: boolean, default: false }
                 lang: { type: string }
                 sourceSession: { type: string }

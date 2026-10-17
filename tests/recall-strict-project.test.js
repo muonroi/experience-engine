@@ -127,3 +127,27 @@ test('strict HTTP recall validates scope and returns proof only for enforced pro
   assert.match(broad.body.text || '', /LESSON_31/);
   assert.equal((await http({ query: 'conventions', strict_project: true, project_slug: 'repo-a' }, 'wrong')).status, 401);
 });
+
+test('strict HTTP recall resolves an unregistered client repository and isolates it from registered parents', async () => {
+  reset(); points = [point(70, 'new-repository'), point(71, 'repo-a'), point(72, undefined)];
+  const body = { query: 'conventions', strict_project: true, cwd: 'D:/repo-a/new-repository/src', repository: { root: 'D:/repo-a/new-repository', project: 'new-repository' } };
+  const result = await http(body);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.scope.project, 'new-repository');
+  assert.deepEqual(result.body.scope.repository,{root:'D:/repo-a/new-repository',project:'new-repository'});
+  assert.match(result.body.text || '', /LESSON_70/);
+  assert.doesNotMatch(result.body.text || '', /LESSON_71|LESSON_72/);
+  const empty = await http({ ...body, repository: { ...body.repository, project: 'never-registered-empty' } });
+  assert.equal(empty.status, 200);
+  assert.equal(empty.body.count, 0);
+  assert.equal(empty.body.scope.project, 'never-registered-empty');
+  const explicit = await http({ ...body, project_slug:'repo-a' });
+  assert.equal(explicit.body.scope.project,'repo-a');
+  assert.match(explicit.body.text || '',/LESSON_71/);
+  assert.doesNotMatch(explicit.body.text || '',/LESSON_70/);
+  for (const repository of [null,{}, {root:'D:/other',project:'new-repository'}, {root:'relative',project:'new-repository'}]) {
+    const rejected=await http({ ...body,repository });
+    assert.equal(rejected.status,400);
+    assert.equal(rejected.body.scope,undefined);
+  }
+});

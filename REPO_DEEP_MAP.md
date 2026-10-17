@@ -72,6 +72,7 @@ The rest of the server lives under `api/`:
 | `api/handlers/routing.js` | route-task/-model/-feedback, sync-buffers, brain proxy, phase-outcome, workflow-event |
 | `api/auth.js` | Bearer auth (constant-time), rate limiting, protected/read-only path rules |
 | `api/config.js` | Server config (port, host, tokens), runtime dir resolution, `loadExperienceCore`, caller-meta derivation |
+| `lib/repository-context.js` | Validates authenticated client repository root/project identity for strict recall, without per-repository server registration; checks cwd containment and exact aliases |
 | `api/http.js` | `json` / `error` / `readBody`, CORS headers, structured log helper |
 
 `server.js` re-exports every handler, so callers that `require('./server.js')` keep working.
