@@ -858,6 +858,30 @@ paths:
                       properties:
                         id: { type: string }
                         collection: { type: string }
+                        projectSlug:
+                          type: string
+                          nullable: true
+                          description: >
+                            Project the hint is scoped to (stored scope.project_slug,
+                            falling back to the legacy root _projectSlug); null when
+                            unscoped. Additive — lets clients derive wrong_repo.
+                        scope:
+                          type: object
+                          nullable: true
+                          description: >
+                            Whitelisted stored scope of the hit (null when it has no
+                            project or language scope). Additive — lets clients derive
+                            wrong_repo / wrong_language for /api/feedback. Exclusion
+                            lists, framework and other payload fields are not exposed.
+                          properties:
+                            project_slug: { type: string, nullable: true }
+                            lang:
+                              nullable: true
+                              description: One language, or several (legacy joined strings such as "ts, js" are split).
+                              oneOf:
+                                - type: string
+                                - type: array
+                                  items: { type: string }
                   count: { type: integer }
                   query: { type: string }
         '400':

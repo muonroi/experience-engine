@@ -199,6 +199,46 @@ async function ensureCollections() {
   }
 }
 
+function nonEmptyString(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+// Stored lang scope as clients can compare it: a string, an array of strings, or
+// null. Legacy seeds join several languages into one string ("ts, js",
+// "c#/f#"); experience-core fileMatchesLang reads those as "any of", so they are
+// split here rather than handed to clients as one unknown language.
+function recallScopeLang(raw) {
+  if (Array.isArray(raw)) {
+    const langs = raw.map(nonEmptyString).filter(Boolean);
+    return langs.length ? langs : null;
+  }
+  const lang = nonEmptyString(raw);
+  if (!lang) return null;
+  const tokens = lang.split(/[,/|]/).map(t => t.trim()).filter(Boolean);
+  return tokens.length > 1 ? tokens : lang;
+}
+
+// One /api/recall entry. {id, collection} is the original contract; projectSlug
+// and scope are additive so clients can derive the noise reason (wrong_repo /
+// wrong_language) from the hint's stored scope instead of guessing — muonroi-cli
+// src/ee/noise-reason.ts hintScopeOf reads exactly these fields. Only
+// project_slug and lang are forwarded: exclusion lists, framework, file patterns
+// and the rest of the payload stay server-side.
+function recallEntryOf(surface) {
+  const s = surface && typeof surface === 'object' ? surface : {};
+  const stored = s.scope && typeof s.scope === 'object' && !Array.isArray(s.scope) ? s.scope : {};
+  // scope.project_slug is the source of truth (format.js buildStorePayload);
+  // the root-level _projectSlug (surface.projectSlug) is the legacy fallback.
+  const projectSlug = nonEmptyString(stored.project_slug) || nonEmptyString(s.projectSlug);
+  const lang = recallScopeLang(stored.lang);
+  return {
+    id: String(s.id || ''),
+    collection: s.collection || null,
+    projectSlug,
+    scope: projectSlug || lang ? { project_slug: projectSlug, lang } : null,
+  };
+}
+
 // /api/recall — agent-initiated active recall of learned experience.
 // Unlike /api/search (raw vector hits, no signal), recall runs the full
 // intercept pipeline: scope-filtered retrieval, scored + formatted with
@@ -258,7 +298,7 @@ async function handleRecall(req, res) {
     meta,
     { recallMode: true, fast }
   );
-  const entries = (result?.surfacedIds || []).map(s => ({ id: String(s.id || ''), collection: s.collection || null }));
+  const entries = (result?.surfacedIds || []).map(recallEntryOf);
   // P1: record the recall on activity.jsonl so the engine can later detect a
   // session that stitched ≥N recalls (runbook-candidate signal). activityLog
   // never throws (it self-guards), so this cannot break the response path.
@@ -357,6 +397,7 @@ module.exports = {
   WORKFLOW_KIND_TO_COLLECTION,
   ensureCollections,
   handleRecall,
+  recallEntryOf,
   handleImportMemory,
   handleSearch,
 };
