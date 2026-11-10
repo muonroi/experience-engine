@@ -83,13 +83,19 @@ describe('metrics endpoint', () => {
       { ts: old, op: 'swallowed', where: 'stale.site' },
     ];
     fs.writeFileSync(path.join(home, '.experience', 'activity.jsonl'), entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    // os.homedir() reads USERPROFILE on Windows, HOME elsewhere; pin both or the
+    // server reads the developer's real ~/.experience/activity.jsonl (Windows-only red).
     const prevHome = process.env.HOME;
+    const prevProfile = process.env.USERPROFILE;
     process.env.HOME = home;
+    process.env.USERPROFILE = home;
     let text;
     try {
       ({ text } = await fetchText('/metrics'));
     } finally {
       process.env.HOME = prevHome;
+      if (prevProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = prevProfile;
     }
     assert.ok(text.includes('experience_swallowed_errors_24h{where="interceptor.flushQueue"} 2'));
     assert.ok(text.includes('experience_swallowed_errors_24h{where="remote-client.persistAttempts"} 1'));
