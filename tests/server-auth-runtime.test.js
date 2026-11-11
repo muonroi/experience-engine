@@ -78,6 +78,8 @@ async function startServer(config) {
     baseUrl,
     child,
     homeDir,
+    // Structured server logs (logger.js) go to stderr; stdout is not a log channel.
+    get stderr() { return stderr; },
     get stdout() { return stdout; },
     async stop() {
       child.kill('SIGTERM');
@@ -161,15 +163,15 @@ test('near-miss bearer tokens are rejected', async () => {
 test('binds loopback by default without a token, all interfaces with one', async () => {
   const unconfigured = await startServer({});
   try {
-    assert.match(unconfigured.stdout, /"host":"127\.0\.0\.1"/);
-    assert.doesNotMatch(unconfigured.stdout, /server_unauthenticated/);
+    assert.match(unconfigured.stderr, /"host":"127\.0\.0\.1"/);
+    assert.doesNotMatch(unconfigured.stderr, /server_unauthenticated/);
   } finally {
     await unconfigured.stop();
   }
 
   const withToken = await startServer({ server: { authToken: 't' } });
   try {
-    assert.match(withToken.stdout, /"host":"\*"/);
+    assert.match(withToken.stderr, /"host":"\*"/);
   } finally {
     await withToken.stop();
   }
@@ -178,7 +180,7 @@ test('binds loopback by default without a token, all interfaces with one', async
 test('warns when explicitly exposed without a token', async () => {
   const exposed = await startServer({ server: { host: '0.0.0.0' } });
   try {
-    assert.match(exposed.stdout, /server_unauthenticated/);
+    assert.match(exposed.stderr, /server_unauthenticated/);
   } finally {
     await exposed.stop();
   }

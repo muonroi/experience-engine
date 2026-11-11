@@ -3,11 +3,14 @@
  */
 'use strict';
 
+// Structured diagnostics always go to stderr. stdout is reserved for a tool's
+// own output (e.g. the JSON document of `exp-gates.js --json`), so a warn line
+// emitted while a tool runs must never be interleaved with it.
 const LEVEL_STREAM = {
   error: 'stderr',
-  warn: 'stdout',
-  info: 'stdout',
-  debug: 'stdout',
+  warn: 'stderr',
+  info: 'stderr',
+  debug: 'stderr',
 };
 
 const LEVEL_PRIORITY = {
