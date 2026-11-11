@@ -98,6 +98,7 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
   // floor). Integrity gates (superseded / permanent-noise / irrelevant / learned
   // exclusions / min-confidence) remain in force. See /api/recall (server.js).
   const recallMode = !!(options && options.recallMode);
+  const strictProject = recallMode && options?.strictProject === true;
   if (_intercept.isReadOnlyCommand(toolName, toolInput)) return { suggestions: null, surfacedIds: [] };
 
   // Session holdout (docs/specs/2026-09-25-hint-lift-and-bayesian-confidence.md §3
@@ -290,6 +291,15 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
       return points.filter(p => {
         try {
           const exp = JSON.parse(p.payload?.json || '{}');
+          if (strictProject) {
+            // Strict recall is project-only: untagged/global/contradictory
+            // identities cannot establish isolation, including legacy payloads.
+            const identities = [exp.scope?.project_slug, exp.scope?.projectSlug,
+              exp._projectSlug, p.payload?.scope_project_slug]
+              .filter(value => value !== undefined && value !== null);
+            if (!callerProjectSlug || ['any', 'all', '*'].includes(callerProjectSlug) || identities.length === 0 || identities.some(value =>
+              typeof value !== 'string' || value.trim().toLowerCase() !== callerProjectSlug)) return false;
+          }
           if (Array.isArray(exp.scope?.lang_exclude) && callerLang) {
             const ex = exp.scope.lang_exclude.map(x => String(x).toLowerCase().trim());
             if (ex.includes(callerLang) || ex.includes(callerLangNorm)) return false;
@@ -300,9 +310,10 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
           }
           return true;
         } catch (err) {
-          // Fail-open: a malformed payload must not vanish from recall. Keep + log.
+          // Legacy recall keeps malformed payloads; strict recall cannot prove
+          // their identity and rejects them. Both paths record the failure.
           _activity.activityLog({ op: 'recall-scope-parse-fail', id: p?.id, collection: collectionName, error: err?.message });
-          return true;
+          return !strictProject;
         }
       });
     }
@@ -542,7 +553,8 @@ async function interceptWithMeta(toolName, toolInput, signal, meta, options) {
           const found = await _qdrant.fetchPointById(coll.name, targetId);
           if (found) {
             const graphPoint = { ...found, score: (found.score || 0.5) * edge.weight * 0.8, _collection: coll.name, _graphEdge: edge.type };
-            const graphGate = _intercept.filterPromptHookPoints([graphPoint], toolName, sourceMeta);
+            const scopedGraphPoints = strictProject ? applyScopeFilter([graphPoint], coll.name) : [graphPoint];
+            const graphGate = _intercept.filterPromptHookPoints(scopedGraphPoints, toolName, sourceMeta);
             promptPrecisionRemoved += graphGate.removed.length;
             lines.push(..._format.applyBudget(_format.formatPoints(graphGate.kept, fmtOpts), 600));
             for (const gp of graphGate.kept) graphLineIds.push(String(gp.id));

@@ -276,7 +276,8 @@ test('the Ollama classify branch honours the same knob and keeps its own default
   };
   try {
     const { classifyViaBrain } = require('../../.experience/src/router');
-    const env = { EXPERIENCE_BRAIN_PROVIDER: 'ollama', EXPERIENCE_BRAIN_MODEL: 'qwen2.5:3b' };
+    const env = { EXPERIENCE_BRAIN_PROVIDER: 'ollama', EXPERIENCE_BRAIN_MODEL: 'qwen2.5:3b',
+      EXPERIENCE_OLLAMA_URL: 'http://localhost:11434' };
     await withEnv(env, async () => {
       calls.length = 0;
       await classifyViaBrain('p', 5000, {});
