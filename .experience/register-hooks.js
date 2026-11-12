@@ -72,6 +72,62 @@ function hasInterceptorHook(cfg) {
   return false;
 }
 
+// Older installers emitted an AND/OR list that runs Node even when Bun exits
+// successfully (&& and || have equal precedence in a POSIX shell). Two bounded
+// hook processes then exceed the host's five-second timeout. Repair only that
+// exact managed command, leaving custom wrappers and unrelated hooks alone.
+function repairLegacyCommands(cfg) {
+  const normalize = value => {
+    const normalized = String(value).replace(/\\/g, '/');
+    return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+  };
+  const managedPaths = new Set([
+    interceptor, interceptorPost, interceptorPrompt, interceptorSession, interceptorBatch, stop,
+  ].filter(Boolean).map(normalize));
+  const legacy = /^command -v bun >\/dev\/null 2>&1 && bun "([^"]+)"( --backfill)? \|\| command -v node >\/dev\/null 2>&1 && node "\1"\2 \|\| true$/;
+  for (const entries of Object.values(cfg.hooks || {})) {
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      for (const hook of (Array.isArray(entry?.hooks) ? entry.hooks : [entry])) {
+        if (hook?.type && hook.type !== 'command') continue;
+        for (const key of ['command', 'commandWindows']) {
+          const match = typeof hook?.[key] === 'string' && hook[key].match(legacy);
+          if (match && managedPaths.has(normalize(match[1]))) {
+            hook[key] = `node "${match[1]}"${match[2] || ''}`;
+          }
+        }
+      }
+    }
+  }
+}
+
+function enableCodexHooks(toml) {
+  const eol = toml.includes('\r\n') ? '\r\n' : '\n';
+  const lines = toml.split(/\r?\n/);
+  let section = '';
+  let featuresIndex = -1;
+  let legacyIndex = -1;
+  let hasHooks = false;
+  for (let i = 0; i < lines.length; i++) {
+    const table = lines[i].match(/^\s*\[([^\]]+)\]\s*(?:#.*)?$/);
+    if (table) {
+      section = table[1].trim();
+      if (section === 'features') featuresIndex = i;
+    }
+    if (section === 'features') {
+      if (/^\s*(?:hooks|"hooks"|'hooks')\s*=/.test(lines[i])) hasHooks = true;
+      if (/^\s*codex_hooks\s*=/.test(lines[i])) legacyIndex = i;
+    }
+    if (!section && /^\s*features\s*\.\s*hooks\s*=/.test(lines[i])) hasHooks = true;
+  }
+  if (hasHooks && legacyIndex < 0) return toml; // preserve explicit true/false and formatting
+  if (hasHooks) lines.splice(legacyIndex, 1);
+  else if (legacyIndex >= 0) lines[legacyIndex] = lines[legacyIndex].replace('codex_hooks', 'hooks');
+  else if (featuresIndex >= 0) lines.splice(featuresIndex + 1, 0, 'hooks = true');
+  else return toml + (toml && !toml.endsWith('\n') ? eol : '') + `[features]${eol}hooks = true${eol}`;
+  return lines.join(eol);
+}
+
 const AGENTS = [
   {
     key: 'claude',
@@ -191,10 +247,8 @@ const AGENTS = [
       try {
         let toml = '';
         try { toml = fs.readFileSync(tomlPath, 'utf8'); } catch {}
-        if (!toml.includes('codex_hooks')) {
-          toml += (toml && !toml.endsWith('\n') ? '\n' : '') + '[features]\ncodex_hooks = true\n';
-          fs.writeFileSync(tomlPath, toml);
-        }
+        const updated = enableCodexHooks(toml);
+        if (updated !== toml) fs.writeFileSync(tomlPath, updated);
       } catch {}
     }
   },
@@ -317,6 +371,7 @@ for (const agent of AGENTS) {
       }
     }
 
+    repairLegacyCommands(cfg);
     agent.patch(cfg);
     fs.mkdirSync(path.dirname(agent.file), { recursive: true });
     fs.writeFileSync(agent.file, JSON.stringify(cfg, null, 2));

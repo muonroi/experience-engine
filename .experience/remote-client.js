@@ -244,7 +244,8 @@ async function flushQueueForHook(options = {}) {
     homeDir,
     config,
     limit: options.limit || DEFAULT_HOOK_FLUSH_LIMIT,
-    timeoutMs: options.timeoutMs || getHookTimeoutMs(config) || DEFAULT_HOOK_FLUSH_TIMEOUT_MS,
+    // Backlog is best-effort; reserve the main hook budget for the new event.
+    timeoutMs: options.timeoutMs || Math.min(getHookTimeoutMs(config), DEFAULT_HOOK_FLUSH_TIMEOUT_MS),
     allowedPaths: options.allowedPaths || ['/api/posttool', '/api/feedback', '/api/route-feedback'],
   });
 }

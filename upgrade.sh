@@ -208,6 +208,16 @@ if [ "$DO_SYNC" = "true" ] && [ -f "$BULK_EXTRACT" ]; then
     fi
     # Write sync timestamp for health-check staleness warning
     node -e "const p=require('path').join(require('os').homedir(),'.experience','.last-sync.json');require('fs').writeFileSync(p,JSON.stringify({ts:new Date().toISOString(),sessions:$SYNC_MAX,source:'upgrade.sh'}))" 2>/dev/null || true
+
+    # Advisory scope-quality check — warns (never blocks) when the brain has
+    # accumulated too many UNSCOPED/noisy entries. bulk-extract cannot fully
+    # prevent this because it refuses to guess a scope by design; this gives
+    # the operator a signal that a cleanup pass is due. See
+    # docs/BRAIN_CLEANUP_RUNBOOK.md.
+    if [ -f "$REPO_DIR/.experience/tools/post-sync-check.js" ]; then
+      step "Post-sync scope check (advisory)..."
+      node "$REPO_DIR/.experience/tools/post-sync-check.js" 2>/dev/null || true
+    fi
   else
     echo "[upgrade] Node.js not found — skipping session sync."
   fi

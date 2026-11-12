@@ -526,7 +526,11 @@ process.stdin.on('end', async () => {
         activityLog({ stage: 'aborted', message: error?.message || String(error), ...sourceMeta });
         return null;
       }
-      throw error;
+      // A failed passive request is still a completed request. Resolve the
+      // race so its timer is cleared and stdout restored before the risk gate.
+      debugLog({ stage: 'intercept_error', message: error?.message || String(error) });
+      activityLog({ stage: 'intercept_error', message: error?.message || String(error), ...sourceMeta });
+      return null;
     });
     const timeoutPromise = new Promise(resolve => {
       timer = setTimeout(() => {

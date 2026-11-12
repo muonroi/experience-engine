@@ -372,6 +372,37 @@ test('remote PreToolUse hook exits quickly when VPS intercept is slow', { skip: 
   }
 });
 
+test('prompt remote failure restores output and cancels passive timer before risk guidance', { skip: SERVER_BLOCKED ? 'sandbox blocks local test server or child node processes' : false }, async () => {
+  const homeDir = makeTempHome();
+  copyRuntime(homeDir, ['interceptor-prompt.js', 'remote-client.js']);
+  const src = path.join(homeDir, '.experience', 'src');
+  fs.mkdirSync(src, { recursive: true });
+  fs.writeFileSync(path.join(src, 'surface-trigger.js'), `module.exports = {
+    detectTopTrigger: () => ({ top: { topic: 'deploy', kind: 'sensitive-keyword' } }),
+    runTargetedRecall: async () => ({ count: 1, text: 'Recovered risk guidance' }),
+  };`);
+  const { server, port } = await startServer((req, res) => {
+    req.resume();
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'temporarily unavailable' }));
+  });
+  writeConfig(homeDir, { serverBaseUrl: `http://127.0.0.1:${port}` });
+  try {
+    const result = await runHook(homeDir, 'interceptor-prompt.js', {
+      hook_event_name: 'UserPromptSubmit', user_prompt: 'Please deploy the current application', cwd: homeDir,
+    });
+    assert.equal(result.status, 0);
+    assert.equal(result.stderr, '');
+    assert.match(extractHookText(parseHookJson(result)), /Recovered risk guidance/);
+    const events = fs.readFileSync(path.join(homeDir, '.experience/tmp/debug.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+    assert.ok(events.some(e => e.stage === 'intercept_error'));
+    assert.ok(!events.some(e => e.stage === 'abort'), 'completed failed request must not leave its passive timeout armed');
+  } finally {
+    server.closeAllConnections();
+    server.close();
+  }
+});
+
 test('remote PostToolUse hook queues when VPS posttool is slow', { skip: SERVER_BLOCKED ? 'sandbox blocks local test server or child node processes' : false }, async () => {
   const homeDir = makeTempHome();
   copyRuntime(homeDir, ['interceptor-post.js', 'remote-client.js']);

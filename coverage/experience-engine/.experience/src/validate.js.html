@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">25.92% </span>
+                <span class="strong">70.37% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>7/27</span>
+                <span class='fraction'>19/27</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">16.66% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>2/12</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
-                <span class="quiet">Branches</span>
+                <span class="quiet">Functions</span>
                 <span class='fraction'>1/1</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
-                <span class="quiet">Functions</span>
-                <span class='fraction'>0/1</span>
-            </div>
-        
-            
-            <div class='fl pad1y space-right2'>
-                <span class="strong">25.92% </span>
+                <span class="strong">70.37% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>7/27</span>
+                <span class='fraction'>19/27</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line low'></div>
+    <div class='status-line medium'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -90,58 +90,58 @@
 <a name='L25'></a><a href='#L25'>25</a>
 <a name='L26'></a><a href='#L26'>26</a>
 <a name='L27'></a><a href='#L27'>27</a>
-<a name='L28'></a><a href='#L28'>28</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
+<a name='L28'></a><a href='#L28'>28</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/**
  * validate.js — Zero-dep request body validation for Experience Engine API.
  */
 'use strict';
 &nbsp;
-<span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >function validateBody(body, schema) {</span></span>
-<span class="cstat-no" title="statement not covered" >  if (!body || typeof body !== 'object') return { ok: false, error: 'request body must be a JSON object' };</span>
-<span class="cstat-no" title="statement not covered" >  for (const [field, rules] of Object.entries(schema)) {</span>
-<span class="cstat-no" title="statement not covered" >    const val = body[field];</span>
-<span class="cstat-no" title="statement not covered" >    if (rules.required &amp;&amp; (val === undefined || val === null)) {</span>
+function validateBody(body, schema) {
+  if (!body || typeof body !== 'object') <span class="branch-0 cbranch-no" title="branch not covered" >return { ok: false, error: 'request body must be a JSON object' };</span>
+  for (const [field, rules] of Object.entries(schema)) {
+    const val = body[field];
+    if (rules.required &amp;&amp; (val === undefined || val === null || val === '')) <span class="branch-0 cbranch-no" title="branch not covered" >{</span>
 <span class="cstat-no" title="statement not covered" >      return { ok: false, error: `${field} is required` };</span>
 <span class="cstat-no" title="statement not covered" >    }</span>
-<span class="cstat-no" title="statement not covered" >    if (val === undefined || val === null) continue;</span>
-<span class="cstat-no" title="statement not covered" >    if (rules.type &amp;&amp; typeof val !== rules.type) {</span>
+    if (val === undefined || val === null) <span class="branch-0 cbranch-no" title="branch not covered" >continue;</span>
+    if (rules.type &amp;&amp; typeof val !== rules.type) <span class="branch-0 cbranch-no" title="branch not covered" >{</span>
 <span class="cstat-no" title="statement not covered" >      return { ok: false, error: `${field} must be a ${rules.type}` };</span>
 <span class="cstat-no" title="statement not covered" >    }</span>
-<span class="cstat-no" title="statement not covered" >    if (rules.maxLength &amp;&amp; typeof val === 'string' &amp;&amp; val.length &gt; rules.maxLength) {</span>
+    if (rules.maxLength <span class="branch-0 cbranch-no" title="branch not covered" >&amp;&amp; typeof val === 'string' <span class="branch-0 cbranch-no" title="branch not covered" ></span>&amp;&amp; val.length &gt; rules.maxLength)</span> <span class="branch-0 cbranch-no" title="branch not covered" >{</span>
 <span class="cstat-no" title="statement not covered" >      return { ok: false, error: `${field} must be at most ${rules.maxLength} characters` };</span>
 <span class="cstat-no" title="statement not covered" >    }</span>
-<span class="cstat-no" title="statement not covered" >    if (rules.oneOf &amp;&amp; !rules.oneOf.has(val) &amp;&amp; !rules.oneOf.includes?.(val)) {</span>
+    if (rules.oneOf <span class="branch-0 cbranch-no" title="branch not covered" >&amp;&amp; !rules.oneOf.has(val) <span class="branch-0 cbranch-no" title="branch not covered" ></span>&amp;&amp; !rules.oneOf.includes?.(val))</span> <span class="branch-0 cbranch-no" title="branch not covered" >{</span>
 <span class="cstat-no" title="statement not covered" >      return { ok: false, error: `${field} must be one of: ${[...rules.oneOf].join(', ')}` };</span>
 <span class="cstat-no" title="statement not covered" >    }</span>
-<span class="cstat-no" title="statement not covered" >  }</span>
-<span class="cstat-no" title="statement not covered" >  return { ok: true };</span>
-<span class="cstat-no" title="statement not covered" >}</span>
+  }
+  return { ok: true };
+}
 &nbsp;
 module.exports = { validateBody };
 &nbsp;</pre></td></tr></table></pre>
@@ -151,7 +151,7 @@ module.exports = { validateBody };
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-05-06T02:46:54.490Z
+                at 2026-07-29T06:56:04.900Z
             </div>
         <script src="../../../prettify.js"></script>
         <script>

@@ -1,0 +1,1603 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for experience-engine/.experience/src/brain-llm.js</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../prettify.css" />
+    <link rel="stylesheet" href="../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../index.html">All files</a> / <a href="index.html">experience-engine/.experience/src</a> brain-llm.js</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">47.23% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>239/506</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">53.84% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>35/65</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">60% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>6/10</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">47.23% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>239/506</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line low'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a>
+<a name='L213'></a><a href='#L213'>213</a>
+<a name='L214'></a><a href='#L214'>214</a>
+<a name='L215'></a><a href='#L215'>215</a>
+<a name='L216'></a><a href='#L216'>216</a>
+<a name='L217'></a><a href='#L217'>217</a>
+<a name='L218'></a><a href='#L218'>218</a>
+<a name='L219'></a><a href='#L219'>219</a>
+<a name='L220'></a><a href='#L220'>220</a>
+<a name='L221'></a><a href='#L221'>221</a>
+<a name='L222'></a><a href='#L222'>222</a>
+<a name='L223'></a><a href='#L223'>223</a>
+<a name='L224'></a><a href='#L224'>224</a>
+<a name='L225'></a><a href='#L225'>225</a>
+<a name='L226'></a><a href='#L226'>226</a>
+<a name='L227'></a><a href='#L227'>227</a>
+<a name='L228'></a><a href='#L228'>228</a>
+<a name='L229'></a><a href='#L229'>229</a>
+<a name='L230'></a><a href='#L230'>230</a>
+<a name='L231'></a><a href='#L231'>231</a>
+<a name='L232'></a><a href='#L232'>232</a>
+<a name='L233'></a><a href='#L233'>233</a>
+<a name='L234'></a><a href='#L234'>234</a>
+<a name='L235'></a><a href='#L235'>235</a>
+<a name='L236'></a><a href='#L236'>236</a>
+<a name='L237'></a><a href='#L237'>237</a>
+<a name='L238'></a><a href='#L238'>238</a>
+<a name='L239'></a><a href='#L239'>239</a>
+<a name='L240'></a><a href='#L240'>240</a>
+<a name='L241'></a><a href='#L241'>241</a>
+<a name='L242'></a><a href='#L242'>242</a>
+<a name='L243'></a><a href='#L243'>243</a>
+<a name='L244'></a><a href='#L244'>244</a>
+<a name='L245'></a><a href='#L245'>245</a>
+<a name='L246'></a><a href='#L246'>246</a>
+<a name='L247'></a><a href='#L247'>247</a>
+<a name='L248'></a><a href='#L248'>248</a>
+<a name='L249'></a><a href='#L249'>249</a>
+<a name='L250'></a><a href='#L250'>250</a>
+<a name='L251'></a><a href='#L251'>251</a>
+<a name='L252'></a><a href='#L252'>252</a>
+<a name='L253'></a><a href='#L253'>253</a>
+<a name='L254'></a><a href='#L254'>254</a>
+<a name='L255'></a><a href='#L255'>255</a>
+<a name='L256'></a><a href='#L256'>256</a>
+<a name='L257'></a><a href='#L257'>257</a>
+<a name='L258'></a><a href='#L258'>258</a>
+<a name='L259'></a><a href='#L259'>259</a>
+<a name='L260'></a><a href='#L260'>260</a>
+<a name='L261'></a><a href='#L261'>261</a>
+<a name='L262'></a><a href='#L262'>262</a>
+<a name='L263'></a><a href='#L263'>263</a>
+<a name='L264'></a><a href='#L264'>264</a>
+<a name='L265'></a><a href='#L265'>265</a>
+<a name='L266'></a><a href='#L266'>266</a>
+<a name='L267'></a><a href='#L267'>267</a>
+<a name='L268'></a><a href='#L268'>268</a>
+<a name='L269'></a><a href='#L269'>269</a>
+<a name='L270'></a><a href='#L270'>270</a>
+<a name='L271'></a><a href='#L271'>271</a>
+<a name='L272'></a><a href='#L272'>272</a>
+<a name='L273'></a><a href='#L273'>273</a>
+<a name='L274'></a><a href='#L274'>274</a>
+<a name='L275'></a><a href='#L275'>275</a>
+<a name='L276'></a><a href='#L276'>276</a>
+<a name='L277'></a><a href='#L277'>277</a>
+<a name='L278'></a><a href='#L278'>278</a>
+<a name='L279'></a><a href='#L279'>279</a>
+<a name='L280'></a><a href='#L280'>280</a>
+<a name='L281'></a><a href='#L281'>281</a>
+<a name='L282'></a><a href='#L282'>282</a>
+<a name='L283'></a><a href='#L283'>283</a>
+<a name='L284'></a><a href='#L284'>284</a>
+<a name='L285'></a><a href='#L285'>285</a>
+<a name='L286'></a><a href='#L286'>286</a>
+<a name='L287'></a><a href='#L287'>287</a>
+<a name='L288'></a><a href='#L288'>288</a>
+<a name='L289'></a><a href='#L289'>289</a>
+<a name='L290'></a><a href='#L290'>290</a>
+<a name='L291'></a><a href='#L291'>291</a>
+<a name='L292'></a><a href='#L292'>292</a>
+<a name='L293'></a><a href='#L293'>293</a>
+<a name='L294'></a><a href='#L294'>294</a>
+<a name='L295'></a><a href='#L295'>295</a>
+<a name='L296'></a><a href='#L296'>296</a>
+<a name='L297'></a><a href='#L297'>297</a>
+<a name='L298'></a><a href='#L298'>298</a>
+<a name='L299'></a><a href='#L299'>299</a>
+<a name='L300'></a><a href='#L300'>300</a>
+<a name='L301'></a><a href='#L301'>301</a>
+<a name='L302'></a><a href='#L302'>302</a>
+<a name='L303'></a><a href='#L303'>303</a>
+<a name='L304'></a><a href='#L304'>304</a>
+<a name='L305'></a><a href='#L305'>305</a>
+<a name='L306'></a><a href='#L306'>306</a>
+<a name='L307'></a><a href='#L307'>307</a>
+<a name='L308'></a><a href='#L308'>308</a>
+<a name='L309'></a><a href='#L309'>309</a>
+<a name='L310'></a><a href='#L310'>310</a>
+<a name='L311'></a><a href='#L311'>311</a>
+<a name='L312'></a><a href='#L312'>312</a>
+<a name='L313'></a><a href='#L313'>313</a>
+<a name='L314'></a><a href='#L314'>314</a>
+<a name='L315'></a><a href='#L315'>315</a>
+<a name='L316'></a><a href='#L316'>316</a>
+<a name='L317'></a><a href='#L317'>317</a>
+<a name='L318'></a><a href='#L318'>318</a>
+<a name='L319'></a><a href='#L319'>319</a>
+<a name='L320'></a><a href='#L320'>320</a>
+<a name='L321'></a><a href='#L321'>321</a>
+<a name='L322'></a><a href='#L322'>322</a>
+<a name='L323'></a><a href='#L323'>323</a>
+<a name='L324'></a><a href='#L324'>324</a>
+<a name='L325'></a><a href='#L325'>325</a>
+<a name='L326'></a><a href='#L326'>326</a>
+<a name='L327'></a><a href='#L327'>327</a>
+<a name='L328'></a><a href='#L328'>328</a>
+<a name='L329'></a><a href='#L329'>329</a>
+<a name='L330'></a><a href='#L330'>330</a>
+<a name='L331'></a><a href='#L331'>331</a>
+<a name='L332'></a><a href='#L332'>332</a>
+<a name='L333'></a><a href='#L333'>333</a>
+<a name='L334'></a><a href='#L334'>334</a>
+<a name='L335'></a><a href='#L335'>335</a>
+<a name='L336'></a><a href='#L336'>336</a>
+<a name='L337'></a><a href='#L337'>337</a>
+<a name='L338'></a><a href='#L338'>338</a>
+<a name='L339'></a><a href='#L339'>339</a>
+<a name='L340'></a><a href='#L340'>340</a>
+<a name='L341'></a><a href='#L341'>341</a>
+<a name='L342'></a><a href='#L342'>342</a>
+<a name='L343'></a><a href='#L343'>343</a>
+<a name='L344'></a><a href='#L344'>344</a>
+<a name='L345'></a><a href='#L345'>345</a>
+<a name='L346'></a><a href='#L346'>346</a>
+<a name='L347'></a><a href='#L347'>347</a>
+<a name='L348'></a><a href='#L348'>348</a>
+<a name='L349'></a><a href='#L349'>349</a>
+<a name='L350'></a><a href='#L350'>350</a>
+<a name='L351'></a><a href='#L351'>351</a>
+<a name='L352'></a><a href='#L352'>352</a>
+<a name='L353'></a><a href='#L353'>353</a>
+<a name='L354'></a><a href='#L354'>354</a>
+<a name='L355'></a><a href='#L355'>355</a>
+<a name='L356'></a><a href='#L356'>356</a>
+<a name='L357'></a><a href='#L357'>357</a>
+<a name='L358'></a><a href='#L358'>358</a>
+<a name='L359'></a><a href='#L359'>359</a>
+<a name='L360'></a><a href='#L360'>360</a>
+<a name='L361'></a><a href='#L361'>361</a>
+<a name='L362'></a><a href='#L362'>362</a>
+<a name='L363'></a><a href='#L363'>363</a>
+<a name='L364'></a><a href='#L364'>364</a>
+<a name='L365'></a><a href='#L365'>365</a>
+<a name='L366'></a><a href='#L366'>366</a>
+<a name='L367'></a><a href='#L367'>367</a>
+<a name='L368'></a><a href='#L368'>368</a>
+<a name='L369'></a><a href='#L369'>369</a>
+<a name='L370'></a><a href='#L370'>370</a>
+<a name='L371'></a><a href='#L371'>371</a>
+<a name='L372'></a><a href='#L372'>372</a>
+<a name='L373'></a><a href='#L373'>373</a>
+<a name='L374'></a><a href='#L374'>374</a>
+<a name='L375'></a><a href='#L375'>375</a>
+<a name='L376'></a><a href='#L376'>376</a>
+<a name='L377'></a><a href='#L377'>377</a>
+<a name='L378'></a><a href='#L378'>378</a>
+<a name='L379'></a><a href='#L379'>379</a>
+<a name='L380'></a><a href='#L380'>380</a>
+<a name='L381'></a><a href='#L381'>381</a>
+<a name='L382'></a><a href='#L382'>382</a>
+<a name='L383'></a><a href='#L383'>383</a>
+<a name='L384'></a><a href='#L384'>384</a>
+<a name='L385'></a><a href='#L385'>385</a>
+<a name='L386'></a><a href='#L386'>386</a>
+<a name='L387'></a><a href='#L387'>387</a>
+<a name='L388'></a><a href='#L388'>388</a>
+<a name='L389'></a><a href='#L389'>389</a>
+<a name='L390'></a><a href='#L390'>390</a>
+<a name='L391'></a><a href='#L391'>391</a>
+<a name='L392'></a><a href='#L392'>392</a>
+<a name='L393'></a><a href='#L393'>393</a>
+<a name='L394'></a><a href='#L394'>394</a>
+<a name='L395'></a><a href='#L395'>395</a>
+<a name='L396'></a><a href='#L396'>396</a>
+<a name='L397'></a><a href='#L397'>397</a>
+<a name='L398'></a><a href='#L398'>398</a>
+<a name='L399'></a><a href='#L399'>399</a>
+<a name='L400'></a><a href='#L400'>400</a>
+<a name='L401'></a><a href='#L401'>401</a>
+<a name='L402'></a><a href='#L402'>402</a>
+<a name='L403'></a><a href='#L403'>403</a>
+<a name='L404'></a><a href='#L404'>404</a>
+<a name='L405'></a><a href='#L405'>405</a>
+<a name='L406'></a><a href='#L406'>406</a>
+<a name='L407'></a><a href='#L407'>407</a>
+<a name='L408'></a><a href='#L408'>408</a>
+<a name='L409'></a><a href='#L409'>409</a>
+<a name='L410'></a><a href='#L410'>410</a>
+<a name='L411'></a><a href='#L411'>411</a>
+<a name='L412'></a><a href='#L412'>412</a>
+<a name='L413'></a><a href='#L413'>413</a>
+<a name='L414'></a><a href='#L414'>414</a>
+<a name='L415'></a><a href='#L415'>415</a>
+<a name='L416'></a><a href='#L416'>416</a>
+<a name='L417'></a><a href='#L417'>417</a>
+<a name='L418'></a><a href='#L418'>418</a>
+<a name='L419'></a><a href='#L419'>419</a>
+<a name='L420'></a><a href='#L420'>420</a>
+<a name='L421'></a><a href='#L421'>421</a>
+<a name='L422'></a><a href='#L422'>422</a>
+<a name='L423'></a><a href='#L423'>423</a>
+<a name='L424'></a><a href='#L424'>424</a>
+<a name='L425'></a><a href='#L425'>425</a>
+<a name='L426'></a><a href='#L426'>426</a>
+<a name='L427'></a><a href='#L427'>427</a>
+<a name='L428'></a><a href='#L428'>428</a>
+<a name='L429'></a><a href='#L429'>429</a>
+<a name='L430'></a><a href='#L430'>430</a>
+<a name='L431'></a><a href='#L431'>431</a>
+<a name='L432'></a><a href='#L432'>432</a>
+<a name='L433'></a><a href='#L433'>433</a>
+<a name='L434'></a><a href='#L434'>434</a>
+<a name='L435'></a><a href='#L435'>435</a>
+<a name='L436'></a><a href='#L436'>436</a>
+<a name='L437'></a><a href='#L437'>437</a>
+<a name='L438'></a><a href='#L438'>438</a>
+<a name='L439'></a><a href='#L439'>439</a>
+<a name='L440'></a><a href='#L440'>440</a>
+<a name='L441'></a><a href='#L441'>441</a>
+<a name='L442'></a><a href='#L442'>442</a>
+<a name='L443'></a><a href='#L443'>443</a>
+<a name='L444'></a><a href='#L444'>444</a>
+<a name='L445'></a><a href='#L445'>445</a>
+<a name='L446'></a><a href='#L446'>446</a>
+<a name='L447'></a><a href='#L447'>447</a>
+<a name='L448'></a><a href='#L448'>448</a>
+<a name='L449'></a><a href='#L449'>449</a>
+<a name='L450'></a><a href='#L450'>450</a>
+<a name='L451'></a><a href='#L451'>451</a>
+<a name='L452'></a><a href='#L452'>452</a>
+<a name='L453'></a><a href='#L453'>453</a>
+<a name='L454'></a><a href='#L454'>454</a>
+<a name='L455'></a><a href='#L455'>455</a>
+<a name='L456'></a><a href='#L456'>456</a>
+<a name='L457'></a><a href='#L457'>457</a>
+<a name='L458'></a><a href='#L458'>458</a>
+<a name='L459'></a><a href='#L459'>459</a>
+<a name='L460'></a><a href='#L460'>460</a>
+<a name='L461'></a><a href='#L461'>461</a>
+<a name='L462'></a><a href='#L462'>462</a>
+<a name='L463'></a><a href='#L463'>463</a>
+<a name='L464'></a><a href='#L464'>464</a>
+<a name='L465'></a><a href='#L465'>465</a>
+<a name='L466'></a><a href='#L466'>466</a>
+<a name='L467'></a><a href='#L467'>467</a>
+<a name='L468'></a><a href='#L468'>468</a>
+<a name='L469'></a><a href='#L469'>469</a>
+<a name='L470'></a><a href='#L470'>470</a>
+<a name='L471'></a><a href='#L471'>471</a>
+<a name='L472'></a><a href='#L472'>472</a>
+<a name='L473'></a><a href='#L473'>473</a>
+<a name='L474'></a><a href='#L474'>474</a>
+<a name='L475'></a><a href='#L475'>475</a>
+<a name='L476'></a><a href='#L476'>476</a>
+<a name='L477'></a><a href='#L477'>477</a>
+<a name='L478'></a><a href='#L478'>478</a>
+<a name='L479'></a><a href='#L479'>479</a>
+<a name='L480'></a><a href='#L480'>480</a>
+<a name='L481'></a><a href='#L481'>481</a>
+<a name='L482'></a><a href='#L482'>482</a>
+<a name='L483'></a><a href='#L483'>483</a>
+<a name='L484'></a><a href='#L484'>484</a>
+<a name='L485'></a><a href='#L485'>485</a>
+<a name='L486'></a><a href='#L486'>486</a>
+<a name='L487'></a><a href='#L487'>487</a>
+<a name='L488'></a><a href='#L488'>488</a>
+<a name='L489'></a><a href='#L489'>489</a>
+<a name='L490'></a><a href='#L490'>490</a>
+<a name='L491'></a><a href='#L491'>491</a>
+<a name='L492'></a><a href='#L492'>492</a>
+<a name='L493'></a><a href='#L493'>493</a>
+<a name='L494'></a><a href='#L494'>494</a>
+<a name='L495'></a><a href='#L495'>495</a>
+<a name='L496'></a><a href='#L496'>496</a>
+<a name='L497'></a><a href='#L497'>497</a>
+<a name='L498'></a><a href='#L498'>498</a>
+<a name='L499'></a><a href='#L499'>499</a>
+<a name='L500'></a><a href='#L500'>500</a>
+<a name='L501'></a><a href='#L501'>501</a>
+<a name='L502'></a><a href='#L502'>502</a>
+<a name='L503'></a><a href='#L503'>503</a>
+<a name='L504'></a><a href='#L504'>504</a>
+<a name='L505'></a><a href='#L505'>505</a>
+<a name='L506'></a><a href='#L506'>506</a>
+<a name='L507'></a><a href='#L507'>507</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">16x</span>
+<span class="cline-any cline-yes">16x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/**
+ * brain-llm.js — LLM provider interface for Experience Engine.
+ * Extracted from experience-core.js. Depends on config and embedding modules.
+ */
+'use strict';
+&nbsp;
+const _config = require('./config');
+const { estimateTextUnits, logCostCall } = require('./embedding');
+const { log, serializeError } = require('./logger');
+&nbsp;
+const cfgValue = _config.cfgValue;
+const getBrainProvider = _config.getBrainProvider;
+const getBrainModel = _config.getBrainModel;
+const getBrainModelForSource = _config.getBrainModelForSource;
+const getBrainEndpoint = _config.getBrainEndpoint;
+const getBrainKey = _config.getBrainKey;
+const getOllamaGenerateUrl = _config.getOllamaGenerateUrl;
+const activityLog = _config.activityLog;
+&nbsp;
+// ============================================================
+//  Brain — LLM provider abstraction
+// ============================================================
+&nbsp;
+// --- Brain extraction ---
+&nbsp;
+// --- Brain fallback chain (Wave 1) ---
+const BRAIN_FNS = {
+  ollama:      brainOllama,
+  openai:      brainOpenAI,
+  gemini:      brainGemini,
+  claude:      brainClaude,
+  deepseek:    brainDeepSeek,
+  siliconflow: brainOpenAI,   // OpenAI-compatible API
+  custom:      brainOpenAI,   // OpenAI-compatible API
+};
+&nbsp;
+// Fallback config: primary provider → fallback provider
+function getBrainFallback() {
+  return cfgValue('brainFallback', 'EXPERIENCE_BRAIN_FALLBACK', getBrainProvider() === 'ollama' ? '' : 'ollama');
+}
+&nbsp;
+async function callBrainWithFallback(prompt, meta = {}) {
+  const brainProvider = getBrainProvider();
+  const fallbackProvider = getBrainFallback();
+  const primary = BRAIN_FNS[brainProvider] <span class="branch-0 cbranch-no" title="branch not covered" >|| BRAIN_FNS.ollama;</span>
+  const units = estimateTextUnits(prompt, 4000);
+&nbsp;
+  // Source-aware model selection: extract+evolve get the larger pattern-abstraction
+  // model; intercept-filter/judge/route stay on the cheaper hot-path model.
+  const source = meta.source <span class="branch-0 cbranch-no" title="branch not covered" >|| 'general';</span>
+  const model = getBrainModelForSource(source);
+&nbsp;
+  // Allow callers (e.g. route-task) to enforce tighter time budgets than the default 15s.
+  const timeoutMs = Number(meta.timeoutMs <span class="branch-0 cbranch-no" title="branch not covered" >?? 0)</span>;
+  const signal = meta.signal || (Number.isFinite(timeoutMs) &amp;&amp; timeoutMs &gt; 0 ? AbortSignal.timeout(timeoutMs) <span class="branch-0 cbranch-no" title="branch not covered" >: undefined)</span>;
+&nbsp;
+  let startedAt = Date.now();
+  let result = await primary(prompt, { signal, model });
+  logCostCall('brain', brainProvider, source, units, {
+    ok: !!result,
+    phase: 'primary',
+    model,
+    durationMs: Date.now() - startedAt,
+  });
+  if (result) return result;
+<span class="cstat-no" title="statement not covered" ><span class="branch-0 cbranch-no" title="branch not covered" ></span></span>
+<span class="cstat-no" title="statement not covered" >  activityLog({ op: 'brain-failure', provider: brainProvider, phase: 'primary', model });</span>
+  if (fallbackProvider &amp;&amp; BRAIN_FNS[fallbackProvider]) <span class="branch-0 cbranch-no" title="branch not covered" >{</span>
+<span class="cstat-no" title="statement not covered" >    startedAt = Date.now();</span>
+<span class="cstat-no" title="statement not covered" >    result = await BRAIN_FNS[fallbackProvider](prompt, { signal, model });</span>
+<span class="cstat-no" title="statement not covered" >    logCostCall('brain', fallbackProvider, source, units, {</span>
+<span class="cstat-no" title="statement not covered" >      ok: !!result,</span>
+<span class="cstat-no" title="statement not covered" >      phase: 'fallback',</span>
+<span class="cstat-no" title="statement not covered" >      model,</span>
+<span class="cstat-no" title="statement not covered" >      durationMs: Date.now() - startedAt,</span>
+<span class="cstat-no" title="statement not covered" >    });</span>
+<span class="cstat-no" title="statement not covered" >    if (result) {</span>
+<span class="cstat-no" title="statement not covered" >      activityLog({ op: 'brain-fallback', provider: fallbackProvider, model });</span>
+<span class="cstat-no" title="statement not covered" >      return result;</span>
+<span class="cstat-no" title="statement not covered" >    }</span>
+<span class="cstat-no" title="statement not covered" >    activityLog({ op: 'brain-failure', provider: fallbackProvider, phase: 'fallback', model });</span>
+<span class="cstat-no" title="statement not covered" >  }</span>
+<span class="cstat-no" title="statement not covered" >  return null;</span>
+}
+&nbsp;
+// P6: Brain relevance filter — lightweight brain call to check if suggestions match the action
+// Input: the action query + numbered warnings. Output: which numbers are relevant.
+// Timeout: 3s (tight — fail-open if brain is slow). Cost: ~80 tokens input, ~5 tokens output.
+async function brainRelevanceFilter(actionQuery, suggestionLines, signal, projectSlug) {
+  if (!suggestionLines || suggestionLines.length === 0) <span class="branch-0 cbranch-no" title="branch not covered" >return null;</span>
+&nbsp;
+  const warnings = suggestionLines.map((line, i) =&gt; {
+    const clean = line.replace(/^.*?\]:\s*/, '');
+    return `${i + 1}. ${clean}`;
+  });
+&nbsp;
+  const projectCtx = projectSlug ? `\nPROJECT: ${projectSlug} — warnings about OTHER projects are NOT relevant.` : '';
+  const prompt = `You are an experience-hint relevance filter for an AI coding agent.
+&nbsp;
+ACTION the agent is about to take:
+  ${actionQuery.slice(0, 300)}${projectCtx}
+&nbsp;
+Past experience hints retrieved from the brain:
+${warnings.join('\n')}
+&nbsp;
+Each hint has: what it advises (solution), WHEN it fires (trigger/conditions), and WHY (root cause).
+&nbsp;
+Task: select which hints COULD help the agent avoid a mistake or follow a better pattern for THIS action.
+&nbsp;
+Selection criteria:
+- A hint is relevant if the action involves the SAME TOOL, COMMAND TYPE, or FILE PATTERN described in the hint's "Fires when" line
+- A hint about "tail" output is relevant when the action pipes to "tail"
+- A hint about "ssh" or "heredoc" is relevant when the action uses ssh
+- A hint about "dotnet build" is relevant when building .NET projects
+- A hint about test patterns is relevant when running tests
+- When unsure, INCLUDE the hint — false negatives (missing a useful warning) are worse than false positives (showing an extra hint)
+- Only reject hints that are clearly about a COMPLETELY DIFFERENT operation (e.g., a database hint when the action is git-only)
+&nbsp;
+Reply with the relevant warning numbers separated by commas (e.g. "1,3"), or "none" ONLY if you are confident NO hint relates to this action.`;
+&nbsp;
+  try {
+    const brainProvider = getBrainProvider();
+    const units = estimateTextUnits(prompt, 4000);
+    const startedAt = Date.now();
+    let response;
+&nbsp;
+    const relevanceTimeout = Number(cfgValue('relevanceTimeoutMs', 'EXPERIENCE_RELEVANCE_TIMEOUT_MS', 6500));
+&nbsp;
+    if (brainProvider === 'ollama') {
+      const res = await fetch(getOllamaGenerateUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: getBrainModel(), prompt, stream: false, options: { temperature: 0.1, num_predict: 20 } }),
+        signal: signal || AbortSignal.timeout(relevanceTimeout),
+      });
+      if (!res.ok) <span class="branch-0 cbranch-no" title="branch not covered" >{</span>
+<span class="cstat-no" title="statement not covered" >        logCostCall('brain', brainProvider, 'brain-filter', units, { ok: false, durationMs: Date.now() - startedAt });</span>
+<span class="cstat-no" title="statement not covered" >        return null;</span>
+<span class="cstat-no" title="statement not covered" >      }</span>
+      response = (await res.json()).response <span class="branch-0 cbranch-no" title="branch not covered" >|| '';</span>
+    } else {
+      const endpoint = getBrainEndpoint() <span class="branch-0 cbranch-no" title="branch not covered" >|| 'https://api.openai.com/v1/chat/completions';</span>
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getBrainKey()}` },
+        body: JSON.stringify({ model: getBrainModel(), messages: [{ role: "user", content: prompt }], temperature: 0.1, max_tokens: 120 }),
+        signal: signal || AbortSignal.timeout(relevanceTimeout),
+      });
+<span class="cstat-no" title="statement not covered" ><span class="branch-0 cbranch-no" title="branch not covered" >      if (!res.ok) {</span></span>
+<span class="cstat-no" title="statement not covered" >        logCostCall('brain', brainProvider, 'brain-filter', units, { ok: false, durationMs: Date.now() - startedAt });</span>
+<span class="cstat-no" title="statement not covered" >        return null;</span>
+<span class="cstat-no" title="statement not covered" >      }</span>
+      const brainJson = await res.json(); response = brainJson.choices?.[0]?.message?.content <span class="branch-0 cbranch-no" title="branch not covered" >|| brainJson.choices?.[0]?.message?.reasoning_content?.slice(-50) <span class="branch-0 cbranch-no" title="branch not covered" ></span>|| '';</span>
+    }
+&nbsp;
+    logCostCall('brain', brainProvider, 'brain-filter', units, { ok: true, durationMs: Date.now() - startedAt });
+&nbsp;
+    const text = response.trim().toLowerCase();
+    if (text === 'none' || text === '0' || text === '') <span class="branch-0 cbranch-no" title="branch not covered" >{</span>
+<span class="cstat-no" title="statement not covered" >      // Safe default: when brain says "none", KEEP all hints (return null)</span>
+<span class="cstat-no" title="statement not covered" >      // rather than deleting them (return []). The vector search + scope</span>
+<span class="cstat-no" title="statement not covered" >      // filter already selected relevant entries — brain filter should only</span>
+<span class="cstat-no" title="statement not covered" >      // remove clearly wrong hits, not act as a second rejection gate.</span>
+<span class="cstat-no" title="statement not covered" >      return null;</span>
+<span class="cstat-no" title="statement not covered" >    }</span>
+&nbsp;
+    const nums = text.match(/\d+/g);
+    if (!nums) <span class="branch-0 cbranch-no" title="branch not covered" >return null;</span>
+    const validIndices = nums.map(n =&gt; parseInt(n, 10) - 1).filter(i =&gt; i &gt;= 0 &amp;&amp; i &lt; suggestionLines.length);
+    if (validIndices.length === 0) <span class="branch-0 cbranch-no" title="branch not covered" >{</span>
+<span class="cstat-no" title="statement not covered" >      return null; // keep all hints when brain response is ambiguous</span>
+<span class="cstat-no" title="statement not covered" >    }</span>
+    return validIndices.map(i =&gt; suggestionLines[i]);
+  } catch (err) {
+    // Fail-open (null = keep all hints). Logged because the bare catch that used
+    // to be here made a dead filter indistinguishable from a filter that kept
+    // everything — the failure mode is invisible in the response either way.
+    log('warn', 'brain_relevance_filter_failed', {
+      provider: getBrainProvider(),
+      lines: suggestionLines.length,
+      error: serializeError(err),
+    });
+    return null;
+  }
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >async function extractQA(experience, opts = {}) {</span></span>
+<span class="cstat-no" title="statement not covered" >  const { summarizeExperienceExcerpt } = require('./context');</span>
+<span class="cstat-no" title="statement not covered" >  const summary = summarizeExperienceExcerpt(experience) || String(experience?.excerpt || '').slice(0, 1500);</span>
+<span class="cstat-no" title="statement not covered" >  const expType = experience?.type || 'unknown';</span>
+<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >  const callerFw = typeof opts.framework === 'string' &amp;&amp; opts.framework.trim()</span>
+<span class="cstat-no" title="statement not covered" >    ? opts.framework.trim() : null;</span>
+<span class="cstat-no" title="statement not covered" >  const callerLang = typeof opts.lang === 'string' &amp;&amp; opts.lang.trim()</span>
+<span class="cstat-no" title="statement not covered" >    ? opts.lang.trim() : null;</span>
+<span class="cstat-no" title="statement not covered" >  const callerSlug = typeof opts.projectSlug === 'string' &amp;&amp; opts.projectSlug.trim()</span>
+<span class="cstat-no" title="statement not covered" >    ? opts.projectSlug.trim() : null;</span>
+<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >  const ctxLines = [];</span>
+<span class="cstat-no" title="statement not covered" >  if (callerLang) ctxLines.push(`Caller language: ${callerLang}`);</span>
+<span class="cstat-no" title="statement not covered" >  if (callerFw) ctxLines.push(`Caller framework/library: ${callerFw}`);</span>
+<span class="cstat-no" title="statement not covered" >  if (callerSlug) ctxLines.push(`Caller project: ${callerSlug}`);</span>
+<span class="cstat-no" title="statement not covered" >  const ctxBlock = ctxLines.length</span>
+<span class="cstat-no" title="statement not covered" >    ? `\nProject context (use this to set scope.framework correctly):\n${ctxLines.map(l =&gt; '  - ' + l).join('\n')}\n`</span>
+<span class="cstat-no" title="statement not covered" >    : '';</span>
+<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >  const frameworkRule = callerFw</span>
+<span class="cstat-no" title="statement not covered" >    ? `- scope.framework must be either "any" or "${callerFw}". Use "${callerFw}" ONLY if the lesson references identifiers, types, packages, or conventions tied to that framework (e.g. types from its packages, attributes from its API). Use "any" when the lesson is a plain language rule that would apply to any project using the same language.`</span>
+<span class="cstat-no" title="statement not covered" >    : `- scope.framework must be "any" when the lesson is not tied to a specific framework. Set a specific framework label only if the lesson explicitly mentions framework-bound identifiers/packages.`;</span>
+<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >  const TYPE_INSTRUCTIONS = {</span>
+<span class="cstat-no" title="statement not covered" >    recipe: `You are extracting a REUSABLE RECIPE — a successful multi-step pattern that another agent session should follow when facing a similar task. Focus on the SEQUENCE of steps, not the specific files.</span>
+<span class="cstat-no" title="statement not covered" >- trigger: describe WHEN this recipe applies (e.g. "adding a new service class in an Angular + .NET project")</span>
+<span class="cstat-no" title="statement not covered" >- question: what task does this recipe solve?</span>
+<span class="cstat-no" title="statement not covered" >- solution: the step-by-step recipe (numbered steps, each concrete and actionable)</span>
+<span class="cstat-no" title="statement not covered" >- failureMode: "none" (this is a success pattern)</span>
+<span class="cstat-no" title="statement not covered" >- judgment: the portable principle (e.g. "always register new services in ServiceRegistration.cs after creating them")`,</span>
+<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >    trap: `You are extracting a TRAP — something that looks right but fails, and what actually works. The agent tried the same operation, failed, then succeeded with a different approach.</span>
+<span class="cstat-no" title="statement not covered" >- trigger: describe the situation that triggers the trap (e.g. "editing a file without reading it first in Claude Code")</span>
+<span class="cstat-no" title="statement not covered" >- question: what trap did the agent fall into?</span>
+<span class="cstat-no" title="statement not covered" >- solution: what to do INSTEAD to avoid the trap</span>
+<span class="cstat-no" title="statement not covered" >- failureMode: the class of mistake (e.g. "stale_context", "wrong_tool_for_platform")</span>
+<span class="cstat-no" title="statement not covered" >- judgment: the portable rule (e.g. "always Read a file before Edit, even after Grep")`,</span>
+<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >    dependency: `You are extracting a hidden DEPENDENCY — editing file A broke file B, requiring a fix to B. This is about cross-file coupling that is not obvious.</span>
+<span class="cstat-no" title="statement not covered" >- trigger: describe what change triggers the dependency (e.g. "adding a new exported type to a module")</span>
+<span class="cstat-no" title="statement not covered" >- question: what hidden dependency exists?</span>
+<span class="cstat-no" title="statement not covered" >- solution: what files must be updated together</span>
+<span class="cstat-no" title="statement not covered" >- failureMode: "hidden_coupling"</span>
+<span class="cstat-no" title="statement not covered" >- judgment: the portable rule about what must change together`,</span>
+<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >    env_trap: `You are extracting an ENVIRONMENTAL TRAP — an OS/tool/platform error and its workaround. NOT a code logic bug.</span>
+<span class="cstat-no" title="statement not covered" >- trigger: describe the environment condition (e.g. "running TypeScript check via Bash shell on Windows")</span>
+<span class="cstat-no" title="statement not covered" >- question: what environmental trap exists?</span>
+<span class="cstat-no" title="statement not covered" >- solution: the workaround or correct approach</span>
+<span class="cstat-no" title="statement not covered" >- failureMode: "platform_mismatch" or "tool_limitation"</span>
+<span class="cstat-no" title="statement not covered" >- judgment: the portable rule for the platform`,</span>
+<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >    user_correction: `You are extracting a USER PREFERENCE — the user corrected the agent's approach. This captures what the user wants done differently.</span>
+<span class="cstat-no" title="statement not covered" >- trigger: describe what the agent did that the user corrected</span>
+<span class="cstat-no" title="statement not covered" >- question: what did the user want differently?</span>
+<span class="cstat-no" title="statement not covered" >- solution: the corrected approach</span>
+<span class="cstat-no" title="statement not covered" >- failureMode: "assumption_mismatch"</span>
+<span class="cstat-no" title="statement not covered" >- judgment: the portable preference rule`,</span>
+<span class="cstat-no" title="statement not covered" >  };</span>
+<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >  const typeInstr = TYPE_INSTRUCTIONS[expType] || TYPE_INSTRUCTIONS.trap;</span>
+<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >  const evidence = experience?.evidence || {};</span>
+<span class="cstat-no" title="statement not covered" >  const hasEvidence = Object.keys(evidence).length &gt; 0;</span>
+<span class="cstat-no" title="statement not covered" >  log('debug', 'brain_extract_evidence', {</span>
+<span class="cstat-no" title="statement not covered" >    hasEvidence,</span>
+<span class="cstat-no" title="statement not covered" >    evidenceKeys: Object.keys(evidence),</span>
+<span class="cstat-no" title="statement not covered" >  });</span>
+<span class="cstat-no" title="statement not covered" >  const evidenceBlock = hasEvidence</span>
+<span class="cstat-no" title="statement not covered" >    ? `\nEVIDENCE (hard facts extracted from the session — use these to build conditions):\n${JSON.stringify(evidence, null, 2)}\n`</span>
+<span class="cstat-no" title="statement not covered" >    : '';</span>
+<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >  const prompt = `${typeInstr}\n\nThe summary below has been pre-labelled as type "${expType}".\n\n${summary}\n${ctxBlock}${evidenceBlock}\nReturn JSON only (no markdown). Output a generalized PATTERN, not the literal log line.\n\nMandatory rules:\n- ALL output fields MUST be written in English. The evidence may contain non-English text (e.g. Vietnamese conversational lines); translate its meaning into English and NEVER echo non-English text verbatim in any field.\n- trigger MUST describe the PATTERN. NEVER copy a ToolCall/ToolOutput/Bash line verbatim. NEVER start with a path or filename.\n- question briefly names the experience (one sentence).\n- solution is a concrete preventive/reusable action — not "implement", "review", "debug" alone.\n- why captures the root cause or rationale.\n- judgment is the portable reusable judgment ("X must Y because Z"), reusable across files.\n- conditions: a structured object describing WHEN this hint should fire. Build from the EVIDENCE above — do NOT invent patterns not present in evidence. Format: {"filePattern":["glob patterns"],"toolMatch":["Edit","Bash"],"commandMatch":["substrings"],"codePattern":["patterns in code being edited"],"errorMatch":["error type or message substring"]}. Include only fields with actual values from evidence. If no evidence, use {"keywords":["2-4 retrieval terms"]}.\n- evidenceClass: one of log | test | runtime | review | user-correction | recipe.\n- category: one of "code" | "git" | "deploy" | "infra" | "security" | "review-meta" | "testing-meta" | "shell-meta".\n- scope.lang must be one of: C# | JavaScript | TypeScript | Python | Go | Rust | Java | Shell | all.\n${frameworkRule}\n- Skip when nothing portable can be extracted:\n  - {"skip":true,"reason":"meta_workflow"}\n  - {"skip":true,"reason":"no_reusable_lesson"}\n  - {"skip":true,"reason":"raw_log_only"}\n\nReturn exactly:\n{"trigger":"...","question":"...","reasoning":["step1","step2"],"solution":"...","why":"...","failureMode":"...","judgment":"...","conditions":{},"evidenceClass":"...","category":"...","scope":{"lang":"all","framework":"any","repos":[],"filePattern":"*"}}`;</span>
+<span class="cstat-no" title="statement not covered" >  const result = await callBrainWithFallback(prompt, { source: 'extract' });</span>
+<span class="cstat-no" title="statement not covered" >  // Post-process: hard-set scope fields from caller context where available.</span>
+<span class="cstat-no" title="statement not covered" >  // For "code" category, caller-derived hints (from on-disk markers) are</span>
+<span class="cstat-no" title="statement not covered" >  // authoritative. For cross-stack categories (git/deploy/infra/security/</span>
+<span class="cstat-no" title="statement not covered" >  // review-meta/testing-meta/shell-meta) we OVERRIDE to wildcard scope so</span>
+<span class="cstat-no" title="statement not covered" >  // a git mistake recorded while editing TS files still surfaces when the</span>
+<span class="cstat-no" title="statement not covered" >  // user later does git work from a C# project.</span>
+<span class="cstat-no" title="statement not covered" >  if (result &amp;&amp; !result.skip) {</span>
+<span class="cstat-no" title="statement not covered" >    if (!result.scope || typeof result.scope !== 'object') result.scope = {};</span>
+<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >    // Category detection: brain first, regex fallback when brain omits.</span>
+<span class="cstat-no" title="statement not covered" >    // Regex is intentionally narrow — only catches signatures the brain</span>
+<span class="cstat-no" title="statement not covered" >    // tends to miss (mistake summarized as a code change but the underlying</span>
+<span class="cstat-no" title="statement not covered" >    // pattern is git/deploy/security).</span>
+<span class="cstat-no" title="statement not covered" >    const CROSS_STACK_CATS = new Set(['git', 'deploy', 'infra', 'security', 'review-meta', 'testing-meta', 'shell-meta']);</span>
+<span class="cstat-no" title="statement not covered" >    let category = typeof result.category === 'string' ? result.category.toLowerCase().trim() : '';</span>
+<span class="cstat-no" title="statement not covered" >    if (!CROSS_STACK_CATS.has(category) &amp;&amp; category !== 'code') {</span>
+<span class="cstat-no" title="statement not covered" >      category = _inferCrossStackCategory(result) || 'code';</span>
+<span class="cstat-no" title="statement not covered" >    }</span>
+<span class="cstat-no" title="statement not covered" >    result.category = category;</span>
+<span class="cstat-no" title="statement not covered" >    const isCrossStack = CROSS_STACK_CATS.has(category);</span>
+<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >    if (isCrossStack) {</span>
+<span class="cstat-no" title="statement not covered" >      // Cross-stack lesson — wildcard framework but keep caller lang + slug.</span>
+<span class="cstat-no" title="statement not covered" >      // A "bash path error on Windows" is cross-framework but still scoped</span>
+<span class="cstat-no" title="statement not covered" >      // to the language ecosystem where it was observed.</span>
+<span class="cstat-no" title="statement not covered" >      result.scope.framework = 'any';</span>
+<span class="cstat-no" title="statement not covered" >      if (callerLang) result.scope.lang = callerLang;</span>
+<span class="cstat-no" title="statement not covered" >      else result.scope.lang = 'all';</span>
+<span class="cstat-no" title="statement not covered" >      if (callerSlug) result.scope.project_slug = callerSlug;</span>
+<span class="cstat-no" title="statement not covered" >    } else {</span>
+<span class="cstat-no" title="statement not covered" >      // Code mistake — caller meta authoritative.</span>
+<span class="cstat-no" title="statement not covered" >      if (callerFw) {</span>
+<span class="cstat-no" title="statement not covered" >        result.scope.framework = callerFw;</span>
+<span class="cstat-no" title="statement not covered" >      } else if (typeof result.scope.framework !== 'string' || !result.scope.framework.trim()) {</span>
+<span class="cstat-no" title="statement not covered" >        result.scope.framework = 'any';</span>
+<span class="cstat-no" title="statement not covered" >      }</span>
+<span class="cstat-no" title="statement not covered" >      if (callerLang) {</span>
+<span class="cstat-no" title="statement not covered" >        result.scope.lang = callerLang;</span>
+<span class="cstat-no" title="statement not covered" >      } else if (typeof result.scope.lang !== 'string' || !result.scope.lang.trim()) {</span>
+<span class="cstat-no" title="statement not covered" >        result.scope.lang = 'all';</span>
+<span class="cstat-no" title="statement not covered" >      }</span>
+<span class="cstat-no" title="statement not covered" >      if (callerSlug) result.scope.project_slug = callerSlug;</span>
+<span class="cstat-no" title="statement not covered" >    }</span>
+<span class="cstat-no" title="statement not covered" ></span>
+<span class="cstat-no" title="statement not covered" >    // Post-process conditions: if LLM returned array (DeepSeek ignores</span>
+<span class="cstat-no" title="statement not covered" >    // structured format), build structured conditions FROM evidence.</span>
+<span class="cstat-no" title="statement not covered" >    // Evidence is authoritative — LLM keywords are fallback only.</span>
+<span class="cstat-no" title="statement not covered" >    const condIsArray = Array.isArray(result.conditions);</span>
+<span class="cstat-no" title="statement not covered" >    const condMissing = !result.conditions || typeof result.conditions !== 'object';</span>
+<span class="cstat-no" title="statement not covered" >    log('debug', 'brain_conditions_post_process', {</span>
+<span class="cstat-no" title="statement not covered" >      conditionsIsArray: condIsArray,</span>
+<span class="cstat-no" title="statement not covered" >      conditionsMissing: condMissing,</span>
+<span class="cstat-no" title="statement not covered" >      evidenceKeys: Object.keys(evidence),</span>
+<span class="cstat-no" title="statement not covered" >    });</span>
+<span class="cstat-no" title="statement not covered" >    if (condIsArray || condMissing) {</span>
+<span class="cstat-no" title="statement not covered" >      const ev = evidence;</span>
+<span class="cstat-no" title="statement not covered" >      const structured = {};</span>
+<span class="cstat-no" title="statement not covered" >      if (ev.file_patterns?.length) structured.filePattern = ev.file_patterns;</span>
+<span class="cstat-no" title="statement not covered" >      else if (ev.files_touched?.length) structured.filePattern = ev.files_touched.map(f =&gt; {</span>
+<span class="cstat-no" title="statement not covered" >        const parts = f.replace(/\\/g, '/').split('/');</span>
+<span class="cstat-no" title="statement not covered" >        return parts.length &gt; 1 ? parts[parts.length - 2] + '/' + parts[parts.length - 1] : f;</span>
+<span class="cstat-no" title="statement not covered" >      });</span>
+<span class="cstat-no" title="statement not covered" >      if (ev.tools_used?.length) structured.toolMatch = ev.tools_used;</span>
+<span class="cstat-no" title="statement not covered" >      if (ev.commands_run?.length) structured.commandMatch = ev.commands_run.map(c =&gt; {</span>
+<span class="cstat-no" title="statement not covered" >        const parts = c.split(/\s+/);</span>
+<span class="cstat-no" title="statement not covered" >        return parts[0] || c;</span>
+<span class="cstat-no" title="statement not covered" >      });</span>
+<span class="cstat-no" title="statement not covered" >      if (ev.error_info?.type) structured.errorMatch = [ev.error_info.type, ev.error_info.message].filter(Boolean);</span>
+<span class="cstat-no" title="statement not covered" >      if (ev.failed_approach?.name) {</span>
+<span class="cstat-no" title="statement not covered" >        if (!structured.commandMatch) structured.commandMatch = [];</span>
+<span class="cstat-no" title="statement not covered" >        structured.commandMatch.push(ev.failed_approach.name);</span>
+<span class="cstat-no" title="statement not covered" >      }</span>
+<span class="cstat-no" title="statement not covered" >      if (ev.user_said) structured.userSaid = ev.user_said;</span>
+<span class="cstat-no" title="statement not covered" >      if (Object.keys(structured).length &gt; 0) {</span>
+<span class="cstat-no" title="statement not covered" >        result.conditions = structured;</span>
+<span class="cstat-no" title="statement not covered" >      } else if (Array.isArray(result.conditions)) {</span>
+<span class="cstat-no" title="statement not covered" >        result.conditions = { keywords: result.conditions.filter(k =&gt; k &amp;&amp; k.length &gt; 2) };</span>
+<span class="cstat-no" title="statement not covered" >      }</span>
+<span class="cstat-no" title="statement not covered" >    }</span>
+<span class="cstat-no" title="statement not covered" >  }</span>
+<span class="cstat-no" title="statement not covered" >  return result;</span>
+<span class="cstat-no" title="statement not covered" >}</span>
+&nbsp;
+// Regex fallback for cross-stack category inference. Only fires when the
+// brain didn't return a valid category. Narrow patterns by design — we want
+// false negatives (default to "code") over false positives that lock
+// legitimate code lessons to wildcard scope.
+<span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >function _inferCrossStackCategory(qa) {</span></span>
+<span class="cstat-no" title="statement not covered" >  const text = `${qa?.trigger || ''} ${qa?.solution || ''} ${qa?.why || ''} ${qa?.failureMode || ''}`.toLowerCase();</span>
+<span class="cstat-no" title="statement not covered" >  if (!text.trim()) return null;</span>
+<span class="cstat-no" title="statement not covered" >  if (/\bgit\s+(push|pull|reset|rebase|merge|stash|cherry-pick|reflog|commit|branch|checkout|revert|tag)\b/.test(text)) return 'git';</span>
+<span class="cstat-no" title="statement not covered" >  if (/\b(force[- ]push|force push|lost commits|detached head|merge conflict)\b/.test(text)) return 'git';</span>
+<span class="cstat-no" title="statement not covered" >  if (/\b(kubectl|kubernetes|k8s|helm chart|docker build|dockerfile|docker[- ]compose|rollout|canary release|blue[- ]green|ci\/cd|pipeline yaml|github actions|gitlab ci|jenkins pipeline)\b/.test(text)) return 'deploy';</span>
+<span class="cstat-no" title="statement not covered" >  if (/\b(terraform|cloudformation|pulumi|ansible|nginx config)\b/.test(text)) return 'infra';</span>
+<span class="cstat-no" title="statement not covered" >  if (/\b(hardcoded secret|secret in code|env(ironment)? var leak|sql injection|xss|csrf|missing auth|unsanitized input|cors misconfiguration)\b/.test(text)) return 'security';</span>
+<span class="cstat-no" title="statement not covered" >  if (/\b(test pyramid|tdd discipline|fixture lifecycle|test isolation|flaky test pattern|mocking strategy)\b/.test(text)) return 'testing-meta';</span>
+<span class="cstat-no" title="statement not covered" >  if (/\b(posix vs bash|bashism|word splitting|unquoted variable|set[ -]e pitfall)\b/.test(text)) return 'shell-meta';</span>
+<span class="cstat-no" title="statement not covered" >  if (/\b(code review process|pr review checklist|review approval)\b/.test(text)) return 'review-meta';</span>
+<span class="cstat-no" title="statement not covered" >  return null;</span>
+<span class="cstat-no" title="statement not covered" >}</span>
+&nbsp;
+async function brainOllama(prompt, opts = {}) {
+  const model = opts.model || getBrainModel();
+  const body = { model, prompt, stream: false, options: { temperature: 0.3 } };
+  const fmt = opts.response_format || opts.responseFormat;
+  if (fmt) <span class="branch-0 cbranch-no" title="branch not covered" >{</span>
+<span class="cstat-no" title="statement not covered" >    if (fmt.type === 'json_object') {</span>
+<span class="cstat-no" title="statement not covered" >      body.format = 'json';</span>
+<span class="cstat-no" title="statement not covered" >    }</span>
+<span class="cstat-no" title="statement not covered" >    if (fmt.schema) {</span>
+<span class="cstat-no" title="statement not covered" >      body.format = fmt.schema;</span>
+<span class="cstat-no" title="statement not covered" >    }</span>
+<span class="cstat-no" title="statement not covered" >  }</span>
+  try {
+    const res = await fetch(getOllamaGenerateUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: opts.signal || AbortSignal.timeout(90000),
+    });
+    if (!res.ok) return null;
+    const text = (await res.json()).response <span class="branch-0 cbranch-no" title="branch not covered" >|| '';</span>
+    try { return JSON.parse(text); } <span class="branch-0 cbranch-no" title="branch not covered" >catch {}</span>
+<span class="cstat-no" title="statement not covered" >    const m = text.match(/\{[\s\S]*\}/);</span>
+    return m ? JSON.parse(m[0]) <span class="branch-0 cbranch-no" title="branch not covered" >: null;</span>
+  } catch { return null; }
+}
+&nbsp;
+async function brainOpenAI(prompt, opts = {}) {
+  // Reused for any OpenAI-compatible API (OpenAI, SiliconFlow, Together, Groq, etc.)
+  const endpoint = getBrainEndpoint() <span class="branch-0 cbranch-no" title="branch not covered" >|| 'https://api.openai.com/v1/chat/completions';</span>
+  const model = opts.model || getBrainModel() <span class="branch-0 cbranch-no" title="branch not covered" >|| 'gpt-4o-mini';</span>
+  const body = { model, messages: [{ role:'user', content: prompt }], temperature: 0.3 };
+  // Only add json_object mode for known-supporting providers (OpenAI, DeepSeek)
+  if (endpoint.includes('openai.com') || endpoint.includes('deepseek.com') || endpoint.includes('freemodel.dev')) <span class="branch-0 cbranch-no" title="branch not covered" >{</span>
+<span class="cstat-no" title="statement not covered" >    body.response_format = { type: 'json_object' };</span>
+<span class="cstat-no" title="statement not covered" >  }</span>
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getBrainKey()}` },
+      body: JSON.stringify(body),
+      signal: opts.signal || AbortSignal.timeout(30000),
+    });
+    if (!res.ok) <span class="branch-0 cbranch-no" title="branch not covered" >{</span>
+<span class="cstat-no" title="statement not covered" >      const errBody = await res.text().catch(() =&gt; '');</span>
+<span class="cstat-no" title="statement not covered" >      log('warn', 'brain_openai_http_error', {</span>
+<span class="cstat-no" title="statement not covered" >        status: res.status,</span>
+<span class="cstat-no" title="statement not covered" >        endpoint,</span>
+<span class="cstat-no" title="statement not covered" >        bodyPreview: errBody.slice(0, 200),</span>
+<span class="cstat-no" title="statement not covered" >      });</span>
+<span class="cstat-no" title="statement not covered" >      return null;</span>
+<span class="cstat-no" title="statement not covered" >    }</span>
+    const text = (await res.json()).choices?.[0]?.message?.content <span class="branch-0 cbranch-no" title="branch not covered" >|| '';</span>
+    try { return JSON.parse(text); } <span class="branch-0 cbranch-no" title="branch not covered" >catch {}</span>
+<span class="cstat-no" title="statement not covered" >    const m = text.match(/\{[\s\S]*\}/);</span>
+    return m ? JSON.parse(m[0]) <span class="branch-0 cbranch-no" title="branch not covered" >: null;</span>
+  } catch (err) {
+    log('warn', 'brain_openai_error', {
+      endpoint,
+      error: serializeError(err),
+    });
+    return null;
+  }
+}
+&nbsp;
+async function brainGemini(prompt, opts = {}) {
+  try {
+    const model = opts.model || getBrainModel() <span class="branch-0 cbranch-no" title="branch not covered" >|| 'gemini-2.0-flash';</span>
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${getBrainKey()}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0.3 } }),
+      signal: opts.signal || AbortSignal.timeout(15000),
+    });
+    if (!res.ok) return null;
+    const text = (await res.json()).candidates?.[0]?.content?.parts?.[0]?.text <span class="branch-0 cbranch-no" title="branch not covered" >|| '{}';</span>
+    return JSON.parse(text);
+  } <span class="branch-0 cbranch-no" title="branch not covered" >catch { return null; }</span>
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >async function brainClaude(prompt, opts = {}) {</span></span>
+<span class="cstat-no" title="statement not covered" >  try {</span>
+<span class="cstat-no" title="statement not covered" >    const res = await fetch('https://api.anthropic.com/v1/messages', {</span>
+<span class="cstat-no" title="statement not covered" >      method: 'POST',</span>
+<span class="cstat-no" title="statement not covered" >      headers: { 'Content-Type': 'application/json', 'x-api-key': getBrainKey(), 'anthropic-version': '2023-06-01' },</span>
+<span class="cstat-no" title="statement not covered" >      body: JSON.stringify({ model: opts.model || getBrainModel() || 'claude-haiku-4-5-20251001', max_tokens: 512, messages: [{ role:'user', content: prompt }] }),</span>
+<span class="cstat-no" title="statement not covered" >      signal: opts.signal || AbortSignal.timeout(15000),</span>
+<span class="cstat-no" title="statement not covered" >    });</span>
+<span class="cstat-no" title="statement not covered" >    if (!res.ok) return null;</span>
+<span class="cstat-no" title="statement not covered" >    const text = (await res.json()).content?.[0]?.text || '{}';</span>
+<span class="cstat-no" title="statement not covered" >    const m = text.match(/\{[\s\S]*\}/);</span>
+<span class="cstat-no" title="statement not covered" >    return m ? JSON.parse(m[0]) : null;</span>
+<span class="cstat-no" title="statement not covered" >  } catch { return null; }</span>
+<span class="cstat-no" title="statement not covered" >}</span>
+&nbsp;
+<span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >async function brainDeepSeek(prompt, opts = {}) {</span></span>
+<span class="cstat-no" title="statement not covered" >  try {</span>
+<span class="cstat-no" title="statement not covered" >    const endpoint = getBrainEndpoint() || 'https://api.deepseek.com/chat/completions';</span>
+<span class="cstat-no" title="statement not covered" >    const res = await fetch(endpoint, {</span>
+<span class="cstat-no" title="statement not covered" >      method: 'POST',</span>
+<span class="cstat-no" title="statement not covered" >      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getBrainKey()}` },</span>
+<span class="cstat-no" title="statement not covered" >      body: JSON.stringify({ model: opts.model || getBrainModel() || 'deepseek-chat', messages: [{ role:'user', content: prompt }], temperature: 0.3, response_format: { type:'json_object' } }),</span>
+<span class="cstat-no" title="statement not covered" >      signal: opts.signal || AbortSignal.timeout(15000),</span>
+<span class="cstat-no" title="statement not covered" >    });</span>
+<span class="cstat-no" title="statement not covered" >    if (!res.ok) {</span>
+<span class="cstat-no" title="statement not covered" >      const errBody = await res.text().catch(() =&gt; '');</span>
+<span class="cstat-no" title="statement not covered" >      log('warn', 'brain_deepseek_http_error', {</span>
+<span class="cstat-no" title="statement not covered" >        status: res.status,</span>
+<span class="cstat-no" title="statement not covered" >        statusText: res.statusText,</span>
+<span class="cstat-no" title="statement not covered" >        endpoint,</span>
+<span class="cstat-no" title="statement not covered" >        bodyPreview: errBody.slice(0, 500),</span>
+<span class="cstat-no" title="statement not covered" >      });</span>
+<span class="cstat-no" title="statement not covered" >      return null;</span>
+<span class="cstat-no" title="statement not covered" >    }</span>
+<span class="cstat-no" title="statement not covered" >    const dsResp = await res.json();</span>
+<span class="cstat-no" title="statement not covered" >    const dsMsg = dsResp.choices?.[0]?.message || {};</span>
+<span class="cstat-no" title="statement not covered" >    const text = dsMsg.content || '{}';</span>
+<span class="cstat-no" title="statement not covered" >    try { return JSON.parse(text); } catch {}</span>
+<span class="cstat-no" title="statement not covered" >    const m = text.match(/\{[\s\S]*\}/);</span>
+<span class="cstat-no" title="statement not covered" >    return m ? JSON.parse(m[0]) : null;</span>
+<span class="cstat-no" title="statement not covered" >  } catch (err) {</span>
+<span class="cstat-no" title="statement not covered" >    log('warn', 'brain_deepseek_error', {</span>
+<span class="cstat-no" title="statement not covered" >      error: serializeError(err),</span>
+<span class="cstat-no" title="statement not covered" >    });</span>
+<span class="cstat-no" title="statement not covered" >    return null;</span>
+<span class="cstat-no" title="statement not covered" >  }</span>
+<span class="cstat-no" title="statement not covered" >}</span>
+&nbsp;
+// ============================================================
+//  Exports
+// ============================================================
+&nbsp;
+module.exports = {
+  BRAIN_FNS,
+  getBrainFallback,
+  callBrainWithFallback,
+  brainRelevanceFilter,
+  extractQA,
+  brainOllama,
+  brainOpenAI,
+  brainGemini,
+  brainClaude,
+  brainDeepSeek,
+};
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-29T06:56:04.900Z
+            </div>
+        <script src="../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../sorter.js"></script>
+        <script src="../../../block-navigation.js"></script>
+    </body>
+</html>
+    

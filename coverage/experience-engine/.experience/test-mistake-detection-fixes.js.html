@@ -1,0 +1,880 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for experience-engine/.experience/test-mistake-detection-fixes.js</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">experience-engine/.experience</a> test-mistake-detection-fixes.js</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>265/265</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">96.29% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>26/27</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>0/0</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>265/265</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line high'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a>
+<a name='L213'></a><a href='#L213'>213</a>
+<a name='L214'></a><a href='#L214'>214</a>
+<a name='L215'></a><a href='#L215'>215</a>
+<a name='L216'></a><a href='#L216'>216</a>
+<a name='L217'></a><a href='#L217'>217</a>
+<a name='L218'></a><a href='#L218'>218</a>
+<a name='L219'></a><a href='#L219'>219</a>
+<a name='L220'></a><a href='#L220'>220</a>
+<a name='L221'></a><a href='#L221'>221</a>
+<a name='L222'></a><a href='#L222'>222</a>
+<a name='L223'></a><a href='#L223'>223</a>
+<a name='L224'></a><a href='#L224'>224</a>
+<a name='L225'></a><a href='#L225'>225</a>
+<a name='L226'></a><a href='#L226'>226</a>
+<a name='L227'></a><a href='#L227'>227</a>
+<a name='L228'></a><a href='#L228'>228</a>
+<a name='L229'></a><a href='#L229'>229</a>
+<a name='L230'></a><a href='#L230'>230</a>
+<a name='L231'></a><a href='#L231'>231</a>
+<a name='L232'></a><a href='#L232'>232</a>
+<a name='L233'></a><a href='#L233'>233</a>
+<a name='L234'></a><a href='#L234'>234</a>
+<a name='L235'></a><a href='#L235'>235</a>
+<a name='L236'></a><a href='#L236'>236</a>
+<a name='L237'></a><a href='#L237'>237</a>
+<a name='L238'></a><a href='#L238'>238</a>
+<a name='L239'></a><a href='#L239'>239</a>
+<a name='L240'></a><a href='#L240'>240</a>
+<a name='L241'></a><a href='#L241'>241</a>
+<a name='L242'></a><a href='#L242'>242</a>
+<a name='L243'></a><a href='#L243'>243</a>
+<a name='L244'></a><a href='#L244'>244</a>
+<a name='L245'></a><a href='#L245'>245</a>
+<a name='L246'></a><a href='#L246'>246</a>
+<a name='L247'></a><a href='#L247'>247</a>
+<a name='L248'></a><a href='#L248'>248</a>
+<a name='L249'></a><a href='#L249'>249</a>
+<a name='L250'></a><a href='#L250'>250</a>
+<a name='L251'></a><a href='#L251'>251</a>
+<a name='L252'></a><a href='#L252'>252</a>
+<a name='L253'></a><a href='#L253'>253</a>
+<a name='L254'></a><a href='#L254'>254</a>
+<a name='L255'></a><a href='#L255'>255</a>
+<a name='L256'></a><a href='#L256'>256</a>
+<a name='L257'></a><a href='#L257'>257</a>
+<a name='L258'></a><a href='#L258'>258</a>
+<a name='L259'></a><a href='#L259'>259</a>
+<a name='L260'></a><a href='#L260'>260</a>
+<a name='L261'></a><a href='#L261'>261</a>
+<a name='L262'></a><a href='#L262'>262</a>
+<a name='L263'></a><a href='#L263'>263</a>
+<a name='L264'></a><a href='#L264'>264</a>
+<a name='L265'></a><a href='#L265'>265</a>
+<a name='L266'></a><a href='#L266'>266</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">#!/usr/bin/env node
+'use strict';
+&nbsp;
+const test = require('node:test');
+const assert = require('node:assert/strict');
+&nbsp;
+const {
+  isTranscriptErrorSignal,
+  isUserCorrectionLine,
+  summarizeMistakeExcerpt,
+  parseToolEvents,
+  jaccardSimilarity,
+  tokenizeForSimilarity,
+} = require('./src/context');
+const { _detectMistakes, _assessExtractedQaQuality } = require('./experience-core.js');
+&nbsp;
+// ─── isTranscriptErrorSignal ─────────────────────────────────────────────
+&nbsp;
+test('isTranscriptErrorSignal: ToolOutput without failure marker is NOT an error', () =&gt; {
+  // Reading a config file successfully — used to fire the detector for ANY output
+  assert.equal(isTranscriptErrorSignal('ToolOutput: {"port": 8082, "ok": true}'), false);
+  assert.equal(isTranscriptErrorSignal('ToolOutput: read 250 bytes from /path/file.json'), false);
+});
+&nbsp;
+test('isTranscriptErrorSignal: ToolOutput containing word "error" in passing is NOT an error', () =&gt; {
+  // Used to fire on log files containing "0 errors, 1 warning" or test files
+  // named "error_handler". These were the most common false positives.
+  assert.equal(isTranscriptErrorSignal('ToolOutput: 0 errors, 1 warning in build output'), false);
+  assert.equal(isTranscriptErrorSignal('ToolOutput: opened test/error_handler.test.ts'), false);
+  assert.equal(isTranscriptErrorSignal('ToolOutput: 5 tests passed, 0 failed'), false);
+});
+&nbsp;
+test('isTranscriptErrorSignal: ToolOutput WITH explicit failure marker IS an error', () =&gt; {
+  assert.equal(isTranscriptErrorSignal('ToolOutput: HTTP 500 from /api/gates'), true);
+  assert.equal(isTranscriptErrorSignal('ToolOutput: Error: ENOENT: no such file or directory'), true);
+  assert.equal(isTranscriptErrorSignal('ToolOutput: TypeError: Cannot read properties of undefined'), true);
+  assert.equal(isTranscriptErrorSignal('ToolOutput: Traceback (most recent call last)'), true);
+  assert.equal(isTranscriptErrorSignal('ToolOutput: connection refused'), true);
+  assert.equal(isTranscriptErrorSignal('ToolOutput: build failed: 3 compile errors'), true);
+});
+&nbsp;
+test('isTranscriptErrorSignal: Bash exit non-zero IS an error', () =&gt; {
+  assert.equal(isTranscriptErrorSignal('Bash exit 1'), true);
+  assert.equal(isTranscriptErrorSignal('Bash exit 127'), true);
+  assert.equal(isTranscriptErrorSignal('Bash exit 0'), false);
+});
+&nbsp;
+test('isTranscriptErrorSignal: User/Assistant lines never error-signal', () =&gt; {
+  // Even containing failure language — these are commentary
+  assert.equal(isTranscriptErrorSignal('User: that test is failing because of timeout'), false);
+  assert.equal(isTranscriptErrorSignal('Assistant: I see an error in the stack trace'), false);
+});
+&nbsp;
+// ─── isUserCorrectionLine ────────────────────────────────────────────────
+&nbsp;
+test('isUserCorrectionLine: plain User: turn without correction language is NOT a correction', () =&gt; {
+  // Old code treated ANY User: line as correction → bypassed every filter
+  assert.equal(isUserCorrectionLine('User: continue please'), false);
+  assert.equal(isUserCorrectionLine('User: ok thanks'), false);
+  assert.equal(isUserCorrectionLine('User: now check the database'), false);
+});
+&nbsp;
+test('isUserCorrectionLine: User: turn with correction keywords IS a correction', () =&gt; {
+  assert.equal(isUserCorrectionLine("User: no, that's wrong, undo it"), true);
+  assert.equal(isUserCorrectionLine('User: stop, that approach is incorrect'), true);
+  assert.equal(isUserCorrectionLine('User: revert that change please'), true);
+  assert.equal(isUserCorrectionLine('User: that doesn\'t work, try a different way'), true);
+  // Vietnamese
+  assert.equal(isUserCorrectionLine('User: sai rồi, làm lại đi'), true);
+  assert.equal(isUserCorrectionLine('User: đừng sửa file đó'), true);
+});
+&nbsp;
+// ─── assessExtractedQaQuality (path/tool-call rejection) ─────────────────
+&nbsp;
+test('assessExtractedQaQuality: rejects ToolCall-shaped trigger', () =&gt; {
+  const result = _assessExtractedQaQuality({
+    trigger: 'ToolCall read_text_file: /mnt/d/Personal/Core/storyflow/appsettings.json',
+    question: 'config truncated',
+    solution: 'ensure full content read without truncation in the buffer',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'trigger_is_tool_call');
+});
+&nbsp;
+test('assessExtractedQaQuality: rejects path-leading trigger (Windows)', () =&gt; {
+  const result = _assessExtractedQaQuality({
+    trigger: 'C:/Users/phila/.experience/config.json missing field',
+    question: 'config missing',
+    solution: 'add serverBaseUrl when running thin client behind firewall',
+  });
+  assert.equal(result.ok, false);
+  // could match path_starts_with_path or path_is_path depending on slash count
+  assert.match(result.reason, /trigger_(starts_with_path|is_path)/);
+});
+&nbsp;
+test('assessExtractedQaQuality: rejects path-heavy trigger (POSIX)', () =&gt; {
+  const result = _assessExtractedQaQuality({
+    trigger: '/home/phila/.experience/store/default/config.json placeholder',
+    question: 'config defaults',
+    solution: 'replace placeholders with real values before deploy',
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /trigger_(starts_with_path|is_path)/);
+});
+&nbsp;
+test('assessExtractedQaQuality: still accepts pattern-style triggers', () =&gt; {
+  const result = _assessExtractedQaQuality({
+    trigger: 'config file read returns truncated content when output buffer is below file size',
+    question: 'truncated config read',
+    solution: 'increase buffer size or stream the file in chunks before parsing',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.reason, null);
+});
+&nbsp;
+// ─── detectMistakes integration ──────────────────────────────────────────
+&nbsp;
+test('detectMistakes: ignores normal session with successful tool calls and chatter', () =&gt; {
+  const transcript = [
+    'User: read the config and tell me the port',
+    'ToolCall read_text_file: /home/phila/.experience/config.json',
+    'ToolOutput: {"port": 8082, "ok": true}',
+    'Assistant: port is 8082',
+    'User: thanks',
+  ].join('\n');
+  const mistakes = _detectMistakes(transcript);
+  assert.equal(mistakes.length, 0, 'normal session should produce 0 mistakes');
+});
+&nbsp;
+test('detectMistakes: ignores reading a file that contains the word error', () =&gt; {
+  const transcript = [
+    'ToolCall read_text_file: /repo/test/error_handler.test.ts',
+    'ToolOutput: import { describe, it } from "vitest"; describe("error handler", () =&gt; { ... })',
+    'Assistant: looked at the test file',
+  ].join('\n');
+  const mistakes = _detectMistakes(transcript);
+  assert.equal(mistakes.length, 0, 'reading a file named error_* should not count as a mistake');
+});
+&nbsp;
+// Detector v2: error_fix removed. Repeated errors followed by a fix Edit
+// surface as a (possibly empty) result — only env_traps/traps/dependencies
+// are emitted now. The legacy assertion is inverted to lock in the new
+// contract: no spurious error_fix is produced.
+test('detectMistakes: two failures followed by fix no longer trigger error_fix in v2', () =&gt; {
+  const transcript = [
+    'ToolCall Bash: npm test',
+    'ToolOutput: build failed: ENOENT package.json',
+    'ToolOutput: TypeError: Cannot read properties of undefined',
+    'ToolCall Edit: /repo/src/index.ts add missing import',
+  ].join('\n');
+  const mistakes = _detectMistakes(transcript);
+  assert.equal(mistakes.some((m) =&gt; m.type === 'error_fix'), false);
+});
+&nbsp;
+test('detectMistakes: requires explicit user-correction language now', () =&gt; {
+  // Old behavior: any User: line after error → "user correction" → mistake fires
+  // New behavior: User: line must contain corrective language
+  const transcript = [
+    'ToolCall Bash: curl http://api.example.com',
+    'ToolOutput: HTTP 500 internal server error',
+    'User: ok keep going',  // not a correction
+    'ToolCall Edit: /repo/retry.ts adjust timeout',
+  ].join('\n');
+  const mistakes = _detectMistakes(transcript);
+  assert.equal(mistakes.some((m) =&gt; m.type === 'error_fix'), false,
+    'plain User: turn without correction keywords should not trigger error_fix');
+});
+&nbsp;
+// Detector v2: user_correction requires a preceding MUTATING tool call to
+// attach the correction to. A Bash curl (read-only) before the User: line
+// no longer qualifies. Use an Edit before the correction to exercise the
+// new contract.
+test('detectMistakes: real user-correction after a mutating call triggers user_correction', () =&gt; {
+  const transcript = [
+    'ToolCall Edit: /repo/retry.ts set endpoint http://api.example.com',
+    'ToolOutput: applied',
+    "User: no, that's the wrong endpoint, fix it",
+    'ToolCall Edit: /repo/retry.ts adjust endpoint',
+  ].join('\n');
+  const mistakes = _detectMistakes(transcript);
+  assert.equal(mistakes.some((m) =&gt; m.type === 'user_correction'), true);
+});
+&nbsp;
+// ─── retry-similarity (ported from muonroi-cli) ──────────────────────────
+&nbsp;
+// Detector v2: retry_similarity renamed/merged into trap
+test('detectMistakes: trap fires when failed Edit is followed by similar successful Edit', () =&gt; {
+  const transcript = [
+    'ToolCall Edit: /repo/src/server.ts replace fetch timeout 5000 with 3000',
+    'ToolOutput: SyntaxError: Unexpected token',
+    'ToolCall Edit: /repo/src/server.ts replace fetch timeout 5000 with 3000 properly',
+    'ToolOutput: applied successfully',
+  ].join('\n');
+  const mistakes = _detectMistakes(transcript);
+  assert.equal(mistakes.some((m) =&gt; m.type === 'trap' <span class="branch-0 cbranch-no" title="branch not covered" >|| m.type === 'retry_similarity')</span>, true,
+    'trap should detect failed→success on same target with similar input');
+});
+&nbsp;
+test('detectMistakes: retry_similarity does NOT fire when both calls succeed', () =&gt; {
+  const transcript = [
+    'ToolCall Edit: /repo/server.ts adjust timeout to 3000',
+    'ToolOutput: applied successfully',
+    'ToolCall Edit: /repo/server.ts adjust timeout to 2000',
+    'ToolOutput: applied successfully',
+  ].join('\n');
+  const mistakes = _detectMistakes(transcript);
+  assert.equal(mistakes.some((m) =&gt; m.type === 'retry_similarity'), false,
+    'two successful edits should not be a mistake');
+});
+&nbsp;
+// ─── jaccardSimilarity sanity ────────────────────────────────────────────
+&nbsp;
+test('jaccardSimilarity: identical sets = 1', () =&gt; {
+  assert.equal(jaccardSimilarity(new Set(['a', 'b', 'c']), new Set(['a', 'b', 'c'])), 1);
+});
+&nbsp;
+test('jaccardSimilarity: disjoint sets = 0', () =&gt; {
+  assert.equal(jaccardSimilarity(new Set(['a']), new Set(['b'])), 0);
+});
+&nbsp;
+test('tokenizeForSimilarity: filters short tokens', () =&gt; {
+  const t = tokenizeForSimilarity('a bb ccc dddd');
+  assert.equal(t.has('a'), false);
+  assert.equal(t.has('bb'), true);
+  assert.equal(t.has('ccc'), true);
+});
+&nbsp;
+// ─── parseToolEvents ─────────────────────────────────────────────────────
+&nbsp;
+test('parseToolEvents: marks success/failure based on subsequent ToolOutput', () =&gt; {
+  const lines = [
+    'ToolCall Bash: npm test',
+    'ToolOutput: 5 tests passed',
+    'ToolCall Bash: deploy.sh',
+    'ToolOutput: build failed: missing image',
+    'ToolCall Bash: ls /tmp',
+    'Bash exit 0',
+  ];
+  const events = parseToolEvents(lines);
+  assert.equal(events.length, 3);
+  assert.equal(events[0].success, true);
+  assert.equal(events[1].success, false);
+  assert.equal(events[2].success, true);
+});
+&nbsp;
+// ─── summarizeMistakeExcerpt ─────────────────────────────────────────────
+&nbsp;
+test('summarizeMistakeExcerpt: structures by labelled section', () =&gt; {
+  const summary = summarizeMistakeExcerpt({
+    type: 'error_fix',
+    context: '2 errors followed by correction',
+    excerpt: [
+      'ToolCall Bash: npm test',
+      'ToolOutput: TypeError: undefined',
+      'ToolOutput: 1 test failed',
+      "User: no, that's wrong, fix the import",
+      'ToolCall Edit: /repo/src/index.ts add import',
+    ].join('\n'),
+  });
+  assert.match(summary, /(MISTAKE|EXPERIENCE) TYPE: error_fix/);
+  assert.match(summary, /CONTEXT:/);
+  assert.match(summary, /FAILURE OUTPUT:/);
+  assert.match(summary, /USER CORRECTION:/);
+  assert.match(summary, /SUBSEQUENT MUTATION:/);
+});
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-29T06:56:04.900Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

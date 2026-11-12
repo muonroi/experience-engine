@@ -18,6 +18,7 @@ const {
   getQueueDir,
   getHookTimeoutMs,
   getExtractTimeoutMs,
+  flushQueueForHook,
 } = require('./remote-client');
 
 function withTempHome() {
@@ -56,6 +57,24 @@ test('getExtractTimeoutMs defaults higher than general hook timeout', () => {
   assert.equal(getExtractTimeoutMs({ serverExtractTimeoutMs: 9000 }), 9000);
   assert.equal(getExtractTimeoutMs({ serverTimeoutMs: 20000 }), 60000);
   assert.equal(getExtractTimeoutMs({ serverTimeoutMs: 120000 }), 120000);
+});
+
+test('hook queue flush leaves slow backlog for later instead of spending the intercept request budget', async (t) => {
+  const { homeDir } = withTempHome();
+  const { server, port } = await startServer((req, res) => {
+    req.resume();
+    setTimeout(() => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    }, 600);
+  });
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const config = { serverBaseUrl: `http://127.0.0.1:${port}`, serverHookTimeoutMs: 1200 };
+  queueRequest('POST', '/api/posttool', { toolName: 'Bash' }, { homeDir });
+  const result = await flushQueueForHook({ homeDir, config });
+  assert.equal(result.sent, 0);
+  assert.equal(result.failed.length, 1);
+  assert.equal(result.remaining, 1, 'slow queued event remains available for background drain');
 });
 
 test('requestJson sends auth header and parses JSON response', async () => {
