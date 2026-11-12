@@ -46,6 +46,10 @@
   - `tools/exp-beta-replay.js` (offline replay), `exp-reset-ignore-count.js --beta`.
 
 ### Fixed
+- Structured runtime logs (`logger.js`) now go to stderr at every level; `warn`/`info`/`debug`
+  used to go to stdout, so a brain warning (e.g. HTTP 402) landed ahead of the JSON document of
+  `exp-gates.js --json` and broke `exp-dashboard.js`. Anything that read server logs from stdout
+  must read stderr (`docker logs` shows both).
 - A thin client whose first prompt hook of a new holdout control session timed out
   ran the risk gate and auto-recall for it, and SessionStart could serve a control
   session a brief cached before the experiment. Experiment markers now carry the
